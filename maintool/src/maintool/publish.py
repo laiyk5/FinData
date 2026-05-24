@@ -1,0 +1,229 @@
+from __future__ import annotations
+
+import csv
+import hashlib
+import shutil
+from pathlib import Path
+from typing import Any
+
+from .dataset_specs import coverage_from_rows, get_spec
+from .jsonio import read_json, write_json
+from .run_sandbox import RunContext, mark_step, utc_stamp
+
+
+def publish_sandbox(context: RunContext, fail_before_final_rename: bool = False) -> dict[str, Any]:
+    status_path = context.qa_root / "status.json"
+    if not status_path.is_file():
+        raise RuntimeError("QA status is missing. Run qa before publish.")
+    status = read_json(status_path)
+    if not status.get("passed"):
+        raise RuntimeError("QA did not pass. Publish is blocked.")
+
+    source_current = context.sandbox_dataset_root / "data" / "published" / "current"
+    if not source_current.is_dir():
+        raise RuntimeError(f"Sandbox published current directory is missing: {source_current}")
+
+    dataset_root = context.dataset_root
+    published_root = dataset_root / "data" / "published"
+    current_dir = published_root / "current"
+    next_dir = published_root / f"next-{context.run_id}"
+    archive_root = dataset_root / "data" / "archive"
+
+    if next_dir.exists():
+        raise FileExistsError(f"Next publish directory already exists: {next_dir}")
+
+    shutil.copytree(source_current, next_dir)
+    checksums = checksum_tree(next_dir)
+
+    if fail_before_final_rename:
+        raise RuntimeError("Simulated failure before final rename.")
+
+    archive_path = None
+    if current_dir.exists():
+        archive_root.mkdir(parents=True, exist_ok=True)
+        archive_path = archive_root / f"{utc_stamp()}-{context.run_id}-current"
+        current_dir.rename(archive_path)
+
+    next_dir.rename(current_dir)
+
+    copy_qa_reports(context, dataset_root)
+    write_json(dataset_root / "checks" / "checksum_manifest.json", {"run_id": context.run_id, "files": checksums})
+    publish_log = {
+        "run_id": context.run_id,
+        "dataset": context.dataset_name,
+        "published_at": utc_stamp(),
+        "current_path": str(current_dir.relative_to(dataset_root)),
+        "archive_path": str(archive_path.relative_to(dataset_root)) if archive_path else None,
+        "file_count": len(checksums),
+    }
+    write_json(dataset_root / "logs" / f"{publish_log['published_at']}_publish_{context.run_id}.json", publish_log)
+    update_manifest_after_publish(dataset_root, context, publish_log)
+    mark_step(context, "published")
+    return publish_log
+
+
+def checksum_tree(root: Path) -> list[dict[str, str]]:
+    checksums: list[dict[str, str]] = []
+    for path in sorted(root.rglob("*")):
+        if not path.is_file():
+            continue
+        checksums.append(
+            {
+                "path": str(path.relative_to(root)),
+                "sha256": sha256_file(path),
+            }
+        )
+    return checksums
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as input_file:
+        for chunk in iter(lambda: input_file.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def copy_qa_reports(context: RunContext, dataset_root: Path) -> None:
+    checks_dir = dataset_root / "checks"
+    checks_dir.mkdir(parents=True, exist_ok=True)
+    for name in ("validation_report.json", "missingness_report.json", "unusual_values_report.json", "status.json"):
+        source = context.qa_root / name
+        if source.is_file():
+            shutil.copyfile(source, checks_dir / name)
+
+
+def update_manifest_after_publish(dataset_root: Path, context: RunContext, publish_log: dict[str, Any]) -> None:
+    manifest_path = dataset_root / "manifest.yaml"
+    if not manifest_path.is_file():
+        return
+
+    coverage = published_coverage(context.dataset_name, dataset_root / "data" / "published" / "current")
+    text = manifest_path.read_text(encoding="utf-8")
+    text = replace_block(text, "coverage", render_coverage_block(context.dataset_name, coverage))
+    text = replace_block(
+        text,
+        "missingness",
+        [
+            "missingness:",
+            "  status: assessed",
+            "  file: checks/missingness_report.json",
+        ],
+    )
+    replacements = {
+        "status:": "status: published",
+        "  validation_status:": "  validation_status: passed",
+        "  last_validation_report:": "  last_validation_report: checks/validation_report.json",
+        "  last_published_at:": f"  last_published_at: {publish_log['published_at']}",
+    }
+    lines = []
+    for line in text.splitlines():
+        replacement = None
+        for prefix, value in replacements.items():
+            if line.startswith(prefix):
+                replacement = value
+                break
+        lines.append(replacement or line)
+    manifest_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def published_coverage(dataset_name: str, current_dir: Path) -> dict[str, Any]:
+    spec = get_spec(dataset_name)
+    rows: list[dict[str, str]] = []
+    for csv_path in sorted(current_dir.rglob("*.csv")):
+        with csv_path.open(newline="", encoding="utf-8") as input_file:
+            for row in csv.DictReader(input_file):
+                rows.append({field: str(row.get(field, "")) for field in spec.fields})
+    return coverage_from_rows(dataset_name, rows)
+
+
+def render_coverage_block(dataset_name: str, coverage: dict[str, Any]) -> list[str]:
+    if dataset_name == "report_catalog":
+        return [
+            "coverage:",
+            "  universes:",
+            *[f"    - {universe_id}" for universe_id in coverage["universes"]],
+            f"  start_year: {coverage['start_year'] or 'null'}",
+            f"  end_year: {coverage['end_year'] or 'null'}",
+            f"  report_count: {coverage['report_count']}",
+            "  symbols:",
+            *[f"    - {symbol}" for symbol in coverage["symbols"]],
+        ]
+    if dataset_name == "instrument_universe":
+        return [
+            "coverage:",
+            "  universes:",
+            *[f"    - {universe_id}" for universe_id in coverage["universes"]],
+            f"  start_date: {coverage['start_date'] or 'null'}",
+            f"  end_date: {coverage['end_date'] or 'null'}",
+            "  universe_ranges:",
+            *[
+                line
+                for universe_id in coverage["universes"]
+                for line in (
+                    f"    {universe_id}:",
+                    f"      start_date: {coverage['universe_ranges'][universe_id]['start_date'] or 'null'}",
+                    f"      end_date: {coverage['universe_ranges'][universe_id]['end_date'] or 'null'}",
+                    f"      latest_member_count: {coverage['latest_member_counts'][universe_id]}",
+                )
+            ],
+        ]
+    if dataset_name == "trade_calendar":
+        return [
+            "coverage:",
+            "  exchanges:",
+            *[f"    - {exchange}" for exchange in coverage["exchanges"]],
+            f"  start_date: {coverage['start_date'] or 'null'}",
+            f"  end_date: {coverage['end_date'] or 'null'}",
+            "  exchange_ranges:",
+            *[
+                line
+                for exchange in coverage["exchanges"]
+                for line in (
+                    f"    {exchange}:",
+                    f"      start_date: {coverage['exchange_ranges'][exchange]['start_date'] or 'null'}",
+                    f"      end_date: {coverage['exchange_ranges'][exchange]['end_date'] or 'null'}",
+                )
+            ],
+        ]
+    return [
+        "coverage:",
+        "  symbols:",
+        *[f"    - {symbol}" for symbol in coverage["symbols"]],
+        f"  start_date: {coverage['start_date'] or 'null'}",
+        f"  end_date: {coverage['end_date'] or 'null'}",
+        "  calendar: CN_A_SHARE",
+        "  symbol_ranges:",
+        *[
+            line
+            for symbol in coverage["symbols"]
+            for line in (
+                f"    {symbol}:",
+                f"      start_date: {coverage['symbol_ranges'][symbol]['start_date'] or 'null'}",
+                f"      end_date: {coverage['symbol_ranges'][symbol]['end_date'] or 'null'}",
+            )
+        ],
+    ]
+
+
+def replace_block(text: str, block_name: str, replacement: list[str]) -> str:
+    lines = text.splitlines()
+    output: list[str] = []
+    skipping = False
+    block_header = f"{block_name}:"
+
+    for line in lines:
+        if not skipping and line == block_header:
+            output.extend(replacement)
+            skipping = True
+            continue
+        if skipping:
+            if line and not line.startswith(" "):
+                skipping = False
+                output.append(line)
+            continue
+        output.append(line)
+
+    if skipping:
+        return "\n".join(output)
+    return "\n".join(output)

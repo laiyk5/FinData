@@ -1,0 +1,13 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+
+.uv-cache/
+.venv/
+maintool/.venv/
+maintool/bin/__pycache__/
+
+*.log
+
+sandboxes/runs/
+backups/snapshots/
