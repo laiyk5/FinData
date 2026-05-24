@@ -1,0 +1,114 @@
+dataset: report_catalog
+version: 0.1.0
+primary_key:
+  - source
+  - announcement_id
+fields:
+  - name: universe_id
+    type: string
+    required: true
+    description: Logical instrument universe used for this catalog run.
+  - name: symbol_selector
+    type: string
+    required: false
+    description: Original selector, such as @universe:index:SSE50.
+  - name: symbol_selector_resolved_at
+    type: string
+    required: false
+    description: Universe snapshot date used to resolve the selector.
+  - name: source
+    type: string
+    required: true
+    description: Announcement source, currently cninfo.
+  - name: announcement_id
+    type: string
+    required: true
+    description: Source announcement identifier.
+  - name: stock_code
+    type: string
+    required: true
+    description: Six-digit stock code.
+  - name: stock_exchange
+    type: string
+    required: false
+    description: Source exchange column, such as sse, szse, or bj.
+  - name: ts_code
+    type: string
+    required: true
+    description: Tushare-style instrument code, such as 600000.SH.
+  - name: sec_name
+    type: string
+    required: false
+    description: Security short name from the source.
+  - name: org_id
+    type: string
+    required: false
+    description: Optional source organization id used by Cninfo.
+  - name: report_type
+    type: string
+    required: true
+    description: One of annual, semiannual, q1, or q3.
+  - name: report_year
+    type: string
+    required: true
+    description: Fiscal/report year.
+  - name: period_end
+    type: string
+    required: false
+    description: Report period end date in YYYYMMDD format.
+  - name: announcement_title
+    type: string
+    required: true
+    description: Source announcement title.
+  - name: announcement_date
+    type: string
+    required: false
+    description: Announcement publish date in YYYYMMDD format.
+  - name: pdf_url
+    type: string
+    required: true
+    description: Source PDF URL; the PDF file is not downloaded by this dataset.
+  - name: source_detail_url
+    type: string
+    required: false
+    description: Source detail page URL.
+  - name: source_category
+    type: string
+    required: false
+    description: Source category or requested category string.
+  - name: is_correction
+    type: boolean
+    required: true
+    description: Whether the title indicates a correction or revision.
+  - name: is_summary
+    type: boolean
+    required: true
+    description: Whether the title indicates a summary; summaries are filtered from published rows.
+  - name: is_english
+    type: boolean
+    required: true
+    description: Whether the title indicates an English-language report.
+  - name: is_cancelled
+    type: boolean
+    required: true
+    description: Whether the title indicates cancellation or invalidation.
+  - name: version_no
+    type: integer
+    required: true
+    description: Version sequence within ts_code, report_year, and report_type.
+  - name: latest_version
+    type: boolean
+    required: true
+    description: Latest known version in the same report group.
+  - name: raw_adjunct_url
+    type: string
+    required: false
+    description: Raw adjunctUrl returned by Cninfo.
+  - name: first_seen_at
+    type: string
+    required: true
+    description: First observed timestamp in UTC compact format.
+  - name: last_seen_at
+    type: string
+    required: true
+    description: Last observed timestamp in UTC compact format.

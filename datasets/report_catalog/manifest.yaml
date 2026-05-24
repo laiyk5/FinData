@@ -1,0 +1,25 @@
+dataset: report_catalog
+status: draft
+provider:
+  name: cninfo
+  api: hisAnnouncement/query
+storage:
+  format: csv
+  layout: partitioned
+  partition_field: universe_id
+coverage:
+  universes: []
+  start_year: null
+  end_year: null
+  report_count: 0
+  symbols: []
+missingness:
+  status: not_assessed
+  notes:
+    - No report catalog has been published yet.
+quality:
+  validation_status: not_run
+  last_validation_report: null
+publication:
+  last_published_at: null
+  current_path: data/published/current
