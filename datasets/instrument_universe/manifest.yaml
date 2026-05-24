@@ -1,0 +1,46 @@
+dataset: instrument_universe
+status: published
+version: 0.1.0
+owner: Lai
+storage:
+  raw: data/raw
+  staged: data/staged
+  published_current: data/published/current
+  archive: data/archive
+format:
+  raw: json
+  staged: csv
+  published: csv
+provider:
+  name: provider_independent
+  first_real_provider: tushare
+  api: index_weight
+  documentation: https://tushare.pro/document/2
+  token_env: TUSHARE_API_KEY
+  real_ingestion_enabled: false
+  real_ingestion_policy: explicit_cli_opt_in
+coverage:
+  universes:
+    - index:CSI300
+    - index:SSE50
+  start_date: 20260430
+  end_date: 20260506
+  universe_ranges:
+    index:CSI300:
+      start_date: 20260506
+      end_date: 20260506
+      latest_member_count: 300
+    index:SSE50:
+      start_date: 20260430
+      end_date: 20260430
+      latest_member_count: 50
+missingness:
+  status: assessed
+  file: checks/missingness_report.json
+quality:
+  validation_status: passed
+  last_validation_report: checks/validation_report.json
+publication:
+  last_published_at: 20260523T165007Z
+  current_version_path: data/published/current
+  archive_path: data/archive

@@ -1,0 +1,9 @@
+{
+  "files": [
+    {
+      "path": "daily.csv",
+      "sha256": "0daa46d09afab128506381d2e4e3a046832700f33d6ec4d06488105c6e37a9f1"
+    }
+  ],
+  "run_id": "tushare-daily-csi300-10y-batched-20160523-20260522"
+}

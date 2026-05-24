@@ -1,0 +1,8 @@
+{
+  "archive_path": "data/archive/20260523T094329Z-trade-calendar-SZSE-19900101-20260523-current",
+  "current_path": "data/published/current",
+  "dataset": "trade_calendar",
+  "file_count": 2,
+  "published_at": "20260523T094329Z",
+  "run_id": "trade-calendar-SZSE-19900101-20260523"
+}

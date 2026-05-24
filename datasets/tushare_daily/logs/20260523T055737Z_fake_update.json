@@ -1,0 +1,14 @@
+{
+  "run_type": "fake_update",
+  "dataset": "tushare_daily",
+  "provider": "fake_tushare",
+  "trade_date": "20240506",
+  "symbols_requested": [
+    "000001.SZ",
+    "600000.SH"
+  ],
+  "records_written": 2,
+  "raw_path": "data/raw/fake_daily_20240506_20260523T055737Z.json",
+  "staged_path": "data/staged/daily_20240506.csv",
+  "finished_at": "20260523T055737Z"
+}

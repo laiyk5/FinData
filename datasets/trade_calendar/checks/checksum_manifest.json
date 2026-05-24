@@ -1,0 +1,13 @@
+{
+  "files": [
+    {
+      "path": "exchange=SSE/trade_calendar.csv",
+      "sha256": "340e40754e5ba797f96a338b78d34ddb73f9ec9f008883ff05ec8eb742a14873"
+    },
+    {
+      "path": "exchange=SZSE/trade_calendar.csv",
+      "sha256": "fa1c14cb0708cce78dc5ab905541b9b969b311c9406fee53305e6e48039a06a1"
+    }
+  ],
+  "run_id": "trade-calendar-SZSE-19910703-20260523-clean"
+}

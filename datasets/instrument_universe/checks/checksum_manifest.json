@@ -1,0 +1,13 @@
+{
+  "files": [
+    {
+      "path": "universe_id=index:CSI300/instrument_universe.csv",
+      "sha256": "7fd362c902c0aa68e4a04aed478918bc8e8978c928422b6d293319a4cbea6f05"
+    },
+    {
+      "path": "universe_id=index:SSE50/instrument_universe.csv",
+      "sha256": "810bb1c2f6fea412aab48e587aef5447a89fadf8655387a94b3839616d48fca9"
+    }
+  ],
+  "run_id": "instrument-universe-csi300-20260506"
+}

@@ -1,0 +1,44 @@
+dataset: trade_calendar
+status: published
+version: 0.1.0
+owner: Lai
+storage:
+  raw: data/raw
+  staged: data/staged
+  published_current: data/published/current
+  archive: data/archive
+format:
+  raw: json
+  staged: csv
+  published: csv
+provider:
+  name: provider_independent
+  first_real_provider: tushare
+  api: trade_cal
+  documentation: https://tushare.pro/document/2?doc_id=26
+  token_env: TUSHARE_API_KEY
+  real_ingestion_enabled: false
+  real_ingestion_policy: explicit_cli_opt_in
+coverage:
+  exchanges:
+    - SSE
+    - SZSE
+  start_date: 19901219
+  end_date: 20260523
+  exchange_ranges:
+    SSE:
+      start_date: 19901219
+      end_date: 20260523
+    SZSE:
+      start_date: 19910703
+      end_date: 20260523
+missingness:
+  status: assessed
+  file: checks/missingness_report.json
+quality:
+  validation_status: passed
+  last_validation_report: checks/validation_report.json
+publication:
+  last_published_at: 20260523T095902Z
+  current_version_path: data/published/current
+  archive_path: data/archive

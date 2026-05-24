@@ -1,0 +1,8 @@
+{
+  "archive_path": "data/archive/20260523T130031Z-smoke-test-full-current",
+  "current_path": "data/published/current",
+  "dataset": "tushare_daily",
+  "file_count": 1,
+  "published_at": "20260523T130031Z",
+  "run_id": "smoke-test-full"
+}

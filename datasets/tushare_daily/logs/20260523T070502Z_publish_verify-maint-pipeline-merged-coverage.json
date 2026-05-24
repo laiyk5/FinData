@@ -1,0 +1,8 @@
+{
+  "archive_path": "data/archive/20260523T070502Z-verify-maint-pipeline-merged-coverage-current",
+  "current_path": "data/published/current",
+  "dataset": "tushare_daily",
+  "file_count": 1,
+  "published_at": "20260523T070502Z",
+  "run_id": "verify-maint-pipeline-merged-coverage"
+}

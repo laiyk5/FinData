@@ -1,0 +1,9 @@
+{
+  "dataset": "trade_calendar",
+  "finished_at": "20260523T095858Z",
+  "missingness_blocks_publish": false,
+  "passed": true,
+  "run_id": "trade-calendar-SZSE-19910703-20260523-clean",
+  "validation_passed": true,
+  "warning_count": 0
+}

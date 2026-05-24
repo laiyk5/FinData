@@ -1,0 +1,1236 @@
+dataset: tushare_daily
+status: published
+version: 0.1.0
+owner: Lai
+storage:
+  raw: data/raw
+  staged: data/staged
+  published_current: data/published/current
+  archive: data/archive
+format:
+  raw: json
+  staged: csv
+  published: csv
+provider:
+  name: tushare
+  api: daily
+  documentation: https://tushare.pro/document/2?doc_id=27
+  token_env: TUSHARE_API_KEY
+  real_ingestion_enabled: false
+  real_ingestion_policy: explicit_cli_opt_in
+coverage:
+  symbols:
+    - 000001.SZ
+    - 000002.SZ
+    - 000063.SZ
+    - 000100.SZ
+    - 000157.SZ
+    - 000166.SZ
+    - 000301.SZ
+    - 000333.SZ
+    - 000338.SZ
+    - 000408.SZ
+    - 000425.SZ
+    - 000538.SZ
+    - 000568.SZ
+    - 000596.SZ
+    - 000617.SZ
+    - 000625.SZ
+    - 000630.SZ
+    - 000651.SZ
+    - 000661.SZ
+    - 000708.SZ
+    - 000725.SZ
+    - 000768.SZ
+    - 000776.SZ
+    - 000786.SZ
+    - 000792.SZ
+    - 000807.SZ
+    - 000858.SZ
+    - 000876.SZ
+    - 000895.SZ
+    - 000938.SZ
+    - 000963.SZ
+    - 000975.SZ
+    - 000977.SZ
+    - 000983.SZ
+    - 000999.SZ
+    - 001391.SZ
+    - 001965.SZ
+    - 001979.SZ
+    - 002001.SZ
+    - 002027.SZ
+    - 002028.SZ
+    - 002049.SZ
+    - 002050.SZ
+    - 002074.SZ
+    - 002142.SZ
+    - 002179.SZ
+    - 002230.SZ
+    - 002236.SZ
+    - 002241.SZ
+    - 002252.SZ
+    - 002304.SZ
+    - 002311.SZ
+    - 002352.SZ
+    - 002371.SZ
+    - 002384.SZ
+    - 002415.SZ
+    - 002422.SZ
+    - 002459.SZ
+    - 002460.SZ
+    - 002463.SZ
+    - 002466.SZ
+    - 002475.SZ
+    - 002493.SZ
+    - 002594.SZ
+    - 002600.SZ
+    - 002601.SZ
+    - 002625.SZ
+    - 002648.SZ
+    - 002709.SZ
+    - 002714.SZ
+    - 002736.SZ
+    - 002916.SZ
+    - 002920.SZ
+    - 002938.SZ
+    - 003816.SZ
+    - 300014.SZ
+    - 300015.SZ
+    - 300033.SZ
+    - 300059.SZ
+    - 300122.SZ
+    - 300124.SZ
+    - 300251.SZ
+    - 300274.SZ
+    - 300308.SZ
+    - 300316.SZ
+    - 300347.SZ
+    - 300394.SZ
+    - 300408.SZ
+    - 300413.SZ
+    - 300418.SZ
+    - 300433.SZ
+    - 300442.SZ
+    - 300476.SZ
+    - 300498.SZ
+    - 300502.SZ
+    - 300628.SZ
+    - 300661.SZ
+    - 300750.SZ
+    - 300759.SZ
+    - 300760.SZ
+    - 300782.SZ
+    - 300803.SZ
+    - 300832.SZ
+    - 300866.SZ
+    - 300896.SZ
+    - 300979.SZ
+    - 300999.SZ
+    - 301236.SZ
+    - 301269.SZ
+    - 302132.SZ
+    - 600000.SH
+    - 600009.SH
+    - 600010.SH
+    - 600011.SH
+    - 600015.SH
+    - 600016.SH
+    - 600018.SH
+    - 600019.SH
+    - 600023.SH
+    - 600025.SH
+    - 600026.SH
+    - 600027.SH
+    - 600028.SH
+    - 600029.SH
+    - 600030.SH
+    - 600031.SH
+    - 600036.SH
+    - 600039.SH
+    - 600048.SH
+    - 600050.SH
+    - 600061.SH
+    - 600066.SH
+    - 600085.SH
+    - 600089.SH
+    - 600104.SH
+    - 600111.SH
+    - 600115.SH
+    - 600150.SH
+    - 600160.SH
+    - 600161.SH
+    - 600176.SH
+    - 600183.SH
+    - 600188.SH
+    - 600196.SH
+    - 600219.SH
+    - 600233.SH
+    - 600276.SH
+    - 600309.SH
+    - 600346.SH
+    - 600362.SH
+    - 600372.SH
+    - 600377.SH
+    - 600406.SH
+    - 600415.SH
+    - 600426.SH
+    - 600436.SH
+    - 600438.SH
+    - 600460.SH
+    - 600482.SH
+    - 600489.SH
+    - 600515.SH
+    - 600519.SH
+    - 600522.SH
+    - 600547.SH
+    - 600570.SH
+    - 600584.SH
+    - 600585.SH
+    - 600588.SH
+    - 600600.SH
+    - 600660.SH
+    - 600674.SH
+    - 600690.SH
+    - 600741.SH
+    - 600760.SH
+    - 600795.SH
+    - 600803.SH
+    - 600809.SH
+    - 600845.SH
+    - 600875.SH
+    - 600886.SH
+    - 600887.SH
+    - 600893.SH
+    - 600900.SH
+    - 600905.SH
+    - 600918.SH
+    - 600919.SH
+    - 600926.SH
+    - 600930.SH
+    - 600938.SH
+    - 600941.SH
+    - 600958.SH
+    - 600989.SH
+    - 600999.SH
+    - 601006.SH
+    - 601009.SH
+    - 601012.SH
+    - 601018.SH
+    - 601021.SH
+    - 601058.SH
+    - 601059.SH
+    - 601066.SH
+    - 601077.SH
+    - 601088.SH
+    - 601100.SH
+    - 601111.SH
+    - 601117.SH
+    - 601127.SH
+    - 601136.SH
+    - 601138.SH
+    - 601166.SH
+    - 601169.SH
+    - 601186.SH
+    - 601211.SH
+    - 601225.SH
+    - 601229.SH
+    - 601236.SH
+    - 601238.SH
+    - 601288.SH
+    - 601298.SH
+    - 601318.SH
+    - 601319.SH
+    - 601328.SH
+    - 601336.SH
+    - 601360.SH
+    - 601377.SH
+    - 601390.SH
+    - 601398.SH
+    - 601456.SH
+    - 601600.SH
+    - 601601.SH
+    - 601607.SH
+    - 601618.SH
+    - 601628.SH
+    - 601633.SH
+    - 601658.SH
+    - 601668.SH
+    - 601669.SH
+    - 601688.SH
+    - 601689.SH
+    - 601698.SH
+    - 601728.SH
+    - 601766.SH
+    - 601788.SH
+    - 601800.SH
+    - 601808.SH
+    - 601816.SH
+    - 601818.SH
+    - 601825.SH
+    - 601838.SH
+    - 601857.SH
+    - 601868.SH
+    - 601872.SH
+    - 601877.SH
+    - 601878.SH
+    - 601881.SH
+    - 601888.SH
+    - 601898.SH
+    - 601899.SH
+    - 601901.SH
+    - 601916.SH
+    - 601919.SH
+    - 601939.SH
+    - 601985.SH
+    - 601988.SH
+    - 601995.SH
+    - 601998.SH
+    - 603019.SH
+    - 603195.SH
+    - 603259.SH
+    - 603260.SH
+    - 603288.SH
+    - 603296.SH
+    - 603369.SH
+    - 603392.SH
+    - 603501.SH
+    - 603799.SH
+    - 603893.SH
+    - 603986.SH
+    - 603993.SH
+    - 605117.SH
+    - 605499.SH
+    - 688008.SH
+    - 688009.SH
+    - 688012.SH
+    - 688036.SH
+    - 688041.SH
+    - 688047.SH
+    - 688082.SH
+    - 688111.SH
+    - 688126.SH
+    - 688169.SH
+    - 688187.SH
+    - 688223.SH
+    - 688256.SH
+    - 688271.SH
+    - 688303.SH
+    - 688396.SH
+    - 688472.SH
+    - 688506.SH
+    - 688981.SH
+  start_date: 20160523
+  end_date: 20260522
+  calendar: CN_A_SHARE
+  symbol_ranges:
+    000001.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    000002.SZ:
+      start_date: 20160704
+      end_date: 20260522
+    000063.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    000100.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    000157.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    000166.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    000301.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    000333.SZ:
+      start_date: 20160601
+      end_date: 20260522
+    000338.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    000408.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    000425.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    000538.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    000568.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    000596.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    000617.SZ:
+      start_date: 20160914
+      end_date: 20260522
+    000625.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    000630.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    000651.SZ:
+      start_date: 20160902
+      end_date: 20260522
+    000661.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    000708.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    000725.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    000768.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    000776.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    000786.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    000792.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    000807.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    000858.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    000876.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    000895.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    000938.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    000963.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    000975.SZ:
+      start_date: 20161124
+      end_date: 20260522
+    000977.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    000983.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    000999.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    001391.SZ:
+      start_date: 20241230
+      end_date: 20260522
+    001965.SZ:
+      start_date: 20171225
+      end_date: 20260522
+    001979.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    002001.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    002027.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    002028.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    002049.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    002050.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    002074.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    002142.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    002179.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    002230.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    002236.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    002241.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    002252.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    002304.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    002311.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    002352.SZ:
+      start_date: 20160531
+      end_date: 20260522
+    002371.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    002384.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    002415.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    002422.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    002459.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    002460.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    002463.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    002466.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    002475.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    002493.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    002594.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    002600.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    002601.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    002625.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    002648.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    002709.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    002714.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    002736.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    002916.SZ:
+      start_date: 20171213
+      end_date: 20260522
+    002920.SZ:
+      start_date: 20171226
+      end_date: 20260522
+    002938.SZ:
+      start_date: 20180918
+      end_date: 20260522
+    003816.SZ:
+      start_date: 20190826
+      end_date: 20260522
+    300014.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    300015.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    300033.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    300059.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    300122.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    300124.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    300251.SZ:
+      start_date: 20160530
+      end_date: 20260522
+    300274.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    300308.SZ:
+      start_date: 20160930
+      end_date: 20260522
+    300316.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    300347.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    300394.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    300408.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    300413.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    300418.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    300433.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    300442.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    300476.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    300498.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    300502.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    300628.SZ:
+      start_date: 20170317
+      end_date: 20260522
+    300661.SZ:
+      start_date: 20170606
+      end_date: 20260522
+    300750.SZ:
+      start_date: 20180611
+      end_date: 20260522
+    300759.SZ:
+      start_date: 20190128
+      end_date: 20260522
+    300760.SZ:
+      start_date: 20181016
+      end_date: 20260522
+    300782.SZ:
+      start_date: 20190618
+      end_date: 20260522
+    300803.SZ:
+      start_date: 20191118
+      end_date: 20260522
+    300832.SZ:
+      start_date: 20200512
+      end_date: 20260522
+    300866.SZ:
+      start_date: 20200824
+      end_date: 20260522
+    300896.SZ:
+      start_date: 20200928
+      end_date: 20260522
+    300979.SZ:
+      start_date: 20210426
+      end_date: 20260522
+    300999.SZ:
+      start_date: 20201015
+      end_date: 20260522
+    301236.SZ:
+      start_date: 20220315
+      end_date: 20260522
+    301269.SZ:
+      start_date: 20220729
+      end_date: 20260522
+    302132.SZ:
+      start_date: 20160523
+      end_date: 20260522
+    600000.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600009.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600010.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600011.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600015.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600016.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600018.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600019.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600023.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600025.SH:
+      start_date: 20171215
+      end_date: 20260522
+    600026.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600027.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600028.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600029.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600030.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600031.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600036.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600039.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600048.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600050.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600061.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600066.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600085.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600089.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600104.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600111.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600115.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600150.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600160.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600161.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600176.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600183.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600188.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600196.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600219.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600233.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600276.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600309.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600346.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600362.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600372.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600377.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600406.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600415.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600426.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600436.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600438.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600460.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600482.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600489.SH:
+      start_date: 20160524
+      end_date: 20260522
+    600515.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600519.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600522.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600547.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600570.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600584.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600585.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600588.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600600.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600660.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600674.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600690.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600741.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600760.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600795.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600803.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600809.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600845.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600875.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600886.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600887.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600893.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600900.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600905.SH:
+      start_date: 20210610
+      end_date: 20260522
+    600918.SH:
+      start_date: 20200603
+      end_date: 20260522
+    600919.SH:
+      start_date: 20160802
+      end_date: 20260522
+    600926.SH:
+      start_date: 20161027
+      end_date: 20260522
+    600930.SH:
+      start_date: 20250716
+      end_date: 20260522
+    600938.SH:
+      start_date: 20220421
+      end_date: 20260522
+    600941.SH:
+      start_date: 20220105
+      end_date: 20260522
+    600958.SH:
+      start_date: 20160523
+      end_date: 20260522
+    600989.SH:
+      start_date: 20190516
+      end_date: 20260522
+    600999.SH:
+      start_date: 20160523
+      end_date: 20260522
+    601006.SH:
+      start_date: 20160523
+      end_date: 20260522
+    601009.SH:
+      start_date: 20160523
+      end_date: 20260522
+    601012.SH:
+      start_date: 20160523
+      end_date: 20260522
+    601018.SH:
+      start_date: 20160523
+      end_date: 20260522
+    601021.SH:
+      start_date: 20160523
+      end_date: 20260522
+    601058.SH:
+      start_date: 20160523
+      end_date: 20260522
+    601059.SH:
+      start_date: 20230201
+      end_date: 20260522
+    601066.SH:
+      start_date: 20180620
+      end_date: 20260522
+    601077.SH:
+      start_date: 20191029
+      end_date: 20260522
+    601088.SH:
+      start_date: 20160523
+      end_date: 20260522
+    601100.SH:
+      start_date: 20160523
+      end_date: 20260522
+    601111.SH:
+      start_date: 20160523
+      end_date: 20260522
+    601117.SH:
+      start_date: 20160523
+      end_date: 20260522
+    601127.SH:
+      start_date: 20160615
+      end_date: 20260522
+    601136.SH:
+      start_date: 20221222
+      end_date: 20260522
+    601138.SH:
+      start_date: 20180608
+      end_date: 20260522
+    601166.SH:
+      start_date: 20160523
+      end_date: 20260522
+    601169.SH:
+      start_date: 20160523
+      end_date: 20260522
+    601186.SH:
+      start_date: 20160523
+      end_date: 20260522
+    601211.SH:
+      start_date: 20160523
+      end_date: 20260522
+    601225.SH:
+      start_date: 20160523
+      end_date: 20260522
+    601229.SH:
+      start_date: 20161116
+      end_date: 20260522
+    601236.SH:
+      start_date: 20190705
+      end_date: 20260522
+    601238.SH:
+      start_date: 20160523
+      end_date: 20260522
+    601288.SH:
+      start_date: 20160523
+      end_date: 20260522
+    601298.SH:
+      start_date: 20190121
+      end_date: 20260522
+    601318.SH:
+      start_date: 20160523
+      end_date: 20260522
+    601319.SH:
+      start_date: 20181116
+      end_date: 20260522
+    601328.SH:
+      start_date: 20160523
+      end_date: 20260522
+    601336.SH:
+      start_date: 20160523
+      end_date: 20260522
+    601360.SH:
+      start_date: 20160523
+      end_date: 20260522
+    601377.SH:
+      start_date: 20160523
+      end_date: 20260522
+    601390.SH:
+      start_date: 20160523
+      end_date: 20260522
+    601398.SH:
+      start_date: 20160523
+      end_date: 20260522
+    601456.SH:
+      start_date: 20200731
+      end_date: 20260522
+    601600.SH:
+      start_date: 20160523
+      end_date: 20260522
+    601601.SH:
+      start_date: 20160523
+      end_date: 20260522
+    601607.SH:
+      start_date: 20160523
+      end_date: 20260522
+    601618.SH:
+      start_date: 20160523
+      end_date: 20260522
+    601628.SH:
+      start_date: 20160523
+      end_date: 20260522
+    601633.SH:
+      start_date: 20160523
+      end_date: 20260522
+    601658.SH:
+      start_date: 20191210
+      end_date: 20260522
+    601668.SH:
+      start_date: 20160523
+      end_date: 20260522
+    601669.SH:
+      start_date: 20160523
+      end_date: 20260522
+    601688.SH:
+      start_date: 20160523
+      end_date: 20260522
+    601689.SH:
+      start_date: 20160523
+      end_date: 20260522
+    601698.SH:
+      start_date: 20190628
+      end_date: 20260522
+    601728.SH:
+      start_date: 20210820
+      end_date: 20260522
+    601766.SH:
+      start_date: 20160530
+      end_date: 20260522
+    601788.SH:
+      start_date: 20160523
+      end_date: 20260522
+    601800.SH:
+      start_date: 20160523
+      end_date: 20260522
+    601808.SH:
+      start_date: 20160523
+      end_date: 20260522
+    601816.SH:
+      start_date: 20200116
+      end_date: 20260522
+    601818.SH:
+      start_date: 20160523
+      end_date: 20260522
+    601825.SH:
+      start_date: 20210819
+      end_date: 20260522
+    601838.SH:
+      start_date: 20180131
+      end_date: 20260522
+    601857.SH:
+      start_date: 20160523
+      end_date: 20260522
+    601868.SH:
+      start_date: 20210928
+      end_date: 20260522
+    601872.SH:
+      start_date: 20160523
+      end_date: 20260522
+    601877.SH:
+      start_date: 20160523
+      end_date: 20260522
+    601878.SH:
+      start_date: 20170626
+      end_date: 20260522
+    601881.SH:
+      start_date: 20170123
+      end_date: 20260522
+    601888.SH:
+      start_date: 20160523
+      end_date: 20260522
+    601898.SH:
+      start_date: 20160523
+      end_date: 20260522
+    601899.SH:
+      start_date: 20160523
+      end_date: 20260522
+    601901.SH:
+      start_date: 20160523
+      end_date: 20260522
+    601916.SH:
+      start_date: 20191126
+      end_date: 20260522
+    601919.SH:
+      start_date: 20160523
+      end_date: 20260522
+    601939.SH:
+      start_date: 20160523
+      end_date: 20260522
+    601985.SH:
+      start_date: 20160523
+      end_date: 20260522
+    601988.SH:
+      start_date: 20160523
+      end_date: 20260522
+    601995.SH:
+      start_date: 20201102
+      end_date: 20260522
+    601998.SH:
+      start_date: 20160523
+      end_date: 20260522
+    603019.SH:
+      start_date: 20160523
+      end_date: 20260522
+    603195.SH:
+      start_date: 20200206
+      end_date: 20260522
+    603259.SH:
+      start_date: 20180508
+      end_date: 20260522
+    603260.SH:
+      start_date: 20171030
+      end_date: 20260522
+    603288.SH:
+      start_date: 20160523
+      end_date: 20260522
+    603296.SH:
+      start_date: 20230808
+      end_date: 20260522
+    603369.SH:
+      start_date: 20160523
+      end_date: 20260522
+    603392.SH:
+      start_date: 20200429
+      end_date: 20260522
+    603501.SH:
+      start_date: 20170504
+      end_date: 20260522
+    603799.SH:
+      start_date: 20160523
+      end_date: 20260522
+    603893.SH:
+      start_date: 20200207
+      end_date: 20260522
+    603986.SH:
+      start_date: 20160818
+      end_date: 20260522
+    603993.SH:
+      start_date: 20160526
+      end_date: 20260522
+    605117.SH:
+      start_date: 20210420
+      end_date: 20260522
+    605499.SH:
+      start_date: 20210527
+      end_date: 20260522
+    688008.SH:
+      start_date: 20190722
+      end_date: 20260522
+    688009.SH:
+      start_date: 20190722
+      end_date: 20260522
+    688012.SH:
+      start_date: 20190722
+      end_date: 20260522
+    688036.SH:
+      start_date: 20190930
+      end_date: 20260522
+    688041.SH:
+      start_date: 20220812
+      end_date: 20260522
+    688047.SH:
+      start_date: 20220624
+      end_date: 20260522
+    688082.SH:
+      start_date: 20211118
+      end_date: 20260522
+    688111.SH:
+      start_date: 20191118
+      end_date: 20260522
+    688126.SH:
+      start_date: 20200420
+      end_date: 20260522
+    688169.SH:
+      start_date: 20200221
+      end_date: 20260522
+    688187.SH:
+      start_date: 20210907
+      end_date: 20260522
+    688223.SH:
+      start_date: 20220126
+      end_date: 20260522
+    688256.SH:
+      start_date: 20200720
+      end_date: 20260522
+    688271.SH:
+      start_date: 20220822
+      end_date: 20260522
+    688303.SH:
+      start_date: 20210722
+      end_date: 20260522
+    688396.SH:
+      start_date: 20200227
+      end_date: 20260522
+    688472.SH:
+      start_date: 20230609
+      end_date: 20260522
+    688506.SH:
+      start_date: 20230106
+      end_date: 20260522
+    688981.SH:
+      start_date: 20200716
+      end_date: 20260522
+missingness:
+  status: assessed
+  file: checks/missingness_report.json
+quality:
+  validation_status: passed
+  last_validation_report: checks/validation_report.json
+publication:
+  last_published_at: 20260524T020821Z
+  current_version_path: data/published/current
+  archive_path: data/archive

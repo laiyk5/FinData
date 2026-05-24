@@ -1,0 +1,50 @@
+dataset: tushare_daily
+version: 0.1.0
+primary_key:
+  - ts_code
+  - trade_date
+fields:
+  - name: ts_code
+    type: string
+    required: true
+    description: Tushare security code, such as 000001.SZ.
+  - name: trade_date
+    type: string
+    required: true
+    description: Trading date in YYYYMMDD format.
+  - name: open
+    type: decimal
+    required: true
+    description: Opening price.
+  - name: high
+    type: decimal
+    required: true
+    description: Highest traded price.
+  - name: low
+    type: decimal
+    required: true
+    description: Lowest traded price.
+  - name: close
+    type: decimal
+    required: true
+    description: Closing price.
+  - name: pre_close
+    type: decimal
+    required: true
+    description: Previous close.
+  - name: change
+    type: decimal
+    required: true
+    description: Price change from previous close.
+  - name: pct_chg
+    type: decimal
+    required: true
+    description: Percentage change from previous close.
+  - name: vol
+    type: decimal
+    required: true
+    description: Trading volume in hands.
+  - name: amount
+    type: decimal
+    required: true
+    description: Trading amount in thousand yuan.
