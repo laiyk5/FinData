@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from .cninfo import CninfoProviderError, fetch_cninfo_org_id_map
 from .ingest import ingest_prepared_raw
 from .pipeline import run_full_pipeline
 from .prepare import prepare_raw
@@ -559,6 +560,12 @@ def build_dataset_extras(args, repo_root: Path) -> dict[str, str | None] | None:
         universe_id = args.universe_id or infer_universe_id_from_symbols(args.symbols)
         start_year = args.start_year or str(datetime.now().year)
         end_year = args.end_year or start_year
+        org_id_map = {}
+        if args.provider == "cninfo" and args.enable_real_api:
+            try:
+                org_id_map = fetch_cninfo_org_id_map()
+            except CninfoProviderError as exc:
+                raise RuntimeError(f"Failed to load Cninfo stock orgId map: {exc}") from exc
         return {
             "universe_id": universe_id,
             "start_year": start_year,
@@ -568,6 +575,7 @@ def build_dataset_extras(args, repo_root: Path) -> dict[str, str | None] | None:
             "max_pages_per_request": str(args.max_pages_per_request or (2 if args.provider == "cninfo" else 1)),
             "jitter_seconds": args.jitter_seconds or ("1.0,3.0" if args.provider == "cninfo" else None),
             "request_budget": str(args.request_budget) if args.request_budget is not None else None,
+            "org_id_map": org_id_map,
         }
     if args.dataset == "tushare_daily" and (args.start_date or args.end_date):
         start_date = args.start_date or args.trade_date

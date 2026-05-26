@@ -11,6 +11,7 @@ from urllib.request import Request, urlopen
 
 
 CNINFO_QUERY_URL = "https://www.cninfo.com.cn/new/hisAnnouncement/query"
+CNINFO_STOCK_LIST_URL = "https://www.cninfo.com.cn/new/data/szse_stock.json"
 CNINFO_STATIC_BASE = "https://static.cninfo.com.cn/"
 CNINFO_DETAIL_BASE = "https://www.cninfo.com.cn/new/disclosure/detail"
 CNINFO_REFERER = "https://www.cninfo.com.cn/new/commonUrl/pageOfSearch?url=disclosure/list/search"
@@ -99,6 +100,51 @@ def fetch_cninfo_announcements(
     if not isinstance(response, dict):
         raise CninfoProviderError("Cninfo returned a non-object JSON response.", "server", True)
     return CninfoResponse(raw_response=response)
+
+
+def fetch_cninfo_org_id_map(transport: Transport | None = None, timeout: float = 30.0) -> dict[str, str]:
+    request = Request(
+        CNINFO_STOCK_LIST_URL,
+        headers={
+            "Accept": "application/json, text/plain, */*",
+            "Referer": CNINFO_REFERER,
+            "User-Agent": CNINFO_USER_AGENT,
+        },
+        method="GET",
+    )
+    try:
+        response_body = (transport or default_transport)(request, timeout)
+    except HTTPError as exc:
+        error_type = "blocked" if exc.code in {403, 429} else ("server" if exc.code >= 500 else "unknown")
+        raise CninfoProviderError(f"HTTP {exc.code}: {exc.reason}", error_type, retryable=error_type == "server") from exc
+    except (URLError, TimeoutError, socket.timeout) as exc:
+        raise CninfoProviderError(str(exc), "network", retryable=True) from exc
+
+    try:
+        payload = json.loads(response_body.decode("utf-8"))
+    except json.JSONDecodeError as exc:
+        raise CninfoProviderError("Cninfo stock list returned invalid JSON.", "server", retryable=True) from exc
+
+    rows = payload.get("stockList") or []
+    if not isinstance(rows, list):
+        raise CninfoProviderError("Cninfo stock list has unexpected shape.", "server", retryable=True)
+    mapping: dict[str, str] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        code = str(row.get("code") or "")
+        org_id = str(row.get("orgId") or "")
+        if code and org_id:
+            mapping[f"{code}.{exchange_suffix_for_code(code)}"] = org_id
+    return mapping
+
+
+def exchange_suffix_for_code(code: str) -> str:
+    if code.startswith(("5", "6", "9")):
+        return "SH"
+    if code.startswith(("8", "4")):
+        return "BJ"
+    return "SZ"
 
 
 def cninfo_form_params(request: dict[str, Any]) -> dict[str, str]:
