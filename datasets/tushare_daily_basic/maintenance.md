@@ -9,12 +9,12 @@ Tracked in git:
 
 - `dataset_card.md`
 - `schema.yaml`
-- stable `manifest.yaml`
 - this maintenance guide
 - maintool code and tests
 
 Generated and not tracked:
 
+- `manifest.yaml`
 - `data/raw/`
 - `data/staged/`
 - `data/published/current/`

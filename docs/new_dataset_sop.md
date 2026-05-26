@@ -16,7 +16,6 @@ Commit the mechanism:
 
 - dataset contract: `schema.yaml`
 - human documentation: `dataset_card.md` and `maintenance.md`
-- stable metadata: static `manifest.yaml` or `manifest.template.yaml`
 - maintool code: `DatasetSpec`, planning, preparation, ingestion, QA, publish
 - tests and fake-provider fixtures
 
@@ -26,6 +25,7 @@ Do not commit generated data:
 - `data/staged/`
 - `data/published/`
 - `data/archive/`
+- `manifest.yaml`
 - `checks/*.json`
 - `logs/*.json`
 - `sandboxes/runs/`
@@ -38,8 +38,8 @@ test tree and explain why it is a fixture rather than a live dataset artifact.
 1. Define the dataset purpose and grain.
 2. Create `datasets/{dataset}/dataset_card.md`.
 3. Create `datasets/{dataset}/schema.yaml`.
-4. Create a static manifest with provider, storage layout, and empty or template
-   coverage.
+4. Let the maintenance tooling create or update local `manifest.yaml` during
+   initialization and publish; do not treat it as source-controlled state.
 5. Add `datasets/{dataset}/maintenance.md` using
    `docs/dataset_maintenance_sop.md` as the checklist.
 6. Add or update `DatasetSpec` in `maintool/src/maintool/dataset_specs.py`.

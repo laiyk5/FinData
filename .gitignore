@@ -12,6 +12,8 @@ maintool/bin/__pycache__/
 sandboxes/runs/
 backups/snapshots/
 
+datasets/*/manifest.yaml
+
 datasets/report_catalog/checks/
 datasets/report_catalog/data/
 datasets/report_catalog/logs/

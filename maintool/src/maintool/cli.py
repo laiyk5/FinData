@@ -28,7 +28,6 @@ DEFAULT_UNIVERSE_SOURCES = {
 
 REQUIRED_DATASET_FILES = (
     "dataset_card.md",
-    "manifest.yaml",
     "maintenance.md",
     "schema.yaml",
     "checks/missingness.yaml",
