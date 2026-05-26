@@ -21,6 +21,7 @@ from .run_sandbox import (
     mark_step,
     utc_stamp,
 )
+from .stage_logs import append_stage_event, write_stage_summary
 from .tushare_daily import FIELDS, fake_daily_rows
 from .trade_calendar import FIELDS as TRADE_CALENDAR_FIELDS, write_mock_trade_calendar_response
 from .tushare_http import TushareProviderError, Transport, fetch_daily, fetch_index_weight, fetch_trade_cal
@@ -228,28 +229,20 @@ def prepare_progress_record(
 
 
 def append_prepare_event(context: RunContext, event_record: dict[str, Any]) -> None:
-    context.log_root.mkdir(parents=True, exist_ok=True)
-    with context.prepare_event_log_path.open("a", encoding="utf-8") as log_file:
-        log_file.write(json_dumps_line(event_record))
-
-
-def json_dumps_line(record: dict[str, Any]) -> str:
-    import json
-
-    return json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n"
+    append_stage_event(context, "prepare", event_record)
 
 
 def write_prepare_summary(context: RunContext, summary: dict[str, Any], status: str, started_at: float) -> None:
-    payload = {
-        **summary,
-        "status": status,
-        "finished_at": utc_stamp(),
-        "elapsed_seconds": round(time.monotonic() - started_at, 3),
-        "event_log": str(context.prepare_event_log_path.relative_to(context.sandbox_root)),
-        "ledger": str(context.prepare_ledger_path.relative_to(context.sandbox_root)),
-    }
-    context.log_root.mkdir(parents=True, exist_ok=True)
-    write_json(context.prepare_summary_path, payload)
+    write_stage_summary(
+        context,
+        "prepare",
+        {
+            **summary,
+            "ledger": str(context.prepare_ledger_path.relative_to(context.sandbox_root)),
+        },
+        status=status,
+        elapsed_seconds=time.monotonic() - started_at,
+    )
 
 
 def record_attempt(request: dict[str, Any], success: bool, error: str | None, error_type: str | None) -> None:

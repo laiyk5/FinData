@@ -50,6 +50,9 @@ class PipelineTests(unittest.TestCase):
         self.assertTrue((context.dataset_root / "data" / "published" / "current" / "daily.csv").is_file())
         self.assertTrue(any((context.dataset_root / "data" / "archive").iterdir()))
         self.assertTrue((context.dataset_root / "checks" / "checksum_manifest.json").is_file())
+        for stage in ("prepare", "ingest", "qa", "publish"):
+            self.assertTrue((context.sandbox_root / "logs" / f"{stage}_summary.json").is_file())
+            self.assertTrue((context.sandbox_root / "logs" / f"{stage}_events.jsonl").is_file())
 
     def test_prepare_is_restartable_and_skips_successful_requests(self) -> None:
         context = create_run_sandbox(
@@ -115,6 +118,8 @@ class PipelineTests(unittest.TestCase):
         report = ingest_prepared_raw(context)
 
         self.assertEqual(report["prepared_rows"], 1)
+        self.assertTrue((context.sandbox_root / "logs" / "ingest_summary.json").is_file())
+        self.assertTrue((context.sandbox_root / "logs" / "ingest_events.jsonl").is_file())
 
     def test_duplicate_staged_rows_block_qa_and_publish(self) -> None:
         context = self.create_prepared_context("run-duplicate")
@@ -127,6 +132,8 @@ class PipelineTests(unittest.TestCase):
         status = run_qa(context)
 
         self.assertFalse(status["passed"])
+        self.assertTrue((context.sandbox_root / "logs" / "qa_summary.json").is_file())
+        self.assertTrue((context.sandbox_root / "logs" / "qa_events.jsonl").is_file())
         validation = read_json(context.qa_root / "validation_report.json")
         self.assertTrue(any("duplicate primary key" in error for error in validation["errors"]))
         with self.assertRaises(RuntimeError):

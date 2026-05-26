@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import time
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -10,6 +11,7 @@ from .dataset_specs import DatasetSpec, expected_keys, get_spec
 from .dataset_specs import INSTRUMENT_UNIVERSE_FIELDS, REPORT_CATALOG_FIELDS
 from .jsonio import read_json, write_json
 from .run_sandbox import RunContext, load_run_manifest, mark_step, utc_stamp
+from .stage_logs import append_stage_event, write_stage_summary
 from .tushare_daily import FIELDS
 from .trade_calendar import FIELDS as TRADE_CALENDAR_FIELDS
 
@@ -18,12 +20,52 @@ ACCEPTED_MISSING_REASONS = {"market_holiday", "suspension", "outside_scope"}
 
 
 def run_qa(context: RunContext) -> dict[str, Any]:
+    started_at = time.monotonic()
     manifest = load_run_manifest(context)
     context.qa_root.mkdir(parents=True, exist_ok=True)
+    append_stage_event(
+        context,
+        "qa",
+        {
+            "event": "start",
+            "created_at": utc_stamp(),
+            "dataset": context.dataset_name,
+        },
+    )
 
     validation = build_validation_report(context)
+    append_stage_event(
+        context,
+        "qa",
+        {
+            "event": "validation_complete",
+            "created_at": utc_stamp(),
+            "passed": validation["passed"],
+            "checked_file_count": len(validation["checked_files"]),
+            "error_count": validation["error_count"],
+        },
+    )
     missingness = build_missingness_report(context, manifest)
+    append_stage_event(
+        context,
+        "qa",
+        {
+            "event": "missingness_complete",
+            "created_at": utc_stamp(),
+            "missing_count": missingness["missing_count"],
+            "blocks_publish": missingness["blocks_publish"],
+        },
+    )
     unusual = build_unusual_values_report(context)
+    append_stage_event(
+        context,
+        "qa",
+        {
+            "event": "unusual_complete",
+            "created_at": utc_stamp(),
+            "warning_count": unusual["warning_count"],
+        },
+    )
     passed = validation["passed"] and not missingness["blocks_publish"]
 
     status = {
@@ -40,6 +82,25 @@ def run_qa(context: RunContext) -> dict[str, Any]:
     write_json(context.qa_root / "missingness_report.json", missingness)
     write_json(context.qa_root / "unusual_values_report.json", unusual)
     write_json(context.qa_root / "status.json", status)
+    append_stage_event(
+        context,
+        "qa",
+        {
+            "event": "done",
+            "created_at": utc_stamp(),
+            "passed": passed,
+            "validation_passed": validation["passed"],
+            "missingness_blocks_publish": missingness["blocks_publish"],
+            "warning_count": len(unusual["warnings"]),
+        },
+    )
+    write_stage_summary(
+        context,
+        "qa",
+        status,
+        status="completed",
+        elapsed_seconds=time.monotonic() - started_at,
+    )
     mark_step(context, "qa_passed", passed)
     return status
 

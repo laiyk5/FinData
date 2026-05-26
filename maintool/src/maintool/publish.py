@@ -3,15 +3,28 @@ from __future__ import annotations
 import csv
 import hashlib
 import shutil
+import time
 from pathlib import Path
 from typing import Any
 
 from .dataset_specs import coverage_from_rows, get_spec
 from .jsonio import read_json, write_json
 from .run_sandbox import RunContext, mark_step, utc_stamp
+from .stage_logs import append_stage_event, write_stage_summary
 
 
 def publish_sandbox(context: RunContext, fail_before_final_rename: bool = False) -> dict[str, Any]:
+    started_at = time.monotonic()
+    append_stage_event(
+        context,
+        "publish",
+        {
+            "event": "start",
+            "created_at": utc_stamp(),
+            "dataset": context.dataset_name,
+            "run_id": context.run_id,
+        },
+    )
     status_path = context.qa_root / "status.json"
     if not status_path.is_file():
         raise RuntimeError("QA status is missing. Run qa before publish.")
@@ -32,8 +45,28 @@ def publish_sandbox(context: RunContext, fail_before_final_rename: bool = False)
     if next_dir.exists():
         raise FileExistsError(f"Next publish directory already exists: {next_dir}")
 
+    append_stage_event(
+        context,
+        "publish",
+        {
+            "event": "copy_next",
+            "created_at": utc_stamp(),
+            "source_current": str(source_current.relative_to(context.sandbox_root)),
+            "next_dir": str(next_dir.relative_to(dataset_root)),
+        },
+    )
     shutil.copytree(source_current, next_dir)
     checksums = checksum_tree(next_dir)
+    append_stage_event(
+        context,
+        "publish",
+        {
+            "event": "checksums_complete",
+            "created_at": utc_stamp(),
+            "file_count": len(checksums),
+            "next_dir": str(next_dir.relative_to(dataset_root)),
+        },
+    )
 
     if fail_before_final_rename:
         raise RuntimeError("Simulated failure before final rename.")
@@ -43,8 +76,26 @@ def publish_sandbox(context: RunContext, fail_before_final_rename: bool = False)
         archive_root.mkdir(parents=True, exist_ok=True)
         archive_path = archive_root / f"{utc_stamp()}-{context.run_id}-current"
         current_dir.rename(archive_path)
+        append_stage_event(
+            context,
+            "publish",
+            {
+                "event": "archive_current",
+                "created_at": utc_stamp(),
+                "archive_path": str(archive_path.relative_to(dataset_root)),
+            },
+        )
 
     next_dir.rename(current_dir)
+    append_stage_event(
+        context,
+        "publish",
+        {
+            "event": "promote_next",
+            "created_at": utc_stamp(),
+            "current_path": str(current_dir.relative_to(dataset_root)),
+        },
+    )
 
     copy_qa_reports(context, dataset_root)
     write_json(dataset_root / "checks" / "checksum_manifest.json", {"run_id": context.run_id, "files": checksums})
@@ -58,6 +109,24 @@ def publish_sandbox(context: RunContext, fail_before_final_rename: bool = False)
     }
     write_json(dataset_root / "logs" / f"{publish_log['published_at']}_publish_{context.run_id}.json", publish_log)
     update_manifest_after_publish(dataset_root, context, publish_log)
+    append_stage_event(
+        context,
+        "publish",
+        {
+            "event": "done",
+            "created_at": utc_stamp(),
+            "published_at": publish_log["published_at"],
+            "archive_path": publish_log["archive_path"],
+            "file_count": publish_log["file_count"],
+        },
+    )
+    write_stage_summary(
+        context,
+        "publish",
+        publish_log,
+        status="completed",
+        elapsed_seconds=time.monotonic() - started_at,
+    )
     mark_step(context, "published")
     return publish_log
 

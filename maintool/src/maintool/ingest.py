@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 import csv
 from pathlib import Path
 from typing import Any
@@ -8,14 +9,29 @@ from .cninfo import finalize_report_versions, should_keep_report_row
 from .dataset_specs import DatasetSpec, get_spec, parse_symbols
 from .jsonio import read_json, write_json
 from .run_sandbox import RunContext, load_prepare_ledger, mark_step, utc_stamp
+from .stage_logs import append_stage_event, write_stage_summary
 
 
 def ingest_prepared_raw(context: RunContext) -> dict[str, Any]:
+    started_at = time.monotonic()
     spec = get_spec(context.dataset_name)
     ledger = load_prepare_ledger(context)
     prepared_rows: list[dict[str, str]] = []
+    source_requests = 0
+    source_items = 0
 
-    for request in ledger["requests"].values():
+    append_stage_event(
+        context,
+        "ingest",
+        {
+            "event": "start",
+            "created_at": utc_stamp(),
+            "dataset": context.dataset_name,
+            "request_count": len(ledger["requests"]),
+        },
+    )
+
+    for request_index, request in enumerate(ledger["requests"].values(), start=1):
         if request["status"] != "success":
             continue
         if not request["raw_path"]:
@@ -23,22 +39,74 @@ def ingest_prepared_raw(context: RunContext) -> dict[str, Any]:
         raw_path = context.sandbox_root / request["raw_path"]
         if not raw_path.is_file():
             continue
+        source_requests += 1
         payload = read_json(raw_path)
-        for item in payload.get("items", []):
+        items = list(payload.get("items", []))
+        source_items += len(items)
+        append_stage_event(
+            context,
+            "ingest",
+            {
+                "event": "request",
+                "created_at": utc_stamp(),
+                "index": request_index,
+                "request_key": request.get("key"),
+                "raw_path": request["raw_path"],
+                "item_count": len(items),
+                "prepared_rows_so_far": len(prepared_rows),
+            },
+        )
+        kept_rows = 0
+        for item in items:
             row = {field: normalize_value(item.get(field, "")) for field in spec.fields}
             if should_ingest_row(context.dataset_name, request, row):
                 prepared_rows.append(row)
+                kept_rows += 1
+        append_stage_event(
+            context,
+            "ingest",
+            {
+                "event": "request_done",
+                "created_at": utc_stamp(),
+                "index": request_index,
+                "request_key": request.get("key"),
+                "item_count": len(items),
+                "kept_rows": kept_rows,
+                "prepared_rows_so_far": len(prepared_rows),
+            },
+        )
 
     write_staged_files(context.sandbox_dataset_root, prepared_rows, spec)
     merged_rows = merge_current_rows(context.sandbox_dataset_root, prepared_rows, spec)
 
     report = {
         "run_id": context.run_id,
+        "source_requests": source_requests,
+        "source_items": source_items,
         "prepared_rows": len(prepared_rows),
         "published_rows_after_merge": len(merged_rows),
         "finished_at": utc_stamp(),
     }
     write_json(context.sandbox_root / "ingest_report.json", report)
+    append_stage_event(
+        context,
+        "ingest",
+        {
+            "event": "done",
+            "created_at": utc_stamp(),
+            "source_requests": source_requests,
+            "source_items": source_items,
+            "prepared_rows": len(prepared_rows),
+            "published_rows_after_merge": len(merged_rows),
+        },
+    )
+    write_stage_summary(
+        context,
+        "ingest",
+        report,
+        status="completed",
+        elapsed_seconds=time.monotonic() - started_at,
+    )
     mark_step(context, "ingested")
     return report
 
