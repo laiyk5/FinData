@@ -142,14 +142,14 @@ def create_run_sandbox(
     request_budget: int | None = None,
     extras: dict[str, Any] | None = None,
 ) -> RunContext:
-    if dataset_name not in {"tushare_daily", "trade_calendar", "instrument_universe", "report_catalog"}:
+    if dataset_name not in {"tushare_daily", "tushare_daily_basic", "trade_calendar", "instrument_universe", "report_catalog"}:
         raise ValueError(f"Maintenance pipeline is not implemented for dataset: {dataset_name}")
     if provider not in {"fake", "mock", "tushare", "cninfo"}:
         raise ValueError(f"Unsupported provider: {provider}")
     extras = extras or {}
-    if dataset_name == "tushare_daily" and not symbols:
+    if dataset_name in {"tushare_daily", "tushare_daily_basic"} and not symbols:
         raise ValueError("At least one symbol is required.")
-    if dataset_name == "tushare_daily" and not trade_dates and not extras.get("start_date"):
+    if dataset_name in {"tushare_daily", "tushare_daily_basic"} and not trade_dates and not extras.get("start_date"):
         raise ValueError("At least one trade date is required.")
     if dataset_name == "trade_calendar":
         for key in ("exchange", "start_date", "end_date"):
@@ -204,16 +204,20 @@ def create_run_sandbox(
         "sandbox_dataset_path": str(context.sandbox_dataset_root),
         "symbols": symbols,
         "trade_dates": trade_dates,
-        "daily_request": extras if dataset_name == "tushare_daily" and extras.get("start_date") else None,
+        "daily_request": extras
+        if dataset_name in {"tushare_daily", "tushare_daily_basic"} and extras.get("start_date")
+        else None,
         "calendar_request": extras if dataset_name == "trade_calendar" else None,
         "universe_request": extras if dataset_name == "instrument_universe" else None,
         "report_catalog_request": extras if dataset_name == "report_catalog" else None,
-        "symbol_selector": extras.get("symbol_selector") if dataset_name in {"tushare_daily", "report_catalog"} else None,
+        "symbol_selector": extras.get("symbol_selector")
+        if dataset_name in {"tushare_daily", "tushare_daily_basic", "report_catalog"}
+        else None,
         "symbol_selector_resolved_at": extras.get("symbol_selector_resolved_at")
-        if dataset_name in {"tushare_daily", "report_catalog"}
+        if dataset_name in {"tushare_daily", "tushare_daily_basic", "report_catalog"}
         else None,
         "resolved_symbols": symbols
-        if dataset_name in {"tushare_daily", "report_catalog"} and extras.get("symbol_selector")
+        if dataset_name in {"tushare_daily", "tushare_daily_basic", "report_catalog"} and extras.get("symbol_selector")
         else None,
         "request_settings": {
             "rate_limit_seconds": rate_limit_seconds,

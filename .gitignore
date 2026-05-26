@@ -15,3 +15,17 @@ backups/snapshots/
 datasets/report_catalog/checks/
 datasets/report_catalog/data/
 datasets/report_catalog/logs/
+
+datasets/tushare_daily_basic/checks/*.json
+datasets/tushare_daily_basic/data/**
+!datasets/tushare_daily_basic/data/
+!datasets/tushare_daily_basic/data/raw/
+!datasets/tushare_daily_basic/data/raw/.gitkeep
+!datasets/tushare_daily_basic/data/staged/
+!datasets/tushare_daily_basic/data/staged/.gitkeep
+!datasets/tushare_daily_basic/data/published/
+!datasets/tushare_daily_basic/data/published/current/
+!datasets/tushare_daily_basic/data/published/current/.gitkeep
+!datasets/tushare_daily_basic/data/archive/
+!datasets/tushare_daily_basic/data/archive/.gitkeep
+datasets/tushare_daily_basic/logs/*.json

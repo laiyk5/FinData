@@ -23,8 +23,9 @@ from .run_sandbox import (
 )
 from .stage_logs import append_stage_event, write_stage_summary
 from .tushare_daily import FIELDS, fake_daily_rows
+from .tushare_daily_basic import FIELDS as DAILY_BASIC_FIELDS, fake_daily_basic_rows
 from .trade_calendar import FIELDS as TRADE_CALENDAR_FIELDS, write_mock_trade_calendar_response
-from .tushare_http import TushareProviderError, Transport, fetch_daily, fetch_index_weight, fetch_trade_cal
+from .tushare_http import TushareProviderError, Transport, fetch_daily, fetch_daily_basic, fetch_index_weight, fetch_trade_cal
 
 
 def prepare_raw(context: RunContext, transport: Transport | None = None) -> dict[str, Any]:
@@ -291,14 +292,14 @@ def fetch_mock_response(context: RunContext, request: dict[str, Any]) -> tuple[P
         return write_mock_instrument_universe_response(context.raw_root, request)
     if context.dataset_name == "report_catalog":
         return write_mock_report_catalog_response(context.raw_root, request)
-    return fetch_fake_response(context.raw_root, request)
+    return fetch_fake_response(context, request)
 
 
-def fetch_fake_response(raw_root: Path, request: dict[str, Any]) -> tuple[Path, int]:
+def fetch_fake_response(context: RunContext, request: dict[str, Any]) -> tuple[Path, int]:
     if request.get("start_date") and request.get("end_date"):
-        raw_path, row_count = write_fake_range_response(raw_root, request)
+        raw_path, row_count = write_fake_range_response(context, request)
         return raw_path, row_count
-    raw_path, row_count = write_fake_response(raw_root, request)
+    raw_path, row_count = write_fake_response(context, request)
     return raw_path, row_count
 
 
@@ -306,47 +307,59 @@ def request_target_symbols(request: dict[str, Any]) -> list[str]:
     return list(request.get("symbols") or parse_symbols(request.get("ts_code", "")))
 
 
-def write_fake_range_response(raw_root: Path, request: dict[str, Any]) -> tuple[Path, int]:
+def fake_rows_for_dataset(dataset_name: str, symbols: list[str], trade_date: str) -> list[dict[str, str]]:
+    if dataset_name == "tushare_daily_basic":
+        return [row.as_dict() for row in fake_daily_basic_rows(symbols, trade_date)]
+    return [row.as_dict() for row in fake_daily_rows(symbols, trade_date)]
+
+
+def fake_fields_for_dataset(dataset_name: str) -> tuple[str, ...]:
+    if dataset_name == "tushare_daily_basic":
+        return DAILY_BASIC_FIELDS
+    return FIELDS
+
+
+def write_fake_range_response(context: RunContext, request: dict[str, Any]) -> tuple[Path, int]:
     rows = []
     trade_dates = request.get("expected_trade_dates") or [request["end_date"]]
     for trade_date in trade_dates:
-        rows.extend(row.as_dict() for row in fake_daily_rows(request_target_symbols(request), trade_date))
+        rows.extend(fake_rows_for_dataset(context.dataset_name, request_target_symbols(request), trade_date))
     payload = {
         "provider": "fake_tushare",
-        "api": "daily",
+        "api": request.get("api", "daily"),
         "request_mode": request.get("request_mode"),
         "start_date": request["start_date"],
         "end_date": request["end_date"],
         "ts_code": request.get("ts_code", ""),
         "symbols": request_target_symbols(request),
-        "fields": list(FIELDS),
+        "fields": list(fake_fields_for_dataset(context.dataset_name)),
         "items": rows,
         "row_count": len(rows),
         "prepared_at": utc_stamp(),
     }
-    raw_path = raw_root / f"{dataset_request_file_stem('tushare_daily', request)}.json"
+    raw_path = context.raw_root / f"{dataset_request_file_stem(context.dataset_name, request)}.json"
     write_json(raw_path, payload)
     return raw_path, len(rows)
 
 
-def write_fake_response(raw_root: Path, request: dict[str, Any]) -> tuple[Path, int]:
+def write_fake_response(context: RunContext, request: dict[str, Any]) -> tuple[Path, int]:
     if str(request.get("ts_code", "")).upper().startswith("FAIL"):
         raise RuntimeError(f"Fake provider failure requested for {request['ts_code']}")
 
-    rows = fake_daily_rows(request_target_symbols(request), request["trade_date"])
+    rows = fake_rows_for_dataset(context.dataset_name, request_target_symbols(request), request["trade_date"])
     payload = {
         "provider": "fake_tushare",
-        "api": "daily",
+        "api": request.get("api", "daily"),
         "request_mode": request.get("request_mode"),
         "trade_date": request["trade_date"],
         "ts_code": request.get("ts_code", ""),
         "symbols": request_target_symbols(request),
-        "fields": list(FIELDS),
-        "items": [row.as_dict() for row in rows],
+        "fields": list(fake_fields_for_dataset(context.dataset_name)),
+        "items": rows,
         "row_count": len(rows),
         "prepared_at": utc_stamp(),
     }
-    raw_path = raw_root / f"{dataset_request_file_stem('tushare_daily', request)}.json"
+    raw_path = context.raw_root / f"{dataset_request_file_stem(context.dataset_name, request)}.json"
     write_json(raw_path, payload)
     return raw_path, len(rows)
 
@@ -548,6 +561,34 @@ def fetch_tushare_response(
             "prepared_at": utc_stamp(),
         }
         raw_path = context.raw_root / f"{dataset_request_file_stem('instrument_universe', request)}.json"
+        write_json(raw_path, payload)
+        return raw_path, len(rows)
+
+    if context.dataset_name == "tushare_daily_basic":
+        response = fetch_daily_basic(
+            token=token,
+            ts_code=request.get("ts_code") or None,
+            trade_date=request.get("trade_date"),
+            start_date=request.get("start_date"),
+            end_date=request.get("end_date"),
+            transport=transport,
+        )
+        rows = response.rows
+        payload = {
+            "provider": "tushare",
+            "api": "daily_basic",
+            "request_mode": request.get("request_mode"),
+            "trade_date": request.get("trade_date"),
+            "start_date": request.get("start_date"),
+            "end_date": request.get("end_date"),
+            "ts_code": request.get("ts_code", ""),
+            "symbols": request_target_symbols(request),
+            "fields": list(DAILY_BASIC_FIELDS),
+            "items": rows,
+            "row_count": len(rows),
+            "prepared_at": utc_stamp(),
+        }
+        raw_path = context.raw_root / f"{dataset_request_file_stem('tushare_daily_basic', request)}.json"
         write_json(raw_path, payload)
         return raw_path, len(rows)
 

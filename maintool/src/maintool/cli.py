@@ -490,7 +490,7 @@ def main(argv: list[str] | None = None) -> int:
         symbols = resolve_symbols_arg(repo_root, args.dataset, args.symbols, dataset_extras)
         if args.dataset in {"trade_calendar", "instrument_universe", "report_catalog"}:
             trade_dates = []
-        if args.dataset == "tushare_daily" and dataset_extras and dataset_extras.get("start_date"):
+        if args.dataset in {"tushare_daily", "tushare_daily_basic"} and dataset_extras and dataset_extras.get("start_date"):
             trade_dates = []
         return maintain_plan(
             repo_root,
@@ -521,7 +521,7 @@ def main(argv: list[str] | None = None) -> int:
         symbols = resolve_symbols_arg(repo_root, args.dataset, args.symbols, dataset_extras)
         if args.dataset in {"trade_calendar", "instrument_universe", "report_catalog"}:
             trade_dates = []
-        if args.dataset == "tushare_daily" and dataset_extras and dataset_extras.get("start_date"):
+        if args.dataset in {"tushare_daily", "tushare_daily_basic"} and dataset_extras and dataset_extras.get("start_date"):
             trade_dates = []
         return maintain_run(
             repo_root,
@@ -578,7 +578,7 @@ def build_dataset_extras(args, repo_root: Path) -> dict[str, str | None] | None:
             "request_budget": str(args.request_budget) if args.request_budget is not None else None,
             "org_id_map": org_id_map,
         }
-    if args.dataset == "tushare_daily" and (args.start_date or args.end_date):
+    if args.dataset in {"tushare_daily", "tushare_daily_basic"} and (args.start_date or args.end_date):
         start_date = args.start_date or args.trade_date
         end_date = args.end_date or args.start_date or args.trade_date
         return {
@@ -587,7 +587,7 @@ def build_dataset_extras(args, repo_root: Path) -> dict[str, str | None] | None:
             "expected_trade_dates": open_trade_dates(repo_root, start_date, end_date),
             "daily_request_strategy": args.daily_request_strategy,
         }
-    if args.dataset == "tushare_daily":
+    if args.dataset in {"tushare_daily", "tushare_daily_basic"}:
         return {
             "daily_request_strategy": args.daily_request_strategy,
         }

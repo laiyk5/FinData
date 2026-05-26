@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from .tushare_daily import FIELDS as DAILY_FIELDS
+from .tushare_daily_basic import FIELDS as DAILY_BASIC_FIELDS
 
 
 DAILY_MAX_ROWS_PER_REQUEST = 6000
@@ -101,6 +102,16 @@ SPECS = {
         staged_prefix="trade_calendar",
         publish_partition_field="exchange",
     ),
+    "tushare_daily_basic": DatasetSpec(
+        name="tushare_daily_basic",
+        api_name="daily_basic",
+        fields=DAILY_BASIC_FIELDS,
+        primary_key=("ts_code", "trade_date"),
+        date_field="trade_date",
+        partition_field="trade_date",
+        published_filename="daily_basic.csv",
+        staged_prefix="daily_basic",
+    ),
     "instrument_universe": DatasetSpec(
         name="instrument_universe",
         api_name="index_weight",
@@ -134,12 +145,13 @@ def get_spec(dataset_name: str) -> DatasetSpec:
 
 
 def request_key(dataset_name: str, request: dict[str, Any]) -> str:
-    if dataset_name == "tushare_daily":
+    if dataset_name in {"tushare_daily", "tushare_daily_basic"}:
+        prefix = "daily_basic" if dataset_name == "tushare_daily_basic" else "daily"
         if request.get("request_mode") == "trade_date_all":
-            return f"daily:{request['trade_date']}:ALL"
+            return f"{prefix}:{request['trade_date']}:ALL"
         if request.get("start_date") and request.get("end_date"):
-            return f"daily:{request['start_date']}:{request['end_date']}:{request['ts_code']}"
-        return f"daily:{request['trade_date']}:{request['ts_code']}"
+            return f"{prefix}:{request['start_date']}:{request['end_date']}:{request['ts_code']}"
+        return f"{prefix}:{request['trade_date']}:{request['ts_code']}"
     if dataset_name == "trade_calendar":
         return f"trade_cal:{request['exchange']}:{request['start_date']}:{request['end_date']}"
     if dataset_name == "instrument_universe":
@@ -153,13 +165,14 @@ def request_key(dataset_name: str, request: dict[str, Any]) -> str:
 
 
 def request_file_stem(dataset_name: str, request: dict[str, Any]) -> str:
-    if dataset_name == "tushare_daily":
+    if dataset_name in {"tushare_daily", "tushare_daily_basic"}:
+        prefix = "daily_basic" if dataset_name == "tushare_daily_basic" else "daily"
         if request.get("request_mode") == "trade_date_all":
-            return f"daily_{request['trade_date']}_ALL"
+            return f"{prefix}_{request['trade_date']}_ALL"
         symbol_token = request_symbols_token(request)
         if request.get("start_date") and request.get("end_date"):
-            return f"daily_{request['start_date']}_{request['end_date']}_{symbol_token}"
-        return f"daily_{request['trade_date']}_{symbol_token}"
+            return f"{prefix}_{request['start_date']}_{request['end_date']}_{symbol_token}"
+        return f"{prefix}_{request['trade_date']}_{symbol_token}"
     if dataset_name == "trade_calendar":
         return f"trade_cal_{request['exchange']}_{request['start_date']}_{request['end_date']}"
     if dataset_name == "instrument_universe":
@@ -176,8 +189,9 @@ def request_file_stem(dataset_name: str, request: dict[str, Any]) -> str:
 
 
 def plan_requests(dataset_name: str, symbols: list[str], trade_dates: list[str], extras: dict[str, Any]) -> list[dict[str, Any]]:
-    if dataset_name == "tushare_daily":
-        return plan_daily_requests(symbols, trade_dates, extras)
+    if dataset_name in {"tushare_daily", "tushare_daily_basic"}:
+        api_name = "daily_basic" if dataset_name == "tushare_daily_basic" else "daily"
+        return plan_daily_requests(symbols, trade_dates, extras, api_name=api_name)
     if dataset_name == "trade_calendar":
         exchange = extras["exchange"]
         return [
@@ -229,7 +243,13 @@ def plan_requests(dataset_name: str, symbols: list[str], trade_dates: list[str],
     raise ValueError(f"Unsupported dataset: {dataset_name}")
 
 
-def plan_daily_requests(symbols: list[str], trade_dates: list[str], extras: dict[str, Any]) -> list[dict[str, Any]]:
+def plan_daily_requests(
+    symbols: list[str],
+    trade_dates: list[str],
+    extras: dict[str, Any],
+    *,
+    api_name: str = "daily",
+) -> list[dict[str, Any]]:
     strategy = extras.get("daily_request_strategy") or DAILY_REQUEST_STRATEGY_AUTO
     if strategy not in {
         DAILY_REQUEST_STRATEGY_AUTO,
@@ -248,12 +268,16 @@ def plan_daily_requests(symbols: list[str], trade_dates: list[str], extras: dict
         trade_date_plan = plan_daily_trade_date_all_requests(symbols, expected_trade_dates)
 
     if strategy == DAILY_REQUEST_STRATEGY_SYMBOL_RANGE:
-        return symbol_range_plan
+        return apply_api_name(symbol_range_plan, api_name)
     if strategy == DAILY_REQUEST_STRATEGY_TRADE_DATE_ALL:
-        return trade_date_plan
+        return apply_api_name(trade_date_plan, api_name)
     if len(trade_date_plan) < len(symbol_range_plan):
-        return trade_date_plan
-    return symbol_range_plan
+        return apply_api_name(trade_date_plan, api_name)
+    return apply_api_name(symbol_range_plan, api_name)
+
+
+def apply_api_name(requests: list[dict[str, Any]], api_name: str) -> list[dict[str, Any]]:
+    return [{**request, "api": api_name} for request in requests]
 
 
 def plan_daily_symbol_range_requests(symbols: list[str], expected_trade_dates: list[str]) -> list[dict[str, Any]]:
@@ -347,7 +371,7 @@ def summarize_request_plan(dataset_name: str, requests: list[dict[str, Any]]) ->
         "request_count": len(requests),
         "modes": modes,
     }
-    if dataset_name == "tushare_daily":
+    if dataset_name in {"tushare_daily", "tushare_daily_basic"}:
         estimates = [int(request.get("estimated_max_rows") or 0) for request in requests]
         summary.update(
             {
@@ -383,7 +407,7 @@ def parse_symbols(value: str) -> list[str]:
 
 
 def expected_keys(dataset_name: str, manifest: dict[str, Any]) -> set[tuple[str, str]]:
-    if dataset_name == "tushare_daily":
+    if dataset_name in {"tushare_daily", "tushare_daily_basic"}:
         daily_request = manifest.get("daily_request") or {}
         if daily_request.get("start_date") and daily_request.get("end_date"):
             return {
@@ -410,7 +434,7 @@ def expected_keys(dataset_name: str, manifest: dict[str, Any]) -> set[tuple[str,
 
 
 def coverage_from_rows(dataset_name: str, rows: list[dict[str, str]]) -> dict[str, Any]:
-    if dataset_name == "tushare_daily":
+    if dataset_name in {"tushare_daily", "tushare_daily_basic"}:
         symbols = sorted({row["ts_code"] for row in rows if row.get("ts_code")})
         dates = sorted({row["trade_date"] for row in rows if row.get("trade_date")})
         symbol_ranges = {}

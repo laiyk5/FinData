@@ -66,6 +66,59 @@ def success_response() -> bytes:
     ).encode("utf-8")
 
 
+def daily_basic_success_response() -> bytes:
+    return json.dumps(
+        {
+            "code": 0,
+            "msg": None,
+            "data": {
+                "fields": [
+                    "ts_code",
+                    "trade_date",
+                    "close",
+                    "turnover_rate",
+                    "turnover_rate_f",
+                    "volume_ratio",
+                    "pe",
+                    "pe_ttm",
+                    "pb",
+                    "ps",
+                    "ps_ttm",
+                    "dv_ratio",
+                    "dv_ttm",
+                    "total_share",
+                    "float_share",
+                    "free_share",
+                    "total_mv",
+                    "circ_mv",
+                ],
+                "items": [
+                    [
+                        "000001.SZ",
+                        "20240510",
+                        10.2,
+                        1.2,
+                        1.5,
+                        0.8,
+                        12.3,
+                        13.1,
+                        1.2,
+                        2.3,
+                        2.4,
+                        1.1,
+                        1.2,
+                        100000,
+                        80000,
+                        60000,
+                        1020000,
+                        816000,
+                    ]
+                ],
+            },
+        }
+    ).encode("utf-8")
+
+
 def empty_response() -> bytes:
     return json.dumps(
         {
@@ -104,6 +157,10 @@ class TushareProviderTests(unittest.TestCase):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.repo_root = Path(self.temp_dir.name)
         shutil.copytree(REPO_ROOT / "datasets" / "tushare_daily", self.repo_root / "datasets" / "tushare_daily")
+        shutil.copytree(
+            REPO_ROOT / "datasets" / "tushare_daily_basic",
+            self.repo_root / "datasets" / "tushare_daily_basic",
+        )
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
@@ -132,6 +189,27 @@ class TushareProviderTests(unittest.TestCase):
         self.assertNotIn("secret-token", context.prepare_ledger_path.read_text(encoding="utf-8"))
         self.assertNotIn("secret-token", raw_path.read_text(encoding="utf-8"))
         self.assertEqual(captured_body["token"], "secret-token")
+
+    def test_daily_basic_response_uses_daily_basic_api(self) -> None:
+        context = self.create_tushare_context("real-daily-basic-success", dataset_name="tushare_daily_basic")
+        captured_body: dict[str, object] = {}
+
+        def transport(request, timeout):
+            captured_body.update(json.loads(request.data.decode("utf-8")))
+            return daily_basic_success_response()
+
+        with patch.dict(os.environ, {"TUSHARE_API_KEY": "secret-token"}):
+            summary = prepare_raw(context, transport=transport)
+
+        ledger = read_json(context.prepare_ledger_path)
+        request = ledger["requests"]["daily_basic:20240510:000001.SZ"]
+        raw_path = context.sandbox_root / request["raw_path"]
+        raw_payload = read_json(raw_path)
+
+        self.assertEqual(summary["prepared"], 1)
+        self.assertEqual(captured_body["api_name"], "daily_basic")
+        self.assertEqual(raw_payload["api"], "daily_basic")
+        self.assertEqual(request["row_count"], 1)
 
     def test_empty_response_succeeds_and_missingness_blocks_publish(self) -> None:
         context = self.create_tushare_context("real-empty", trade_date="20990105")
@@ -240,10 +318,16 @@ class TushareProviderTests(unittest.TestCase):
         self.assertEqual(exit_code, 1)
         self.assertFalse((self.repo_root / "sandboxes" / "runs" / "tushare_daily" / "no-token").exists())
 
-    def create_tushare_context(self, run_id: str, max_retries: int = 3, trade_date: str = "20240510"):
+    def create_tushare_context(
+        self,
+        run_id: str,
+        max_retries: int = 3,
+        trade_date: str = "20240510",
+        dataset_name: str = "tushare_daily",
+    ):
         return create_run_sandbox(
             repo_root=self.repo_root,
-            dataset_name="tushare_daily",
+            dataset_name=dataset_name,
             provider="tushare",
             symbols=["000001.SZ"],
             trade_dates=[trade_date],

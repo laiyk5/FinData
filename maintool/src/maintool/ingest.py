@@ -114,7 +114,7 @@ def ingest_prepared_raw(context: RunContext) -> dict[str, Any]:
 def should_ingest_row(dataset_name: str, request: dict[str, Any], row: dict[str, str]) -> bool:
     if dataset_name == "report_catalog":
         return should_keep_report_row(row)
-    if dataset_name != "tushare_daily":
+    if dataset_name not in {"tushare_daily", "tushare_daily_basic"}:
         return True
 
     requested_symbols = set(request.get("symbols") or parse_symbols(request.get("ts_code", "")))

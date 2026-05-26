@@ -13,6 +13,7 @@ from .jsonio import read_json, write_json
 from .run_sandbox import RunContext, load_run_manifest, mark_step, utc_stamp
 from .stage_logs import append_stage_event, write_stage_summary
 from .tushare_daily import FIELDS
+from .tushare_daily_basic import FIELDS as DAILY_BASIC_FIELDS
 from .trade_calendar import FIELDS as TRADE_CALENDAR_FIELDS
 
 
@@ -121,6 +122,8 @@ def build_validation_report(context: RunContext) -> dict[str, Any]:
                 errors.extend(validate_instrument_universe_csv(csv_path))
             elif context.dataset_name == "report_catalog":
                 errors.extend(validate_report_catalog_csv(csv_path))
+            elif context.dataset_name == "tushare_daily_basic":
+                errors.extend(validate_daily_basic_csv(csv_path))
             else:
                 errors.extend(validate_daily_csv(csv_path))
             errors.extend(validate_unique_keys_across_files(root, csv_path, spec, seen_keys))
@@ -184,11 +187,62 @@ def validate_daily_csv(path: Path) -> list[str]:
     return errors
 
 
+def validate_daily_basic_csv(path: Path) -> list[str]:
+    errors: list[str] = []
+    seen_keys: set[tuple[str, str]] = set()
+
+    with path.open(newline="", encoding="utf-8") as input_file:
+        reader = csv.DictReader(input_file)
+        fieldnames = reader.fieldnames or []
+        for field in DAILY_BASIC_FIELDS:
+            if field not in fieldnames:
+                errors.append(f"{path.name}: missing column {field}")
+        if errors:
+            return errors
+
+        for row_number, row in enumerate(reader, start=2):
+            key = (row["ts_code"], row["trade_date"])
+            if key in seen_keys:
+                errors.append(f"{path.name}:{row_number}: duplicate primary key {key}")
+            seen_keys.add(key)
+
+            if not valid_trade_date(row["trade_date"]):
+                errors.append(f"{path.name}:{row_number}: invalid trade_date {row['trade_date']}")
+
+            for field in DAILY_BASIC_FIELDS:
+                if field in {"ts_code", "trade_date", "pe", "pe_ttm"}:
+                    continue
+                try:
+                    value = Decimal(row[field])
+                except (InvalidOperation, KeyError):
+                    errors.append(f"{path.name}:{row_number}: invalid decimal in {field}")
+                    continue
+                if field != "volume_ratio" and value < 0:
+                    errors.append(f"{path.name}:{row_number}: {field} is negative")
+
+            try:
+                total_share = Decimal(row["total_share"])
+                float_share = Decimal(row["float_share"])
+                free_share = Decimal(row["free_share"])
+            except (InvalidOperation, KeyError):
+                continue
+            if float_share > total_share:
+                errors.append(f"{path.name}:{row_number}: float_share exceeds total_share")
+            if free_share > float_share:
+                errors.append(f"{path.name}:{row_number}: free_share exceeds float_share")
+
+    return errors
+
+
 def build_missingness_report(context: RunContext, manifest: dict[str, Any]) -> dict[str, Any]:
     expected = expected_keys(context.dataset_name, manifest)
     actual_keys = read_actual_keys(context.sandbox_dataset_root / "data" / "published" / "current", get_spec(context.dataset_name))
     accepted = read_accepted_missingness(context)
-    trading_calendar = load_trade_calendar(context.repo_root) if context.dataset_name == "tushare_daily" else {}
+    trading_calendar = (
+        load_trade_calendar(context.repo_root)
+        if context.dataset_name in {"tushare_daily", "tushare_daily_basic"}
+        else {}
+    )
 
     missing: list[dict[str, str]] = []
     blocks_publish = False
@@ -199,15 +253,15 @@ def build_missingness_report(context: RunContext, manifest: dict[str, Any]) -> d
             record = {
                 "key": first,
                 "date": date_value,
-                "ts_code": first if context.dataset_name == "tushare_daily" else None,
-                "trade_date": date_value if context.dataset_name == "tushare_daily" else None,
+                "ts_code": first if context.dataset_name in {"tushare_daily", "tushare_daily_basic"} else None,
+                "trade_date": date_value if context.dataset_name in {"tushare_daily", "tushare_daily_basic"} else None,
                 "exchange": first if context.dataset_name == "trade_calendar" else None,
                 "cal_date": date_value if context.dataset_name == "trade_calendar" else None,
                 "reason": accepted_record["reason"],
                 "status": "accepted",
                 "blocks_publish": "false",
             }
-        elif context.dataset_name == "tushare_daily" and calendar_missing_reason:
+        elif context.dataset_name in {"tushare_daily", "tushare_daily_basic"} and calendar_missing_reason:
             record = {
                 "key": first,
                 "date": date_value,
@@ -223,8 +277,8 @@ def build_missingness_report(context: RunContext, manifest: dict[str, Any]) -> d
             record = {
                 "key": first,
                 "date": date_value,
-                "ts_code": first if context.dataset_name == "tushare_daily" else None,
-                "trade_date": date_value if context.dataset_name == "tushare_daily" else None,
+                "ts_code": first if context.dataset_name in {"tushare_daily", "tushare_daily_basic"} else None,
+                "trade_date": date_value if context.dataset_name in {"tushare_daily", "tushare_daily_basic"} else None,
                 "exchange": first if context.dataset_name == "trade_calendar" else None,
                 "cal_date": date_value if context.dataset_name == "trade_calendar" else None,
                 "reason": "unknown",

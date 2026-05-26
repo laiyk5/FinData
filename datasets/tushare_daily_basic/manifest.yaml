@@ -1,0 +1,35 @@
+dataset: tushare_daily_basic
+status: scaffold
+version: 0.1.0
+owner: Lai
+storage:
+  raw: data/raw
+  staged: data/staged
+  published_current: data/published/current
+  archive: data/archive
+format:
+  raw: json
+  staged: csv
+  published: csv
+provider:
+  name: tushare
+  api: daily_basic
+  documentation: https://tushare.pro/document/2?doc_id=32
+  token_env: TUSHARE_API_KEY
+  real_ingestion_enabled: false
+  real_ingestion_policy: explicit_cli_opt_in
+coverage:
+  symbols: []
+  start_date: null
+  end_date: null
+  calendar: CN_A_SHARE
+  symbol_ranges: {}
+missingness:
+  status: not_assessed
+  accepted_file: checks/missingness.yaml
+quality:
+  validation_status: not_run
+  last_validation_report: null
+publication:
+  last_published_at: null
+  current_path: data/published/current
