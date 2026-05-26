@@ -29,10 +29,23 @@ class ReportCatalogTests(unittest.TestCase):
         self.repo_root = Path(self.temp_dir.name)
         for dataset_name in ("report_catalog", "instrument_universe"):
             shutil.copytree(REPO_ROOT / "datasets" / dataset_name, self.repo_root / "datasets" / dataset_name)
+        self.reset_runtime_dataset_state(self.repo_root / "datasets" / "report_catalog")
         (self.repo_root / "sandboxes" / "runs").mkdir(parents=True)
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
+
+    def reset_runtime_dataset_state(self, dataset_root: Path) -> None:
+        data_root = dataset_root / "data"
+        if data_root.exists():
+            shutil.rmtree(data_root)
+        for relative in ("data/raw", "data/staged", "data/published/current", "data/archive"):
+            (dataset_root / relative).mkdir(parents=True, exist_ok=True)
+
+        for generated_path in (dataset_root / "checks").glob("*.json"):
+            generated_path.unlink()
+        for generated_path in (dataset_root / "logs").glob("*.json"):
+            generated_path.unlink()
 
     def test_fake_pipeline_filters_summary_and_marks_latest_version(self) -> None:
         context, result = run_full_fake_pipeline(
