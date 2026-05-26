@@ -11,5 +11,6 @@ class ScaffoldTests(unittest.TestCase):
 
         self.assertTrue((dataset_root / "dataset_card.md").is_file())
         self.assertTrue((dataset_root / "manifest.yaml").is_file())
+        self.assertTrue((dataset_root / "maintenance.md").is_file())
         self.assertTrue((dataset_root / "schema.yaml").is_file())
         self.assertTrue((dataset_root / "checks" / "missingness.yaml").is_file())
