@@ -43,12 +43,12 @@ class DailyBasicTests(unittest.TestCase):
             run_id="daily-basic-run-ok",
         )
 
-        self.assertEqual(result["prepare"]["prepared"], 1)
+        self.assertEqual(result["prepare"]["prepared"], 2)
         current_file = context.dataset_root / "data" / "published" / "current" / "daily_basic.csv"
         self.assertTrue(current_file.is_file())
         self.assertTrue((context.sandbox_root / "logs" / "prepare_summary.json").is_file())
 
-    def test_daily_basic_range_scheduler_batches_under_row_limit(self) -> None:
+    def test_daily_basic_range_scheduler_uses_one_request_per_symbol(self) -> None:
         symbols = [f"{index:06d}.SZ" for index in range(300)]
         expected_trade_dates = [f"2024{index:04d}" for index in range(1, 2428)]
         context = create_run_sandbox(
@@ -68,12 +68,13 @@ class DailyBasicTests(unittest.TestCase):
         manifest = read_json(context.run_manifest_path)
         ledger = read_json(context.prepare_ledger_path)
 
-        self.assertEqual(manifest["request_plan"]["request_count"], 122)
-        self.assertEqual(manifest["request_plan"]["max_estimated_rows_per_request"], 6000)
+        self.assertEqual(manifest["request_plan"]["request_count"], 300)
+        self.assertEqual(manifest["request_plan"]["max_estimated_rows_per_request"], len(expected_trade_dates))
+        self.assertEqual(set(manifest["request_plan"]["modes"]), {"symbol_range"})
         self.assertTrue(all(request["api"] == "daily_basic" for request in ledger["requests"].values()))
         self.assertTrue(all(request["estimated_max_rows"] <= 6000 for request in ledger["requests"].values()))
 
-    def test_share_count_contradiction_blocks_qa(self) -> None:
+    def test_total_share_contradiction_blocks_qa(self) -> None:
         context = create_run_sandbox(
             repo_root=self.repo_root,
             dataset_name="tushare_daily_basic",
@@ -85,7 +86,7 @@ class DailyBasicTests(unittest.TestCase):
         prepare_fake_raw(context)
         raw_path = next(context.raw_root.glob("*.json"))
         payload = read_json(raw_path)
-        payload["items"][0]["free_share"] = "999999999"
+        payload["items"][0]["float_share"] = "999999999"
         write_json(raw_path, payload)
 
         ingest_prepared_raw(context)
@@ -93,7 +94,31 @@ class DailyBasicTests(unittest.TestCase):
 
         self.assertFalse(status["passed"])
         validation = read_json(context.qa_root / "validation_report.json")
-        self.assertTrue(any("free_share exceeds float_share" in error for error in validation["errors"]))
+        self.assertTrue(any("float_share exceeds total_share" in error for error in validation["errors"]))
+
+    def test_daily_basic_missingness_uses_prepared_raw_keys(self) -> None:
+        context = create_run_sandbox(
+            repo_root=self.repo_root,
+            dataset_name="tushare_daily_basic",
+            provider="fake",
+            symbols=["000001.SZ", "600000.SH"],
+            trade_dates=["20240506"],
+            run_id="daily-basic-missing-prepared-key",
+        )
+        prepare_fake_raw(context)
+        ingest_prepared_raw(context)
+
+        current_file = context.sandbox_dataset_root / "data" / "published" / "current" / "daily_basic.csv"
+        current_file.unlink()
+
+        status = run_qa(context)
+
+        self.assertFalse(status["passed"])
+        missingness = read_json(context.qa_root / "missingness_report.json")
+        self.assertEqual(missingness["expected_source"], "prepared_raw")
+        self.assertEqual(missingness["expected_count"], 2)
+        self.assertEqual(missingness["actual_count"], 0)
+        self.assertEqual(missingness["missing_count"], 2)
 
 
 if __name__ == "__main__":

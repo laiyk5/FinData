@@ -26,8 +26,8 @@ fields:
     description: Free-float turnover rate in percent.
   - name: volume_ratio
     type: decimal
-    required: true
-    description: Volume ratio.
+    required: false
+    description: Volume ratio; may be empty when the source does not publish the metric.
   - name: pe
     type: decimal
     required: false
@@ -38,24 +38,24 @@ fields:
     description: Trailing twelve month price-to-earnings ratio; may be empty.
   - name: pb
     type: decimal
-    required: true
-    description: Price-to-book ratio.
+    required: false
+    description: Price-to-book ratio; may be empty when the source does not publish the metric.
   - name: ps
     type: decimal
     required: true
     description: Price-to-sales ratio.
   - name: ps_ttm
     type: decimal
-    required: true
-    description: Trailing twelve month price-to-sales ratio.
+    required: false
+    description: Trailing twelve month price-to-sales ratio; may be empty.
   - name: dv_ratio
     type: decimal
-    required: true
-    description: Dividend yield in percent.
+    required: false
+    description: Dividend yield in percent; may be empty.
   - name: dv_ttm
     type: decimal
-    required: true
-    description: Trailing twelve month dividend yield in percent.
+    required: false
+    description: Trailing twelve month dividend yield in percent; may be empty.
   - name: total_share
     type: decimal
     required: true
@@ -66,8 +66,8 @@ fields:
     description: Floating shares in ten thousand shares.
   - name: free_share
     type: decimal
-    required: true
-    description: Free-floating shares in ten thousand shares.
+    required: false
+    description: Free-floating shares in ten thousand shares; may be empty.
   - name: total_mv
     type: decimal
     required: true

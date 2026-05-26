@@ -202,7 +202,7 @@ class TushareProviderTests(unittest.TestCase):
             summary = prepare_raw(context, transport=transport)
 
         ledger = read_json(context.prepare_ledger_path)
-        request = ledger["requests"]["daily_basic:20240510:000001.SZ"]
+        request = ledger["requests"]["daily_basic:20240510:20240510:000001.SZ"]
         raw_path = context.sandbox_root / request["raw_path"]
         raw_payload = read_json(raw_path)
 

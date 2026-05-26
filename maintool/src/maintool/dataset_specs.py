@@ -189,9 +189,10 @@ def request_file_stem(dataset_name: str, request: dict[str, Any]) -> str:
 
 
 def plan_requests(dataset_name: str, symbols: list[str], trade_dates: list[str], extras: dict[str, Any]) -> list[dict[str, Any]]:
-    if dataset_name in {"tushare_daily", "tushare_daily_basic"}:
-        api_name = "daily_basic" if dataset_name == "tushare_daily_basic" else "daily"
-        return plan_daily_requests(symbols, trade_dates, extras, api_name=api_name)
+    if dataset_name == "tushare_daily":
+        return plan_daily_requests(symbols, trade_dates, extras)
+    if dataset_name == "tushare_daily_basic":
+        return plan_daily_basic_requests(symbols, trade_dates, extras)
     if dataset_name == "trade_calendar":
         exchange = extras["exchange"]
         return [
@@ -278,6 +279,30 @@ def plan_daily_requests(
 
 def apply_api_name(requests: list[dict[str, Any]], api_name: str) -> list[dict[str, Any]]:
     return [{**request, "api": api_name} for request in requests]
+
+
+def plan_daily_basic_requests(symbols: list[str], trade_dates: list[str], extras: dict[str, Any]) -> list[dict[str, Any]]:
+    expected_trade_dates = list(extras.get("expected_trade_dates") or trade_dates)
+    if not symbols or not expected_trade_dates:
+        return []
+
+    if extras.get("daily_request_strategy") == DAILY_REQUEST_STRATEGY_TRADE_DATE_ALL:
+        return apply_api_name(plan_daily_trade_date_all_requests(symbols, expected_trade_dates), "daily_basic")
+
+    return [
+        {
+            "api": "daily_basic",
+            "request_mode": "symbol_range",
+            "ts_code": symbol,
+            "symbols": [symbol],
+            "start_date": expected_trade_dates[0],
+            "end_date": expected_trade_dates[-1],
+            "expected_trade_dates": list(expected_trade_dates),
+            "estimated_max_rows": len(expected_trade_dates),
+            "row_limit": DAILY_MAX_ROWS_PER_REQUEST,
+        }
+        for symbol in symbols
+    ]
 
 
 def plan_daily_symbol_range_requests(symbols: list[str], expected_trade_dates: list[str]) -> list[dict[str, Any]]:

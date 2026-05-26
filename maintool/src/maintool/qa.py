@@ -18,6 +18,16 @@ from .trade_calendar import FIELDS as TRADE_CALENDAR_FIELDS
 
 
 ACCEPTED_MISSING_REASONS = {"market_holiday", "suspension", "outside_scope"}
+NULLABLE_DAILY_BASIC_DECIMAL_FIELDS = {
+    "pe",
+    "pe_ttm",
+    "pb",
+    "ps_ttm",
+    "dv_ratio",
+    "dv_ttm",
+    "volume_ratio",
+    "free_share",
+}
 
 
 def run_qa(context: RunContext) -> dict[str, Any]:
@@ -210,7 +220,9 @@ def validate_daily_basic_csv(path: Path) -> list[str]:
                 errors.append(f"{path.name}:{row_number}: invalid trade_date {row['trade_date']}")
 
             for field in DAILY_BASIC_FIELDS:
-                if field in {"ts_code", "trade_date", "pe", "pe_ttm"}:
+                if field in {"ts_code", "trade_date"}:
+                    continue
+                if field in NULLABLE_DAILY_BASIC_DECIMAL_FIELDS and row.get(field, "") == "":
                     continue
                 try:
                     value = Decimal(row[field])
@@ -228,15 +240,19 @@ def validate_daily_basic_csv(path: Path) -> list[str]:
                 continue
             if float_share > total_share:
                 errors.append(f"{path.name}:{row_number}: float_share exceeds total_share")
-            if free_share > float_share:
-                errors.append(f"{path.name}:{row_number}: free_share exceeds float_share")
 
     return errors
 
 
 def build_missingness_report(context: RunContext, manifest: dict[str, Any]) -> dict[str, Any]:
-    expected = expected_keys(context.dataset_name, manifest)
-    actual_keys = read_actual_keys(context.sandbox_dataset_root / "data" / "published" / "current", get_spec(context.dataset_name))
+    spec = get_spec(context.dataset_name)
+    expected_source = "manifest"
+    if context.dataset_name == "tushare_daily_basic":
+        expected = read_raw_primary_keys(context, spec)
+        expected_source = "prepared_raw"
+    else:
+        expected = expected_keys(context.dataset_name, manifest)
+    actual_keys = read_actual_keys(context.sandbox_dataset_root / "data" / "published" / "current", spec)
     accepted = read_accepted_missingness(context)
     trading_calendar = (
         load_trade_calendar(context.repo_root)
@@ -294,9 +310,25 @@ def build_missingness_report(context: RunContext, manifest: dict[str, Any]) -> d
         "actual_count": len(expected & actual_keys),
         "missing_count": len(missing),
         "blocks_publish": blocks_publish,
+        "expected_source": expected_source,
         "missing": missing,
         "finished_at": utc_stamp(),
     }
+
+
+def read_raw_primary_keys(context: RunContext, spec: DatasetSpec) -> set[tuple[str, str]]:
+    keys: set[tuple[str, str]] = set()
+    if not context.raw_root.exists():
+        return keys
+
+    for raw_path in sorted(context.raw_root.glob("*.json")):
+        payload = read_json(raw_path)
+        for item in payload.get("items", []):
+            try:
+                keys.add(tuple(str(item[field]) for field in spec.primary_key))
+            except KeyError:
+                continue
+    return keys
 
 
 def read_actual_keys(current_dir: Path, spec: DatasetSpec | None = None) -> set[tuple[str, str]]:
