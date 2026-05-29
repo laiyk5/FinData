@@ -21,13 +21,10 @@ Commit the mechanism:
 
 Do not commit generated data:
 
-- `data/raw/`
-- `data/staged/`
-- `data/published/`
-- `data/archive/`
+- `datasets/{dataset}/published/`
 - `manifest.yaml`
-- `checks/*.json`
-- `logs/*.json`
+- `archived/`
+- `cache/`
 - `sandboxes/runs/`
 
 If a generated file is small and needed as a test fixture, place it under the
@@ -102,5 +99,6 @@ limits.
 - Fake-provider path passes.
 - Real-provider smoke test passes.
 - Progress logs and summaries are written for long stages.
-- Generated data and checks are ignored or stored outside git.
+- Generated data is ignored or stored outside git, with the active published
+  version living under `datasets/{dataset}/published/current/`.
 - A clean commit contains only code, contracts, and documentation.

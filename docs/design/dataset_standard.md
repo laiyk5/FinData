@@ -9,18 +9,22 @@ Each dataset should contain:
 ```text
 dataset_card.md
 schema.yaml
-data/
-logs/
-checks/
+maintenance.md
+manifest.yaml
+published/current/
 ```
 
-## Required Data Folders
+`published/current/` is the stable consumer path for the latest accepted
+version. The extra `current/` layer exists so the maintainer can prepare a new
+published directory and atomically swap it into place.
+
+## Required Workspace Roots
 
 ```text
-data/raw/                Provider responses or source extracts.
-data/staged/             Normalized data waiting for validation.
-data/published/current/  Current trusted consumer-facing version.
-data/archive/            Previous accepted published versions.
+datasets/   Dataset contracts and current published versions.
+sandboxes/  Run-local raw, staged, QA, and logs.
+archived/   Historical published versions for every dataset.
+cache/      Provider/API response cache for reuse and recovery.
 ```
 
 ## Required Metadata
@@ -30,8 +34,9 @@ data/archive/            Previous accepted published versions.
 `schema.yaml` defines fields, types, meanings, units, and primary keys.
 
 `manifest.yaml`, when present locally, records generated operational metadata
-such as dataset status, coverage, last published version, and known missingness
-summary. It is a dataset artifact rather than a git-managed contract.
+such as dataset status, coverage, current publish location, archive location,
+and known missingness summary. It is a dataset artifact rather than a
+git-managed contract.
 
 ## Git Boundary
 
@@ -44,18 +49,16 @@ Track these files in git:
 dataset_card.md
 schema.yaml
 maintenance.md
-checks/README.md
-logs/README.md
 ```
 
 Do not track generated artifacts unless a dataset-specific document explicitly
 allows a small fixture:
 
 ```text
-data/
+published/
 manifest.yaml
-checks/*.json
-logs/*.json
+archived/
+cache/
 sandboxes/runs/
 ```
 
@@ -69,13 +72,10 @@ do not commit it. Stable source-controlled metadata belongs in
 
 ## Required Checks
 
-Each dataset should eventually maintain:
+Run QA artifacts live in the sandbox:
 
 ```text
-checks/validation_report.json
-checks/missingness.yaml
-checks/checksum_manifest.yaml
-checks/coverage_report.yaml
+sandboxes/runs/{dataset}/{run_id}/qa/
 ```
 
 ## Publishing Rule
@@ -90,4 +90,15 @@ Dataset updates should run through a sandbox:
 sandboxes/runs/{dataset}/{run_id}/
 ```
 
-The sandbox contains a dataset copy, prepared raw files, a request ledger, QA reports, and run metadata. The canonical dataset under `datasets/` should be changed only during the final publish step.
+The sandbox contains a dataset copy, prepared raw files, a request ledger, QA
+reports, and run metadata. The canonical dataset under `datasets/` should be
+changed only during the final publish step.
+
+Historical publish outputs belong under `archived/`. Each archived version
+should be a complete package, not just bare data files. At minimum that package
+should include the published data plus the matching dataset card, schema,
+maintenance notes, manifest snapshot, and archive metadata.
+
+Provider raw responses may be mirrored into `sandboxes/runs/{dataset}/{run_id}/raw/`
+for run-local debugging, but the reusable canonical copy should live under
+`cache/{provider}/{api}/`.

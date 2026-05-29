@@ -30,8 +30,10 @@ Each run lives under:
 sandboxes/runs/{dataset}/{run_id}/
 ```
 
-The sandbox owns run-local state such as `run_manifest.json`, raw provider
-responses, request ledgers, QA reports, and stage logs.
+The sandbox owns run-local state such as `run_manifest.json`, run-local raw
+provider responses, request ledgers, staged files, QA reports, and stage logs.
+Reusable canonical provider responses should be stored in `cache/`, with the
+sandbox holding the run-local copy used by the current maintenance run.
 
 ## Before A Run
 
@@ -119,11 +121,12 @@ fixture rule says otherwise.
 
 Common generated outputs:
 
-- `data/published/current/`
-- `data/archive/`
-- `checks/*.json`
-- `logs/*.json`
-- `sandboxes/runs/{dataset}/{run_id}/`
+- `datasets/{dataset}/published/current/`
+- `archived/{dataset}/`
+- `sandboxes/runs/{dataset}/{run_id}/raw/`
+- `sandboxes/runs/{dataset}/{run_id}/staged/`
+- `sandboxes/runs/{dataset}/{run_id}/qa/`
+- `sandboxes/runs/{dataset}/{run_id}/logs/`
 
 ## Handoff Notes
 

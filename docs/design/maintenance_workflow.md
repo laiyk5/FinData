@@ -16,9 +16,9 @@ create run sandbox -> inspect current dataset -> prepare raw data -> ingest sand
 4. Ingest prepared raw files into the sandbox dataset copy.
 5. Run QA for schema, duplicates, missingness, and unusual values.
 6. Publish only from a QA-passed sandbox.
-7. Move the previous published version into `data/archive/`.
-8. Write logs, checksums, coverage reports, and manifest updates.
-9. Create or refresh backups when backup support is added.
+7. Move the previous published version into `archived/{dataset}/` as a complete version package with data and version metadata.
+8. Write logs, checksums, coverage reports, and manifest updates in the sandbox or dataset contract as appropriate.
+9. Save provider raw responses into `cache/{provider}/{api}/` and mirror the run-local copy into `sandboxes/runs/{dataset}/{run_id}/raw/` for debugging and restartability.
 
 ## Safety Rules
 

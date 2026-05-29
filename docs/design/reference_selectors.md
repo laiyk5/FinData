@@ -16,7 +16,7 @@ Example:
 @universe:index:SSE50
 ```
 
-When used with `tushare_daily --symbols`, the maintool resolves the selector from `datasets/instrument_universe/data/published/current`, chooses the latest `as_of_date` for that universe, and writes both the selector and the concrete resolved symbols into the run manifest.
+When used with `tushare_daily --symbols`, the maintool resolves the selector from `datasets/instrument_universe/published/current`, chooses the latest `as_of_date` for that universe, and writes both the selector and the concrete resolved symbols into the run manifest.
 
 Example command:
 
