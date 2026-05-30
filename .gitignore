@@ -10,13 +10,7 @@ maintool/bin/__pycache__/
 *.log
 
 sandboxes/runs/
-backups/snapshots/
-archived/
 cache/
 
-datasets/**/manifest.yaml
-datasets/**/published/
-datasets/**/data/
-datasets/**/checks/
-datasets/**/logs/
+published/datasets/
 backups/

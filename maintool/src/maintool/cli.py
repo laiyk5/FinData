@@ -41,7 +41,7 @@ REQUIRED_DATASET_FILES = (
 )
 
 REQUIRED_DATASET_DIRS = (
-    "published/current",
+    "current",
 )
 
 FORBIDDEN_DATASET_DIRS = (
@@ -61,7 +61,8 @@ class DatasetPaths:
 
     @property
     def root(self) -> Path:
-        return self.repo_root / "datasets" / self.dataset_name
+        from .workspace import dataset_root
+        return dataset_root(self.repo_root, self.dataset_name)
 
 
 def resolve_repo_root(value: str) -> Path:
@@ -73,7 +74,8 @@ def dataset_paths(repo_root: Path, dataset_name: str) -> DatasetPaths:
 
 
 def list_datasets(repo_root: Path) -> int:
-    datasets_root = repo_root / "datasets"
+    from .workspace import published_datasets_root
+    datasets_root = published_datasets_root(repo_root)
     if not datasets_root.exists():
         print(f"No datasets directory found at {datasets_root}")
         return 1
@@ -157,7 +159,7 @@ def validate_dataset(repo_root: Path, dataset_name: str) -> int:
                 if key not in schema_text:
                     errors.append(f"Schema missing key: {key}")
 
-        current_dir = paths.root / "published" / "current"
+        current_dir = paths.root / "current"
         if dataset_name in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_moneyflow", "tushare_index_weight", "trade_calendar", "report_catalog"}:
             published_files = sorted(current_dir.rglob("*.csv"))
             for published_file in published_files:

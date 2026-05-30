@@ -27,15 +27,15 @@ class ReportCatalogTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.repo_root = Path(self.temp_dir.name)
-        shutil.copytree(REPO_ROOT / "datasets" / "cninfo" / "report_catalog", self.repo_root / "datasets" / "cninfo" / "report_catalog")
-        self.reset_runtime_dataset_state(self.repo_root / "datasets" / "cninfo" / "report_catalog")
+        shutil.copytree(REPO_ROOT / "published" / "datasets" / "cninfo" / "report_catalog", self.repo_root / "published" / "datasets" / "cninfo" / "report_catalog")
+        self.reset_runtime_dataset_state(self.repo_root / "published" / "datasets" / "cninfo" / "report_catalog")
         (self.repo_root / "sandboxes" / "runs").mkdir(parents=True)
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
 
     def reset_runtime_dataset_state(self, dataset_root: Path) -> None:
-        for relative in ("published/current",):
+        for relative in ("current",):
             path = dataset_root / relative
             if path.exists():
                 shutil.rmtree(path)
@@ -66,7 +66,6 @@ class ReportCatalogTests(unittest.TestCase):
         self.assertEqual(result["prepare"]["prepared"], 1)
         current_path = (
             context.dataset_root
-            / "published"
             / "current"
             / "universe_id=manual"
             / "report_catalog.csv"
@@ -119,7 +118,7 @@ class ReportCatalogTests(unittest.TestCase):
         )
         prepare_fake_raw(context)
         ingest_prepared_raw(context)
-        current_path = next((context.sandbox_dataset_root / "published" / "current").rglob("report_catalog.csv"))
+        current_path = next((context.sandbox_dataset_root / "current").rglob("report_catalog.csv"))
         rows = self.read_rows(current_path)
         for row in rows:
             if row["report_type"] == "annual":

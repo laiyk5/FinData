@@ -37,10 +37,6 @@ class RunContext:
         return workspace_dataset_root(self.repo_root, self.dataset_name)
 
     @property
-    def published_root(self) -> Path:
-        return self.dataset_root / "published"
-
-    @property
     def published_current_root(self) -> Path:
         return dataset_current_root(self.repo_root, self.dataset_name)
 

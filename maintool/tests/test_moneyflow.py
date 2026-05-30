@@ -30,12 +30,12 @@ class MoneyflowTests(unittest.TestCase):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.repo_root = Path(self.temp_dir.name)
         shutil.copytree(
-            REPO_ROOT / "datasets" / "tushare" / "moneyflow",
-            self.repo_root / "datasets" / "tushare" / "moneyflow",
+            REPO_ROOT / "published" / "datasets" / "tushare" / "moneyflow",
+            self.repo_root / "published" / "datasets" / "tushare" / "moneyflow",
         )
         shutil.copytree(
-            REPO_ROOT / "datasets" / "tushare" / "trade_cal",
-            self.repo_root / "datasets" / "tushare" / "trade_cal",
+            REPO_ROOT / "published" / "datasets" / "tushare" / "trade_cal",
+            self.repo_root / "published" / "datasets" / "tushare" / "trade_cal",
         )
         (self.repo_root / "sandboxes" / "runs").mkdir(parents=True)
 
@@ -53,7 +53,7 @@ class MoneyflowTests(unittest.TestCase):
         )
 
         self.assertEqual(result["prepare"]["prepared"], 1)
-        self.assertTrue((context.dataset_root / "published" / "current" / "moneyflow.csv").is_file())
+        self.assertTrue((context.dataset_root / "current" / "moneyflow.csv").is_file())
         self.assertTrue(result["qa"]["passed"])
 
     def test_real_success_normalizes_raw_json(self) -> None:

@@ -11,7 +11,7 @@ from .dataset_specs import coverage_from_rows, get_spec
 from .jsonio import read_json, write_json
 from .run_sandbox import RunContext, mark_step, utc_stamp
 from .stage_logs import append_stage_event, write_stage_summary
-from .workspace import dataset_backup_root
+from .workspace import dataset_backup_root, dataset_docs_dir
 
 
 def publish_sandbox(context: RunContext, fail_before_final_rename: bool = False) -> dict[str, Any]:
@@ -33,14 +33,13 @@ def publish_sandbox(context: RunContext, fail_before_final_rename: bool = False)
     if not status.get("passed"):
         raise RuntimeError("QA did not pass. Publish is blocked.")
 
-    source_current = context.sandbox_dataset_root / "published" / "current"
+    source_current = context.sandbox_dataset_root / "current"
     if not source_current.is_dir():
         raise RuntimeError(f"Sandbox published current directory is missing: {source_current}")
 
     dataset_root = context.dataset_root
-    published_root = dataset_root / "published"
-    current_dir = published_root / "current"
-    next_dir = published_root / f"next-{context.run_id}"
+    current_dir = dataset_root / "current"
+    next_dir = dataset_root / f"next-{context.run_id}"
 
     if next_dir.exists():
         raise FileExistsError(f"Next publish directory already exists: {next_dir}")
@@ -68,6 +67,11 @@ def publish_sandbox(context: RunContext, fail_before_final_rename: bool = False)
         },
     )
 
+    # Attach dataset documentation alongside published data
+    docs_dir = dataset_docs_dir(context.repo_root, context.dataset_name)
+    _copy_doc(docs_dir, dataset_root, "dataset_card.md")
+    _copy_doc(docs_dir, dataset_root, "schema.yaml")
+
     if fail_before_final_rename:
         raise RuntimeError("Simulated failure before final rename.")
 
@@ -77,7 +81,7 @@ def publish_sandbox(context: RunContext, fail_before_final_rename: bool = False)
         backup_root = context.repo_root / "backups" / spec.provider / spec.api_name
         backup_root.mkdir(parents=True, exist_ok=True)
         backup_path = backup_root / utc_stamp()
-        shutil.copytree(current_dir, backup_path)
+        shutil.copytree(dataset_root, backup_path, ignore=shutil.ignore_patterns(f"next-*"))
         prune_backups(backup_root, keep=3)
         shutil.rmtree(current_dir)
         append_stage_event(
@@ -134,6 +138,13 @@ def publish_sandbox(context: RunContext, fail_before_final_rename: bool = False)
     return publish_log
 
 
+def _copy_doc(docs_dir: Path, target_dir: Path, filename: str) -> None:
+    """Copy a documentation file from docs/datasets/ to the published dataset root."""
+    source = docs_dir / filename
+    if source.is_file():
+        shutil.copyfile(source, target_dir / filename)
+
+
 def checksum_tree(root: Path) -> list[dict[str, str]]:
     checksums: list[dict[str, str]] = []
     for path in sorted(root.rglob("*")):
@@ -170,7 +181,7 @@ def update_manifest_after_publish(dataset_root: Path, context: RunContext, publi
     if not manifest_path.is_file():
         return
 
-    coverage = published_coverage(context.dataset_name, dataset_root / "published" / "current")
+    coverage = published_coverage(context.dataset_name, dataset_root / "current")
     text = manifest_path.read_text(encoding="utf-8")
     text = replace_block(text, "storage", render_storage_block(context.dataset_name))
     text = replace_block(text, "coverage", render_coverage_block(context.dataset_name, coverage))
@@ -276,7 +287,7 @@ def render_storage_block(dataset_name: str) -> list[str]:
     spec = get_spec(dataset_name)
     return [
         "storage:",
-        "  published_current: published/current",
+        "  published_current: current",
         "  published_current_purpose: consumer-facing latest published version",
         f"  backup_root: ../../backups/{spec.provider}/{spec.api_name}",
         "  run_sandbox_root: ../../sandboxes/runs",
@@ -304,7 +315,7 @@ def render_publication_block(context: RunContext, publish_log: dict[str, Any]) -
     return [
         "publication:",
         f"  last_published_at: {publish_log['published_at']}",
-        "  current_version_path: published/current",
+        "  current_version_path: current",
         f"  backup_path: {publish_log.get('backup_path') or 'null'}",
     ]
 
@@ -330,5 +341,3 @@ def replace_block(text: str, block_name: str, replacement: list[str]) -> str:
     if skipping:
         return "\n".join(output)
     return "\n".join(output)
-
-

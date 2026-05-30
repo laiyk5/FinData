@@ -36,12 +36,12 @@ class StkFactorProTests(unittest.TestCase):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.repo_root = Path(self.temp_dir.name)
         shutil.copytree(
-            REPO_ROOT / "datasets" / "tushare" / "stk_factor_pro",
-            self.repo_root / "datasets" / "tushare" / "stk_factor_pro",
+            REPO_ROOT / "published" / "datasets" / "tushare" / "stk_factor_pro",
+            self.repo_root / "published" / "datasets" / "tushare" / "stk_factor_pro",
         )
         shutil.copytree(
-            REPO_ROOT / "datasets" / "tushare" / "trade_cal",
-            self.repo_root / "datasets" / "tushare" / "trade_cal",
+            REPO_ROOT / "published" / "datasets" / "tushare" / "trade_cal",
+            self.repo_root / "published" / "datasets" / "tushare" / "trade_cal",
         )
         (self.repo_root / "sandboxes" / "runs").mkdir(parents=True)
 
@@ -60,7 +60,7 @@ class StkFactorProTests(unittest.TestCase):
 
         self.assertEqual(result["prepare"]["prepared"], 2)
         self.assertTrue(
-            (context.dataset_root / "published" / "current" / "stk_factor_pro.csv").is_file()
+            (context.dataset_root / "current" / "stk_factor_pro.csv").is_file()
         )
         self.assertTrue(result["qa"]["passed"])
 

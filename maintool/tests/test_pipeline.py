@@ -28,8 +28,8 @@ class PipelineTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.repo_root = Path(self.temp_dir.name)
-        dataset_source = REPO_ROOT / "datasets" / "tushare" / "daily"
-        dataset_target = self.repo_root / "datasets" / "tushare" / "daily"
+        dataset_source = REPO_ROOT / "published" / "datasets" / "tushare" / "daily"
+        dataset_target = self.repo_root / "published" / "datasets" / "tushare" / "daily"
         shutil.copytree(dataset_source, dataset_target)
         (self.repo_root / "sandboxes" / "runs").mkdir(parents=True)
 
@@ -48,13 +48,15 @@ class PipelineTests(unittest.TestCase):
 
         self.assertEqual(result["prepare"]["prepared"], 1)
         self.assertTrue((context.sandbox_root / "run_manifest.json").is_file())
-        self.assertTrue((context.dataset_root / "published" / "current" / "daily.csv").is_file())
+        self.assertTrue((context.dataset_root / "current" / "daily.csv").is_file())
         backup_dir = context.repo_root / "backups" / "tushare" / "daily"
         self.assertTrue(backup_dir.is_dir())
         backups = [path for path in backup_dir.iterdir() if path.is_dir()]
         self.assertTrue(backups)
         backup_package = backups[0]
-        self.assertTrue((backup_package / "daily.csv").is_file())
+        self.assertTrue((backup_package / "current" / "daily.csv").is_file())
+        self.assertTrue((backup_package / "dataset_card.md").is_file())
+        self.assertTrue((backup_package / "schema.yaml").is_file())
         self.assertTrue((context.qa_root / "checksum_manifest.json").is_file())
         for stage in ("prepare", "ingest", "qa", "publish"):
             self.assertTrue((context.sandbox_root / "logs" / f"{stage}_summary.json").is_file())
@@ -304,7 +306,7 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(missingness["missing"][0]["reason"], "unknown")
 
     def test_daily_coverage_renders_symbol_ranges(self) -> None:
-        coverage = published_coverage("tushare_daily", self.repo_root / "datasets" / "tushare" / "daily" / "published" / "current")
+        coverage = published_coverage("tushare_daily", self.repo_root / "published" / "datasets" / "tushare" / "daily" / "current")
         rendered = render_coverage_block("tushare_daily", coverage)
 
         self.assertIn("  symbol_ranges:", rendered)
@@ -320,7 +322,7 @@ class PipelineTests(unittest.TestCase):
             run_id="run-first",
             use_fake=True,
         )
-        current_file = context.dataset_root / "published" / "current" / "daily.csv"
+        current_file = context.dataset_root / "current" / "daily.csv"
         before = current_file.read_text(encoding="utf-8")
 
         second = self.create_prepared_context("run-failed-publish", trade_date="20240507")
@@ -346,7 +348,7 @@ class PipelineTests(unittest.TestCase):
         return context
 
     def write_trade_calendar(self, exchange: str, rows: list[tuple[str, str]]) -> None:
-        current_dir = self.repo_root / "datasets" / "tushare" / "trade_cal" / "published" / "current" / f"exchange={exchange}"
+        current_dir = self.repo_root / "published" / "datasets" / "tushare" / "trade_cal" / "current" / f"exchange={exchange}"
         current_dir.mkdir(parents=True, exist_ok=True)
         with (current_dir / "trade_calendar.csv").open("w", newline="", encoding="utf-8") as output:
             writer = csv.DictWriter(output, fieldnames=["exchange", "cal_date", "is_open", "pretrade_date"])

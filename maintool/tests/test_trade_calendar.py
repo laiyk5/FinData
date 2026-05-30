@@ -31,8 +31,8 @@ class TradeCalendarTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.repo_root = Path(self.temp_dir.name)
-        shutil.copytree(REPO_ROOT / "datasets" / "tushare" / "trade_cal", self.repo_root / "datasets" / "tushare" / "trade_cal")
-        clear_current(self.repo_root / "datasets" / "tushare" / "trade_cal")
+        shutil.copytree(REPO_ROOT / "published" / "datasets" / "tushare" / "trade_cal", self.repo_root / "published" / "datasets" / "tushare" / "trade_cal")
+        clear_current(self.repo_root / "published" / "datasets" / "tushare" / "trade_cal")
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
@@ -52,7 +52,6 @@ class TradeCalendarTests(unittest.TestCase):
         self.assertTrue(
             (
                 context.dataset_root
-                / "published"
                 / "current"
                 / "exchange=SSE"
                 / "trade_calendar.csv"
@@ -140,8 +139,8 @@ class TradeCalendarTushareTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.repo_root = Path(self.temp_dir.name)
-        shutil.copytree(REPO_ROOT / "datasets" / "tushare" / "trade_cal", self.repo_root / "datasets" / "tushare" / "trade_cal")
-        clear_current(self.repo_root / "datasets" / "tushare" / "trade_cal")
+        shutil.copytree(REPO_ROOT / "published" / "datasets" / "tushare" / "trade_cal", self.repo_root / "published" / "datasets" / "tushare" / "trade_cal")
+        clear_current(self.repo_root / "published" / "datasets" / "tushare" / "trade_cal")
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
@@ -190,7 +189,6 @@ class TradeCalendarTushareTests(unittest.TestCase):
         status = run_qa(context)
         current_file = (
             context.sandbox_dataset_root
-            / "published"
             / "current"
             / "exchange=SSE"
             / "trade_calendar.csv"
@@ -251,7 +249,7 @@ class TradeCalendarTushareTests(unittest.TestCase):
 
 
 def clear_current(dataset_root: Path) -> None:
-    current_dir = dataset_root / "published" / "current"
+    current_dir = dataset_root / "current"
     if not current_dir.exists():
         return
     for path in sorted(current_dir.rglob("*"), reverse=True):

@@ -147,7 +147,7 @@ def write_staged_files(dataset_root: Path, rows: list[dict[str, str]], spec: Dat
 
 
 def merge_current_rows(dataset_root: Path, prepared_rows: list[dict[str, str]], spec: DatasetSpec) -> list[dict[str, str]]:
-    current_dir = dataset_root / "published" / "current"
+    current_dir = dataset_root / "current"
     current_dir.mkdir(parents=True, exist_ok=True)
 
     merged: dict[tuple[str, str], dict[str, str]] = {}

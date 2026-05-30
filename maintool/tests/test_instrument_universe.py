@@ -23,13 +23,16 @@ class InstrumentUniverseTests(unittest.TestCase):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.repo_root = Path(self.temp_dir.name)
         shutil.copytree(
-            REPO_ROOT / "datasets" / "tushare" / "index_weight",
-            self.repo_root / "datasets" / "tushare" / "index_weight",
+            REPO_ROOT / "published" / "datasets" / "tushare" / "index_weight",
+            self.repo_root / "published" / "datasets" / "tushare" / "index_weight",
         )
         shutil.copytree(
-            REPO_ROOT / "datasets" / "tushare" / "daily",
-            self.repo_root / "datasets" / "tushare" / "daily",
+            REPO_ROOT / "published" / "datasets" / "tushare" / "daily",
+            self.repo_root / "published" / "datasets" / "tushare" / "daily",
         )
+        # Clear published data so tests start with a clean state
+        _clear_current(self.repo_root / "published" / "datasets" / "tushare" / "index_weight")
+        _clear_current(self.repo_root / "published" / "datasets" / "tushare" / "daily")
         (self.repo_root / "sandboxes" / "runs").mkdir(parents=True)
 
     def tearDown(self) -> None:
@@ -144,6 +147,17 @@ class InstrumentUniverseTests(unittest.TestCase):
                     "daily-no-index-weight",
                 ]
             )
+
+
+def _clear_current(dataset_root: Path) -> None:
+    current_dir = dataset_root / "current"
+    if not current_dir.exists():
+        return
+    for path in sorted(current_dir.rglob("*"), reverse=True):
+        if path.is_file():
+            path.unlink()
+        elif path.is_dir():
+            path.rmdir()
 
 
 if __name__ == "__main__":

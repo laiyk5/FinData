@@ -31,9 +31,11 @@ class TushareIndexWeightTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.repo_root = Path(self.temp_dir.name)
-        source = REPO_ROOT / "datasets" / "tushare" / "index_weight"
-        target = self.repo_root / "datasets" / "tushare" / "index_weight"
+        source = REPO_ROOT / "published" / "datasets" / "tushare" / "index_weight"
+        target = self.repo_root / "published" / "datasets" / "tushare" / "index_weight"
         shutil.copytree(source, target)
+        # Clear published data so tests start with a clean state
+        clear_current(target)
         (self.repo_root / "sandboxes" / "runs").mkdir(parents=True)
 
     def tearDown(self) -> None:
@@ -96,13 +98,12 @@ class TushareIndexWeightTests(unittest.TestCase):
         self.assertEqual(result["prepare"]["prepared"], 1)
         current_file = (
             context.sandbox_dataset_root
-            / "published"
             / "current"
             / "index_code=000300.SH"
             / "index_weight.csv"
         )
         self.assertTrue(current_file.is_file())
-        coverage = published_coverage("tushare_index_weight", context.dataset_root / "published" / "current")
+        coverage = published_coverage("tushare_index_weight", context.dataset_root / "current")
         self.assertEqual(coverage["index_codes"], ["000300.SH"])
         self.assertEqual(coverage["latest_constituent_counts"]["000300.SH"], 2)
 
@@ -249,6 +250,17 @@ def index_weight_response(items) -> bytes:
             },
         }
     ).encode("utf-8")
+
+
+def clear_current(dataset_root: Path) -> None:
+    current_dir = dataset_root / "current"
+    if not current_dir.exists():
+        return
+    for path in sorted(current_dir.rglob("*"), reverse=True):
+        if path.is_file():
+            path.unlink()
+        elif path.is_dir():
+            path.rmdir()
 
 
 if __name__ == "__main__":

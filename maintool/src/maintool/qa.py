@@ -124,7 +124,7 @@ def build_validation_report(context: RunContext) -> dict[str, Any]:
     checked_files: list[str] = []
     errors: list[str] = []
 
-    for root in (dataset_root / "staged", dataset_root / "published" / "current"):
+    for root in (dataset_root / "staged", dataset_root / "current"):
         seen_keys: dict[tuple[str, ...], Path] = {}
         for csv_path in sorted(root.rglob("*.csv")):
             checked_files.append(str(csv_path.relative_to(context.sandbox_root)))
@@ -145,7 +145,7 @@ def build_validation_report(context: RunContext) -> dict[str, Any]:
             errors.extend(validate_unique_keys_across_files(root, csv_path, spec, seen_keys))
 
     if context.dataset_name in {"tushare_index_weight"}:
-        current_keys = read_actual_keys(dataset_root / "published" / "current", spec)
+        current_keys = read_actual_keys(dataset_root / "current", spec)
         if not current_keys:
             errors.append(f"{context.dataset_name}: empty published current")
 
@@ -389,7 +389,7 @@ def build_missingness_report(context: RunContext, manifest: dict[str, Any]) -> d
         expected_source = "prepared_raw"
     else:
         expected = expected_keys(context.dataset_name, manifest)
-    actual_keys = read_actual_keys(context.sandbox_dataset_root / "published" / "current", spec)
+    actual_keys = read_actual_keys(context.sandbox_dataset_root / "current", spec)
     actual_history = build_actual_history_bounds(actual_keys) if context.dataset_name in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_moneyflow"} else {}
     accepted = read_accepted_missingness(context)
     trading_calendar = (
@@ -622,7 +622,7 @@ def build_unusual_values_report(context: RunContext) -> dict[str, Any]:
     if context.dataset_name not in {"tushare_daily", "tushare_stk_factor_pro"}:
         return {"run_id": context.run_id, "warning_count": 0, "warnings": [], "finished_at": utc_stamp()}
 
-    rows = read_daily_rows(context.sandbox_dataset_root / "published" / "current")
+    rows = read_daily_rows(context.sandbox_dataset_root / "current")
     warnings: list[str] = []
     previous_by_symbol: dict[str, dict[str, str]] = {}
 

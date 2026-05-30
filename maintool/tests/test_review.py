@@ -26,7 +26,7 @@ class ReviewTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.repo_root = Path(self.temp_dir.name)
-        shutil.copytree(REPO_ROOT / "datasets" / "tushare" / "daily", self.repo_root / "datasets" / "tushare" / "daily")
+        shutil.copytree(REPO_ROOT / "published" / "datasets" / "tushare" / "daily", self.repo_root / "published" / "datasets" / "tushare" / "daily")
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()

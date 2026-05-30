@@ -26,8 +26,8 @@ class DailyBasicTests(unittest.TestCase):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.repo_root = Path(self.temp_dir.name)
         for dataset_name, api_name in (("tushare_daily_basic", "daily_basic"), ("trade_calendar", "trade_cal")):
-            source = REPO_ROOT / "datasets" / "tushare" / api_name
-            target = self.repo_root / "datasets" / "tushare" / api_name
+            source = REPO_ROOT / "published" / "datasets" / "tushare" / api_name
+            target = self.repo_root / "published" / "datasets" / "tushare" / api_name
             shutil.copytree(source, target)
         (self.repo_root / "sandboxes" / "runs").mkdir(parents=True)
 
@@ -45,7 +45,7 @@ class DailyBasicTests(unittest.TestCase):
         )
 
         self.assertEqual(result["prepare"]["prepared"], 2)
-        current_file = context.sandbox_dataset_root / "published" / "current" / "daily_basic.csv"
+        current_file = context.sandbox_dataset_root / "current" / "daily_basic.csv"
         self.assertTrue(current_file.is_file())
         self.assertTrue((context.sandbox_root / "logs" / "prepare_summary.json").is_file())
 
@@ -109,7 +109,7 @@ class DailyBasicTests(unittest.TestCase):
         prepare_fake_raw(context)
         ingest_prepared_raw(context)
 
-        current_file = context.sandbox_dataset_root / "published" / "current" / "daily_basic.csv"
+        current_file = context.sandbox_dataset_root / "current" / "daily_basic.csv"
         current_file.unlink()
 
         status = run_qa(context)
