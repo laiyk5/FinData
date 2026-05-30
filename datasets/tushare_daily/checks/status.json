@@ -1,9 +1,0 @@
-{
-  "dataset": "tushare_daily",
-  "finished_at": "20260524T020819Z",
-  "missingness_blocks_publish": false,
-  "passed": true,
-  "run_id": "tushare-daily-csi300-10y-batched-20160523-20260522",
-  "validation_passed": true,
-  "warning_count": 545
-}

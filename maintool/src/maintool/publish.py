@@ -11,6 +11,7 @@ from .dataset_specs import coverage_from_rows, get_spec
 from .jsonio import read_json, write_json
 from .run_sandbox import RunContext, mark_step, utc_stamp
 from .stage_logs import append_stage_event, write_stage_summary
+from .workspace import dataset_backup_root
 
 
 def publish_sandbox(context: RunContext, fail_before_final_rename: bool = False) -> dict[str, Any]:
@@ -32,15 +33,14 @@ def publish_sandbox(context: RunContext, fail_before_final_rename: bool = False)
     if not status.get("passed"):
         raise RuntimeError("QA did not pass. Publish is blocked.")
 
-    source_current = context.sandbox_dataset_root / "data" / "published" / "current"
+    source_current = context.sandbox_dataset_root / "published" / "current"
     if not source_current.is_dir():
         raise RuntimeError(f"Sandbox published current directory is missing: {source_current}")
 
     dataset_root = context.dataset_root
-    published_root = dataset_root / "data" / "published"
+    published_root = dataset_root / "published"
     current_dir = published_root / "current"
     next_dir = published_root / f"next-{context.run_id}"
-    archive_root = dataset_root / "data" / "archive"
 
     if next_dir.exists():
         raise FileExistsError(f"Next publish directory already exists: {next_dir}")
@@ -71,18 +71,22 @@ def publish_sandbox(context: RunContext, fail_before_final_rename: bool = False)
     if fail_before_final_rename:
         raise RuntimeError("Simulated failure before final rename.")
 
-    archive_path = None
+    backup_path = None
     if current_dir.exists():
-        archive_root.mkdir(parents=True, exist_ok=True)
-        archive_path = archive_root / f"{utc_stamp()}-{context.run_id}-current"
-        current_dir.rename(archive_path)
+        spec = get_spec(context.dataset_name)
+        backup_root = context.repo_root / "backups" / spec.provider / spec.api_name
+        backup_root.mkdir(parents=True, exist_ok=True)
+        backup_path = backup_root / utc_stamp()
+        shutil.copytree(current_dir, backup_path)
+        prune_backups(backup_root, keep=3)
+        shutil.rmtree(current_dir)
         append_stage_event(
             context,
             "publish",
             {
-                "event": "archive_current",
+                "event": "backup_current",
                 "created_at": utc_stamp(),
-                "archive_path": str(archive_path.relative_to(dataset_root)),
+                "backup_path": str(backup_path.relative_to(context.repo_root)),
             },
         )
 
@@ -97,17 +101,16 @@ def publish_sandbox(context: RunContext, fail_before_final_rename: bool = False)
         },
     )
 
-    copy_qa_reports(context, dataset_root)
-    write_json(dataset_root / "checks" / "checksum_manifest.json", {"run_id": context.run_id, "files": checksums})
+    write_json(context.qa_root / "checksum_manifest.json", {"run_id": context.run_id, "files": checksums})
     publish_log = {
         "run_id": context.run_id,
         "dataset": context.dataset_name,
         "published_at": utc_stamp(),
         "current_path": str(current_dir.relative_to(dataset_root)),
-        "archive_path": str(archive_path.relative_to(dataset_root)) if archive_path else None,
+        "backup_path": str(backup_path.relative_to(context.repo_root)) if backup_path else None,
         "file_count": len(checksums),
     }
-    write_json(dataset_root / "logs" / f"{publish_log['published_at']}_publish_{context.run_id}.json", publish_log)
+    write_json(context.log_root / f"{publish_log['published_at']}_publish_{context.run_id}.json", publish_log)
     update_manifest_after_publish(dataset_root, context, publish_log)
     append_stage_event(
         context,
@@ -116,7 +119,7 @@ def publish_sandbox(context: RunContext, fail_before_final_rename: bool = False)
             "event": "done",
             "created_at": utc_stamp(),
             "published_at": publish_log["published_at"],
-            "archive_path": publish_log["archive_path"],
+            "backup_path": publish_log["backup_path"],
             "file_count": publish_log["file_count"],
         },
     )
@@ -145,6 +148,15 @@ def checksum_tree(root: Path) -> list[dict[str, str]]:
     return checksums
 
 
+def prune_backups(backup_root: Path, keep: int) -> None:
+    backups = sorted(
+        [p for p in backup_root.iterdir() if p.is_dir()],
+        reverse=True,
+    )
+    for old in backups[keep:]:
+        shutil.rmtree(old)
+
+
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as input_file:
@@ -153,37 +165,20 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def copy_qa_reports(context: RunContext, dataset_root: Path) -> None:
-    checks_dir = dataset_root / "checks"
-    checks_dir.mkdir(parents=True, exist_ok=True)
-    for name in ("validation_report.json", "missingness_report.json", "unusual_values_report.json", "status.json"):
-        source = context.qa_root / name
-        if source.is_file():
-            shutil.copyfile(source, checks_dir / name)
-
-
 def update_manifest_after_publish(dataset_root: Path, context: RunContext, publish_log: dict[str, Any]) -> None:
     manifest_path = dataset_root / "manifest.yaml"
     if not manifest_path.is_file():
         return
 
-    coverage = published_coverage(context.dataset_name, dataset_root / "data" / "published" / "current")
+    coverage = published_coverage(context.dataset_name, dataset_root / "published" / "current")
     text = manifest_path.read_text(encoding="utf-8")
+    text = replace_block(text, "storage", render_storage_block(context.dataset_name))
     text = replace_block(text, "coverage", render_coverage_block(context.dataset_name, coverage))
-    text = replace_block(
-        text,
-        "missingness",
-        [
-            "missingness:",
-            "  status: assessed",
-            "  file: checks/missingness_report.json",
-        ],
-    )
+    text = replace_block(text, "quality", render_quality_block(context, publish_log))
+    text = replace_block(text, "missingness", render_missingness_block(context, publish_log))
+    text = replace_block(text, "publication", render_publication_block(context, publish_log))
     replacements = {
         "status:": "status: published",
-        "  validation_status:": "  validation_status: passed",
-        "  last_validation_report:": "  last_validation_report: checks/validation_report.json",
-        "  last_published_at:": f"  last_published_at: {publish_log['published_at']}",
     }
     lines = []
     for line in text.splitlines():
@@ -218,22 +213,23 @@ def render_coverage_block(dataset_name: str, coverage: dict[str, Any]) -> list[s
             "  symbols:",
             *[f"    - {symbol}" for symbol in coverage["symbols"]],
         ]
-    if dataset_name == "instrument_universe":
+    if dataset_name == "tushare_index_weight":
         return [
             "coverage:",
-            "  universes:",
-            *[f"    - {universe_id}" for universe_id in coverage["universes"]],
+            "  index_codes:",
+            *[f"    - {index_code}" for index_code in coverage["index_codes"]],
             f"  start_date: {coverage['start_date'] or 'null'}",
             f"  end_date: {coverage['end_date'] or 'null'}",
-            "  universe_ranges:",
+            "  index_ranges:",
             *[
                 line
-                for universe_id in coverage["universes"]
+                for index_code in coverage["index_codes"]
                 for line in (
-                    f"    {universe_id}:",
-                    f"      start_date: {coverage['universe_ranges'][universe_id]['start_date'] or 'null'}",
-                    f"      end_date: {coverage['universe_ranges'][universe_id]['end_date'] or 'null'}",
-                    f"      latest_member_count: {coverage['latest_member_counts'][universe_id]}",
+                    f"    {index_code}:",
+                    f"      start_date: {coverage['index_ranges'][index_code]['start_date'] or 'null'}",
+                    f"      end_date: {coverage['index_ranges'][index_code]['end_date'] or 'null'}",
+                    f"      latest_snapshot_date: {coverage['latest_snapshot_dates'][index_code] or 'null'}",
+                    f"      latest_constituent_count: {coverage['latest_constituent_counts'][index_code]}",
                 )
             ],
         ]
@@ -275,6 +271,44 @@ def render_coverage_block(dataset_name: str, coverage: dict[str, Any]) -> list[s
     ]
 
 
+def render_storage_block(dataset_name: str) -> list[str]:
+    from .dataset_specs import get_spec
+    spec = get_spec(dataset_name)
+    return [
+        "storage:",
+        "  published_current: published/current",
+        "  published_current_purpose: consumer-facing latest published version",
+        f"  backup_root: ../../backups/{spec.provider}/{spec.api_name}",
+        "  run_sandbox_root: ../../sandboxes/runs",
+        "  provider_cache_root: ../../cache",
+    ]
+
+
+def render_quality_block(context: RunContext, publish_log: dict[str, Any]) -> list[str]:
+    return [
+        "quality:",
+        "  validation_status: passed",
+        f"  last_validation_report: sandboxes/runs/{context.dataset_name}/{context.run_id}/qa/validation_report.json",
+    ]
+
+
+def render_missingness_block(context: RunContext, publish_log: dict[str, Any]) -> list[str]:
+    return [
+        "missingness:",
+        "  status: assessed",
+        f"  file: sandboxes/runs/{context.dataset_name}/{context.run_id}/qa/missingness_report.json",
+    ]
+
+
+def render_publication_block(context: RunContext, publish_log: dict[str, Any]) -> list[str]:
+    return [
+        "publication:",
+        f"  last_published_at: {publish_log['published_at']}",
+        "  current_version_path: published/current",
+        f"  backup_path: {publish_log.get('backup_path') or 'null'}",
+    ]
+
+
 def replace_block(text: str, block_name: str, replacement: list[str]) -> str:
     lines = text.splitlines()
     output: list[str] = []
@@ -296,3 +330,5 @@ def replace_block(text: str, block_name: str, replacement: list[str]) -> str:
     if skipping:
         return "\n".join(output)
     return "\n".join(output)
+
+

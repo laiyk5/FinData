@@ -156,11 +156,13 @@ class TushareProviderTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.repo_root = Path(self.temp_dir.name)
-        shutil.copytree(REPO_ROOT / "datasets" / "tushare_daily", self.repo_root / "datasets" / "tushare_daily")
+        shutil.copytree(REPO_ROOT / "datasets" / "tushare" / "daily", self.repo_root / "datasets" / "tushare" / "daily")
         shutil.copytree(
-            REPO_ROOT / "datasets" / "tushare_daily_basic",
-            self.repo_root / "datasets" / "tushare_daily_basic",
+            REPO_ROOT / "datasets" / "tushare" / "daily_basic",
+            self.repo_root / "datasets" / "tushare" / "daily_basic",
         )
+        clear_current(self.repo_root / "datasets" / "tushare" / "daily")
+        clear_current(self.repo_root / "datasets" / "tushare" / "daily_basic")
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
@@ -280,24 +282,23 @@ class TushareProviderTests(unittest.TestCase):
         self.assertEqual(request["attempts"], 2)
         self.assertEqual(request["attempt_history"][0]["error_type"], "rate_limit")
 
-    def test_real_provider_requires_enable_flag(self) -> None:
+    def test_real_provider_succeeds_with_api_key(self) -> None:
         with patch.dict(os.environ, {"TUSHARE_API_KEY": "secret-token"}):
             with redirect_stdout(StringIO()):
                 exit_code = maintain_plan(
                     repo_root=self.repo_root,
                     dataset_name="tushare_daily",
-                    provider="tushare",
                     symbols=["000001.SZ"],
                     trade_dates=["20240510"],
-                    run_id="no-enable",
+                    run_id="with-key",
                     rate_limit_seconds=None,
                     max_retries=3,
                     retry_backoff_seconds=None,
-                    enable_real_api=False,
+                    use_fake=False,
                 )
 
-        self.assertEqual(exit_code, 1)
-        self.assertFalse((self.repo_root / "sandboxes" / "runs" / "tushare_daily" / "no-enable").exists())
+        self.assertEqual(exit_code, 0)
+        self.assertTrue((self.repo_root / "sandboxes" / "runs" / "tushare_daily" / "with-key").exists())
 
     def test_real_provider_requires_token(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
@@ -305,14 +306,13 @@ class TushareProviderTests(unittest.TestCase):
                 exit_code = maintain_plan(
                     repo_root=self.repo_root,
                     dataset_name="tushare_daily",
-                    provider="tushare",
                     symbols=["000001.SZ"],
                     trade_dates=["20240510"],
                     run_id="no-token",
                     rate_limit_seconds=None,
                     max_retries=3,
                     retry_backoff_seconds=None,
-                    enable_real_api=True,
+                    use_fake=False,
                 )
 
         self.assertEqual(exit_code, 1)
@@ -328,7 +328,6 @@ class TushareProviderTests(unittest.TestCase):
         return create_run_sandbox(
             repo_root=self.repo_root,
             dataset_name=dataset_name,
-            provider="tushare",
             symbols=["000001.SZ"],
             trade_dates=[trade_date],
             run_id=run_id,
@@ -336,3 +335,14 @@ class TushareProviderTests(unittest.TestCase):
             max_retries=max_retries,
             retry_backoff_seconds=0.0,
         )
+
+
+def clear_current(dataset_root: Path) -> None:
+    current_dir = dataset_root / "published" / "current"
+    if not current_dir.exists():
+        return
+    for path in sorted(current_dir.rglob("*"), reverse=True):
+        if path.is_file():
+            path.unlink()
+        elif path.is_dir():
+            path.rmdir()

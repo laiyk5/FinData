@@ -114,7 +114,7 @@ def ingest_prepared_raw(context: RunContext) -> dict[str, Any]:
 def should_ingest_row(dataset_name: str, request: dict[str, Any], row: dict[str, str]) -> bool:
     if dataset_name == "report_catalog":
         return should_keep_report_row(row)
-    if dataset_name not in {"tushare_daily", "tushare_daily_basic"}:
+    if dataset_name not in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_moneyflow"}:
         return True
 
     requested_symbols = set(request.get("symbols") or parse_symbols(request.get("ts_code", "")))
@@ -135,7 +135,7 @@ def normalize_value(value: Any) -> str:
 
 
 def write_staged_files(dataset_root: Path, rows: list[dict[str, str]], spec: DatasetSpec) -> None:
-    staged_dir = dataset_root / "data" / "staged"
+    staged_dir = dataset_root / "staged"
     staged_dir.mkdir(parents=True, exist_ok=True)
 
     rows_by_date: dict[str, list[dict[str, str]]] = {}
@@ -147,7 +147,7 @@ def write_staged_files(dataset_root: Path, rows: list[dict[str, str]], spec: Dat
 
 
 def merge_current_rows(dataset_root: Path, prepared_rows: list[dict[str, str]], spec: DatasetSpec) -> list[dict[str, str]]:
-    current_dir = dataset_root / "data" / "published" / "current"
+    current_dir = dataset_root / "published" / "current"
     current_dir.mkdir(parents=True, exist_ok=True)
 
     merged: dict[tuple[str, str], dict[str, str]] = {}

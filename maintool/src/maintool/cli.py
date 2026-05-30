@@ -9,17 +9,27 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from .cninfo import CninfoProviderError, fetch_cninfo_org_id_map
+from .dataset_specs import get_spec
 from .ingest import ingest_prepared_raw
 from .pipeline import run_full_pipeline
 from .prepare import prepare_raw
 from .publish import publish_sandbox
-from .qa import run_qa
+from .qa import (
+    run_qa,
+    validate_daily_basic_csv,
+    validate_index_weight_csv,
+    validate_moneyflow_csv,
+    validate_report_catalog_csv,
+    validate_stk_factor_pro_csv,
+    validate_trade_calendar_csv,
+)
 from .review import build_review
 from .run_sandbox import create_run_sandbox, get_run_context
 from .tushare_daily import validate_staged_csv
+from .workspace import dataset_current_root
 
 
-DEFAULT_UNIVERSE_SOURCES = {
+UNIVERSE_TO_INDEX_CODE = {
     "index:SSE50": "000016.SH",
     "index:CSI300": "000300.SH",
     "index:CSI500": "000905.SH",
@@ -27,19 +37,20 @@ DEFAULT_UNIVERSE_SOURCES = {
 
 
 REQUIRED_DATASET_FILES = (
-    "dataset_card.md",
-    "maintenance.md",
-    "schema.yaml",
-    "checks/missingness.yaml",
+    "manifest.yaml",
 )
 
 REQUIRED_DATASET_DIRS = (
-    "data/raw",
-    "data/staged",
-    "data/published/current",
-    "data/archive",
-    "logs",
+    "published/current",
+)
+
+FORBIDDEN_DATASET_DIRS = (
+    "data",
+    "raw",
+    "staged",
     "checks",
+    "logs",
+    "archive",
 )
 
 
@@ -67,13 +78,16 @@ def list_datasets(repo_root: Path) -> int:
         print(f"No datasets directory found at {datasets_root}")
         return 1
 
-    names = sorted(path.name for path in datasets_root.iterdir() if path.is_dir())
-    if not names:
+    providers = sorted(p.name for p in datasets_root.iterdir() if p.is_dir() and not p.name.startswith("."))
+    if not providers:
         print("No datasets found.")
         return 0
 
-    for name in names:
-        print(name)
+    for provider in providers:
+        provider_dir = datasets_root / provider
+        datasets = sorted(p.name for p in provider_dir.iterdir() if p.is_dir())
+        for dataset in datasets:
+            print(f"{provider}/{dataset}")
     return 0
 
 
@@ -117,6 +131,11 @@ def validate_dataset(repo_root: Path, dataset_name: str) -> int:
             if not dir_path.is_dir():
                 errors.append(f"Missing required directory: {relative}")
 
+        for relative in FORBIDDEN_DATASET_DIRS:
+            dir_path = paths.root / relative
+            if dir_path.exists():
+                errors.append(f"Forbidden runtime directory must not exist in datasets/: {relative}")
+
         card = paths.root / "dataset_card.md"
         if card.is_file():
             card_text = card.read_text(encoding="utf-8")
@@ -138,10 +157,24 @@ def validate_dataset(repo_root: Path, dataset_name: str) -> int:
                 if key not in schema_text:
                     errors.append(f"Schema missing key: {key}")
 
-        if dataset_name == "tushare_daily":
-            staged_files = sorted((paths.root / "data" / "staged").glob("*.csv"))
-            for staged_file in staged_files:
-                errors.extend(validate_staged_csv(staged_file))
+        current_dir = paths.root / "published" / "current"
+        if dataset_name in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_moneyflow", "tushare_index_weight", "trade_calendar", "report_catalog"}:
+            published_files = sorted(current_dir.rglob("*.csv"))
+            for published_file in published_files:
+                if dataset_name == "tushare_daily_basic":
+                    errors.extend(validate_daily_basic_csv(published_file))
+                elif dataset_name == "tushare_stk_factor_pro":
+                    errors.extend(validate_stk_factor_pro_csv(published_file))
+                elif dataset_name == "tushare_moneyflow":
+                    errors.extend(validate_moneyflow_csv(published_file))
+                elif dataset_name == "tushare_index_weight":
+                    errors.extend(validate_index_weight_csv(published_file))
+                elif dataset_name == "trade_calendar":
+                    errors.extend(validate_trade_calendar_csv(published_file))
+                elif dataset_name == "report_catalog":
+                    errors.extend(validate_report_catalog_csv(published_file))
+                else:
+                    errors.extend(validate_staged_csv(published_file))
 
     if errors:
         print(f"Validation failed for {dataset_name}:")
@@ -161,28 +194,28 @@ def update_dataset(repo_root: Path, dataset_name: str, provider: str, symbols: l
 def maintain_plan(
     repo_root: Path,
     dataset_name: str,
-    provider: str,
+    use_fake: bool,
     symbols: list[str],
     trade_dates: list[str],
     run_id: str | None,
     rate_limit_seconds: float | None,
     max_retries: int,
     retry_backoff_seconds: float | None,
-    enable_real_api: bool,
     dataset_extras: dict[str, str | None] | None = None,
 ) -> int:
-    guard_error = validate_provider_guard(provider, enable_real_api)
+    spec = get_spec(dataset_name)
+    guard_error = validate_api_key(spec, use_fake)
     if guard_error:
         print(guard_error)
         return 1
     resolved_rate_limit, resolved_retry_backoff = resolve_request_settings(
-        provider, rate_limit_seconds, retry_backoff_seconds
+        spec, use_fake, rate_limit_seconds, retry_backoff_seconds
     )
     try:
         context = create_run_sandbox(
             repo_root=repo_root,
             dataset_name=dataset_name,
-            provider=provider,
+            use_fake=use_fake,
             symbols=symbols,
             trade_dates=trade_dates,
             run_id=run_id,
@@ -258,7 +291,7 @@ def publish_dataset(repo_root: Path, dataset_name: str, run_id: str, fail_before
 
     print("Publish completed.")
     print(f"published_at: {publish_log['published_at']}")
-    print(f"archive_path: {publish_log['archive_path']}")
+    print(f"backup_path: {publish_log['backup_path']}")
     return 0
 
 
@@ -275,29 +308,29 @@ def review_run(repo_root: Path, dataset_name: str, run_id: str) -> int:
 def maintain_run(
     repo_root: Path,
     dataset_name: str,
-    provider: str,
+    use_fake: bool,
     symbols: list[str],
     trade_dates: list[str],
     run_id: str | None,
     rate_limit_seconds: float | None,
     max_retries: int,
     retry_backoff_seconds: float | None,
-    enable_real_api: bool,
     dataset_extras: dict[str, str | None] | None = None,
 ) -> int:
-    guard_error = validate_provider_guard(provider, enable_real_api)
+    spec = get_spec(dataset_name)
+    guard_error = validate_api_key(spec, use_fake)
     if guard_error:
         print(guard_error)
         return 1
     resolved_rate_limit, resolved_retry_backoff = resolve_request_settings(
-        provider, rate_limit_seconds, retry_backoff_seconds
+        spec, use_fake, rate_limit_seconds, retry_backoff_seconds
     )
 
     try:
         context, result = run_full_pipeline(
             repo_root=repo_root,
             dataset_name=dataset_name,
-            provider=provider,
+            use_fake=use_fake,
             symbols=symbols,
             trade_dates=trade_dates,
             run_id=run_id,
@@ -324,31 +357,33 @@ def parse_csv_arg(value: str) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
-def validate_provider_guard(provider: str, enable_real_api: bool) -> str | None:
-    if provider in {"fake", "mock"}:
+def validate_api_key(spec, use_fake: bool) -> str | None:
+    if use_fake:
         return None
-    if provider not in {"tushare", "cninfo"}:
-        return f"Unsupported provider: {provider}"
-    if provider == "cninfo" and not enable_real_api:
-        return "Real Cninfo ingestion requires --enable-real-api."
-    if not enable_real_api:
-        return "Real Tushare ingestion requires --enable-real-api."
-    if provider == "tushare" and not os.environ.get("TUSHARE_API_KEY"):
-        return "TUSHARE_API_KEY is required for provider=tushare."
+    if spec.provider == "tushare" and not os.environ.get("TUSHARE_API_KEY"):
+        return "TUSHARE_API_KEY is required for real provider access."
+    if spec.provider == "cninfo":
+        return None
     return None
 
 
 def resolve_request_settings(
-    provider: str,
+    spec,
+    use_fake: bool,
     rate_limit_seconds: float | None,
     retry_backoff_seconds: float | None,
 ) -> tuple[float, float]:
-    if provider == "tushare":
+    if use_fake:
+        return (
+            0.0 if rate_limit_seconds is None else rate_limit_seconds,
+            0.0 if retry_backoff_seconds is None else retry_backoff_seconds,
+        )
+    if spec.provider == "tushare":
         return (
             0.25 if rate_limit_seconds is None else rate_limit_seconds,
             1.0 if retry_backoff_seconds is None else retry_backoff_seconds,
         )
-    if provider == "cninfo":
+    if spec.provider == "cninfo":
         return (
             2.0 if rate_limit_seconds is None else rate_limit_seconds,
             30.0 if retry_backoff_seconds is None else retry_backoff_seconds,
@@ -371,16 +406,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     validate_parser = subparsers.add_parser("validate", help="Validate dataset scaffold.")
     validate_parser.add_argument("dataset")
-
-    update_parser = subparsers.add_parser("update", help="Update dataset from a provider.")
-    update_parser.add_argument("dataset")
-    update_parser.add_argument("--provider", default="fake", choices=("fake", "mock"), help="Provider implementation to use.")
-    update_parser.add_argument("--trade-date", default="20240506", help="Trade date in YYYYMMDD format.")
-    update_parser.add_argument(
-        "--symbols",
-        default="000001.SZ,600000.SH",
-        help="Comma-separated Tushare security codes.",
-    )
 
     maintain_plan_parser = subparsers.add_parser("maintain-plan", help="Create a restartable maintenance run sandbox.")
     add_pipeline_arguments(maintain_plan_parser, include_run_id=True)
@@ -419,15 +444,9 @@ def add_run_id_arguments(parser: argparse.ArgumentParser) -> None:
 def add_pipeline_arguments(parser: argparse.ArgumentParser, include_run_id: bool = False) -> None:
     parser.add_argument("dataset")
     parser.add_argument(
-        "--provider",
-        default="fake",
-        choices=("fake", "mock", "tushare", "cninfo"),
-        help="Provider implementation to use.",
-    )
-    parser.add_argument(
-        "--enable-real-api",
+        "--fake",
         action="store_true",
-        help="Required safety flag for provider=tushare.",
+        help="Use fake provider instead of the dataset's real provider.",
     )
     parser.add_argument("--trade-date", default="20240506", help="Trade date in YYYYMMDD format.")
     parser.add_argument(
@@ -446,11 +465,12 @@ def add_pipeline_arguments(parser: argparse.ArgumentParser, include_run_id: bool
     parser.add_argument("--max-retries", type=int, default=3)
     parser.add_argument("--retry-backoff-seconds", type=float, default=None)
     parser.add_argument("--exchange", default="SSE", help="Exchange for trade_calendar.")
-    parser.add_argument("--start-date", default=None, help="Start date for trade_calendar in YYYYMMDD format.")
-    parser.add_argument("--end-date", default=None, help="End date for trade_calendar in YYYYMMDD format.")
+    parser.add_argument("--start-date", default=None, help="Start date for date-range runs in YYYYMMDD format.")
+    parser.add_argument("--end-date", default=None, help="End date for date-range runs in YYYYMMDD format.")
     parser.add_argument("--is-open", default=None, choices=("0", "1"), help="Optional Tushare trade_cal is_open filter.")
-    parser.add_argument("--universe-id", default=None, help="Universe id for instrument_universe, such as index:SSE50.")
+    parser.add_argument("--universe-id", default=None, help="Universe id such as index:SSE50 for report_catalog symbol resolution.")
     parser.add_argument("--source-id", default=None, help="Provider-native universe source id, such as 000016.SH.")
+    parser.add_argument("--index-code", default=None, help="Tushare index code for tushare_index_weight, such as 000300.SH.")
     parser.add_argument("--start-year", default=None, help="Start disclosure year for report_catalog.")
     parser.add_argument("--end-year", default=None, help="End disclosure year for report_catalog.")
     parser.add_argument(
@@ -463,7 +483,7 @@ def add_pipeline_arguments(parser: argparse.ArgumentParser, include_run_id: bool
         "--daily-request-strategy",
         default="auto",
         choices=("auto", "symbol_range", "trade_date_all"),
-        help="Request scheduler for tushare_daily.",
+        help="Request scheduler for tushare_daily, tushare_daily_basic, tushare_stk_factor_pro, and tushare_moneyflow.",
     )
     if include_run_id:
         parser.add_argument("--run-id", default=None, help="Optional explicit maintenance run id.")
@@ -480,28 +500,24 @@ def main(argv: list[str] | None = None) -> int:
         return inspect_dataset(repo_root, args.dataset)
     if args.command == "validate":
         return validate_dataset(repo_root, args.dataset)
-    if args.command == "update":
-        symbols = parse_csv_arg(args.symbols)
-        return update_dataset(repo_root, args.dataset, args.provider, symbols, args.trade_date)
     if args.command == "maintain-plan":
         trade_dates = parse_csv_arg(args.trade_dates) if args.trade_dates else [args.trade_date]
         dataset_extras = build_dataset_extras(args, repo_root)
         symbols = resolve_symbols_arg(repo_root, args.dataset, args.symbols, dataset_extras)
-        if args.dataset in {"trade_calendar", "instrument_universe", "report_catalog"}:
+        if args.dataset in {"trade_calendar", "tushare_index_weight", "report_catalog"}:
             trade_dates = []
-        if args.dataset in {"tushare_daily", "tushare_daily_basic"} and dataset_extras and dataset_extras.get("start_date"):
+        if args.dataset in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_moneyflow"} and dataset_extras and dataset_extras.get("start_date"):
             trade_dates = []
         return maintain_plan(
             repo_root,
             args.dataset,
-            args.provider,
+            args.fake,
             symbols,
             trade_dates,
             args.run_id,
             args.rate_limit_seconds,
             args.max_retries,
             args.retry_backoff_seconds,
-            args.enable_real_api,
             dataset_extras,
         )
     if args.command == "prepare":
@@ -518,21 +534,20 @@ def main(argv: list[str] | None = None) -> int:
         trade_dates = parse_csv_arg(args.trade_dates) if args.trade_dates else [args.trade_date]
         dataset_extras = build_dataset_extras(args, repo_root)
         symbols = resolve_symbols_arg(repo_root, args.dataset, args.symbols, dataset_extras)
-        if args.dataset in {"trade_calendar", "instrument_universe", "report_catalog"}:
+        if args.dataset in {"trade_calendar", "tushare_index_weight", "report_catalog"}:
             trade_dates = []
-        if args.dataset in {"tushare_daily", "tushare_daily_basic"} and dataset_extras and dataset_extras.get("start_date"):
+        if args.dataset in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_moneyflow"} and dataset_extras and dataset_extras.get("start_date"):
             trade_dates = []
         return maintain_run(
             repo_root,
             args.dataset,
-            args.provider,
+            args.fake,
             symbols,
             trade_dates,
             args.run_id,
             args.rate_limit_seconds,
             args.max_retries,
             args.retry_backoff_seconds,
-            args.enable_real_api,
             dataset_extras,
         )
 
@@ -541,6 +556,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def build_dataset_extras(args, repo_root: Path) -> dict[str, str | None] | None:
+    is_real = not args.fake
     if args.dataset == "trade_calendar":
         return {
             "exchange": args.exchange,
@@ -548,11 +564,9 @@ def build_dataset_extras(args, repo_root: Path) -> dict[str, str | None] | None:
             "end_date": args.end_date or args.start_date or args.trade_date,
             "is_open": args.is_open,
         }
-    if args.dataset == "instrument_universe":
-        universe_id = args.universe_id or "index:SSE50"
+    if args.dataset == "tushare_index_weight":
         return {
-            "universe_id": universe_id,
-            "source_id": args.source_id or DEFAULT_UNIVERSE_SOURCES.get(universe_id),
+            "index_code": args.index_code or "000300.SH",
             "start_date": args.start_date or args.trade_date,
             "end_date": args.end_date or args.start_date or args.trade_date,
         }
@@ -560,8 +574,9 @@ def build_dataset_extras(args, repo_root: Path) -> dict[str, str | None] | None:
         universe_id = args.universe_id or infer_universe_id_from_symbols(args.symbols)
         start_year = args.start_year or str(datetime.now().year)
         end_year = args.end_year or start_year
+        spec = get_spec(args.dataset)
         org_id_map = {}
-        if args.provider == "cninfo" and args.enable_real_api:
+        if is_real and spec.provider == "cninfo":
             try:
                 org_id_map = fetch_cninfo_org_id_map()
             except CninfoProviderError as exc:
@@ -572,12 +587,12 @@ def build_dataset_extras(args, repo_root: Path) -> dict[str, str | None] | None:
             "end_year": end_year,
             "report_types": parse_csv_arg(args.report_types),
             "page_size": "30",
-            "max_pages_per_request": str(args.max_pages_per_request or (2 if args.provider == "cninfo" else 1)),
-            "jitter_seconds": args.jitter_seconds or ("1.0,3.0" if args.provider == "cninfo" else None),
+            "max_pages_per_request": str(args.max_pages_per_request or (2 if is_real else 1)),
+            "jitter_seconds": args.jitter_seconds or ("1.0,3.0" if is_real and spec.provider == "cninfo" else None),
             "request_budget": str(args.request_budget) if args.request_budget is not None else None,
             "org_id_map": org_id_map,
         }
-    if args.dataset in {"tushare_daily", "tushare_daily_basic"} and (args.start_date or args.end_date):
+    if args.dataset in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_moneyflow"} and (args.start_date or args.end_date):
         start_date = args.start_date or args.trade_date
         end_date = args.end_date or args.start_date or args.trade_date
         return {
@@ -586,7 +601,7 @@ def build_dataset_extras(args, repo_root: Path) -> dict[str, str | None] | None:
             "expected_trade_dates": open_trade_dates(repo_root, start_date, end_date),
             "daily_request_strategy": args.daily_request_strategy,
         }
-    if args.dataset in {"tushare_daily", "tushare_daily_basic"}:
+    if args.dataset in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_moneyflow"}:
         return {
             "daily_request_strategy": args.daily_request_strategy,
         }
@@ -605,7 +620,7 @@ def resolve_symbols_arg(
     symbols_value: str,
     dataset_extras: dict[str, str | None] | None,
 ) -> list[str]:
-    if dataset_name in {"trade_calendar", "instrument_universe"}:
+    if dataset_name in {"trade_calendar", "tushare_index_weight"}:
         return []
     if not symbols_value.startswith("@universe:"):
         return parse_csv_arg(symbols_value)
@@ -619,26 +634,31 @@ def resolve_symbols_arg(
 
 
 def resolve_universe_symbols(repo_root: Path, universe_id: str) -> list[str]:
-    rows = read_universe_rows(repo_root, universe_id)
+    index_code = UNIVERSE_TO_INDEX_CODE.get(universe_id)
+    if not index_code:
+        raise ValueError(f"No index_code mapping for universe: {universe_id}")
+    rows = read_index_weight_rows(repo_root, index_code)
     if not rows:
-        raise ValueError(f"No published universe rows found for {universe_id}")
-    latest_date = max(row["as_of_date"] for row in rows if row.get("as_of_date"))
-    return sorted({row["member_code"] for row in rows if row.get("as_of_date") == latest_date and row.get("member_code")})
+        raise ValueError(f"No published index weight rows found for {index_code}")
+    return sorted({row["con_code"] for row in rows if row.get("con_code")})
 
 
 def latest_universe_date(repo_root: Path, universe_id: str) -> str | None:
-    rows = read_universe_rows(repo_root, universe_id)
-    dates = [row["as_of_date"] for row in rows if row.get("as_of_date")]
+    index_code = UNIVERSE_TO_INDEX_CODE.get(universe_id)
+    if not index_code:
+        return None
+    rows = read_index_weight_rows(repo_root, index_code)
+    dates = [row["trade_date"] for row in rows if row.get("trade_date")]
     return max(dates) if dates else None
 
 
-def read_universe_rows(repo_root: Path, universe_id: str) -> list[dict[str, str]]:
-    current_dir = repo_root / "datasets" / "instrument_universe" / "data" / "published" / "current"
+def read_index_weight_rows(repo_root: Path, index_code: str) -> list[dict[str, str]]:
+    current_dir = dataset_current_root(repo_root, "tushare_index_weight")
     rows: list[dict[str, str]] = []
     for csv_path in sorted(current_dir.rglob("*.csv")):
         with csv_path.open(newline="", encoding="utf-8") as input_file:
             for row in csv.DictReader(input_file):
-                if row.get("universe_id") == universe_id:
+                if row.get("index_code") == index_code:
                     rows.append({key: str(value or "") for key, value in row.items()})
     return rows
 
@@ -657,7 +677,7 @@ def open_trade_dates(repo_root: Path, start_date: str, end_date: str) -> list[st
 
 
 def load_calendar_rows(repo_root: Path) -> dict[tuple[str, str], str]:
-    current_dir = repo_root / "datasets" / "trade_calendar" / "data" / "published" / "current"
+    current_dir = dataset_current_root(repo_root, "trade_calendar")
     calendar: dict[tuple[str, str], str] = {}
     for csv_path in sorted(current_dir.rglob("*.csv")):
         with csv_path.open(newline="", encoding="utf-8") as input_file:

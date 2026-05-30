@@ -2,16 +2,21 @@ from __future__ import annotations
 
 import os
 import random
+import re
+import shutil
 import time
+import hashlib
 from pathlib import Path
 from typing import Any
 
 from .dataset_specs import (
-    INSTRUMENT_UNIVERSE_FIELDS,
     REPORT_CATALOG_FIELDS,
+    TUSHARE_INDEX_WEIGHT_FIELDS,
+    get_spec,
     parse_symbols,
     request_file_stem as dataset_request_file_stem,
 )
+from .moneyflow import FIELDS as MONEYFLOW_FIELDS, fake_moneyflow_rows
 from .cninfo import CninfoProviderError, fetch_cninfo_announcements, normalize_cninfo_announcement
 from .jsonio import write_json
 from .run_sandbox import (
@@ -24,8 +29,18 @@ from .run_sandbox import (
 from .stage_logs import append_stage_event, write_stage_summary
 from .tushare_daily import FIELDS, fake_daily_rows
 from .tushare_daily_basic import FIELDS as DAILY_BASIC_FIELDS, fake_daily_basic_rows
+from .stk_factor_pro import FIELDS as STK_FACTOR_PRO_FIELDS, fake_stk_factor_pro_rows
 from .trade_calendar import FIELDS as TRADE_CALENDAR_FIELDS, write_mock_trade_calendar_response
-from .tushare_http import TushareProviderError, Transport, fetch_daily, fetch_daily_basic, fetch_index_weight, fetch_trade_cal
+from .tushare_http import (
+    TushareProviderError,
+    Transport,
+    fetch_daily,
+    fetch_daily_basic,
+    fetch_raw_index_weight,
+    fetch_moneyflow,
+    fetch_stk_factor_pro,
+    fetch_trade_cal,
+)
 
 
 def prepare_raw(context: RunContext, transport: Transport | None = None) -> dict[str, Any]:
@@ -56,6 +71,7 @@ def prepare_fake_raw(context: RunContext) -> dict[str, Any]:
 def prepare_provider_raw(context: RunContext, fetcher) -> dict[str, Any]:
     manifest = load_run_manifest(context)
     ledger = load_prepare_ledger(context)
+    provider = manifest["provider"]
     settings = manifest["request_settings"]
     max_retries = max(1, int(settings["max_retries"]))
     rate_limit_seconds = float(settings["rate_limit_seconds"])
@@ -89,6 +105,12 @@ def prepare_provider_raw(context: RunContext, fetcher) -> dict[str, Any]:
                 summary["skipped"] += 1
                 if progress_enabled:
                     record_prepare_progress(context, "skip", request_index, len(requests), summary, request, started_at)
+                continue
+            if restore_cached_raw(context, provider, request):
+                write_json(context.prepare_ledger_path, ledger)
+                summary["skipped"] += 1
+                if progress_enabled:
+                    record_prepare_progress(context, "restore_from_cache", request_index, len(requests), summary, request, started_at)
                 continue
 
         attempted_requests += 1
@@ -143,8 +165,10 @@ def prepare_provider_raw(context: RunContext, fetcher) -> dict[str, Any]:
                 write_json(context.prepare_ledger_path, ledger)
                 break
             else:
+                cache_path = persist_raw_to_cache(context, provider, request, raw_path)
                 request["status"] = "success"
                 request["raw_path"] = str(raw_path.relative_to(context.sandbox_root))
+                request["cache_path"] = str(cache_path.relative_to(context.repo_root))
                 request["last_error"] = None
                 request["error_type"] = None
                 request["row_count"] = row_count
@@ -288,8 +312,8 @@ def sleep_for_rate_limit(base_seconds: float, jitter_seconds: tuple[float, float
 def fetch_mock_response(context: RunContext, request: dict[str, Any]) -> tuple[Path, int]:
     if context.dataset_name == "trade_calendar":
         return write_mock_trade_calendar_response(context.raw_root, request)
-    if context.dataset_name == "instrument_universe":
-        return write_mock_instrument_universe_response(context.raw_root, request)
+    if context.dataset_name == "tushare_index_weight":
+        return write_mock_index_weight_response(context.raw_root, request)
     if context.dataset_name == "report_catalog":
         return write_mock_report_catalog_response(context.raw_root, request)
     return fetch_fake_response(context, request)
@@ -307,15 +331,66 @@ def request_target_symbols(request: dict[str, Any]) -> list[str]:
     return list(request.get("symbols") or parse_symbols(request.get("ts_code", "")))
 
 
+def persist_raw_to_cache(context: RunContext, provider: str, request: dict[str, Any], raw_path: Path) -> Path:
+    api_name = str(request.get("api") or context.dataset_name)
+    cache_path = build_cache_path(context, provider, api_name, request)
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    if raw_path.resolve() != cache_path.resolve():
+        shutil.copyfile(raw_path, cache_path)
+    return cache_path
+
+
+def restore_cached_raw(context: RunContext, provider: str, request: dict[str, Any]) -> bool:
+    cache_path = resolve_cache_path(context, provider, request)
+    if cache_path is None or not cache_path.is_file():
+        return False
+    sandbox_raw_path = context.raw_root / cache_path.name
+    sandbox_raw_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(cache_path, sandbox_raw_path)
+    request["raw_path"] = str(sandbox_raw_path.relative_to(context.sandbox_root))
+    request["cache_path"] = str(cache_path.relative_to(context.repo_root))
+    request["updated_at"] = utc_stamp()
+    return True
+
+
+def resolve_cache_path(context: RunContext, provider: str, request: dict[str, Any]) -> Path | None:
+    cache_path_text = request.get("cache_path")
+    if cache_path_text:
+        return context.repo_root / cache_path_text
+    api_name = str(request.get("api") or context.dataset_name)
+    return build_cache_path(context, provider, api_name, request)
+
+
+def build_cache_path(context: RunContext, provider: str, api_name: str, request: dict[str, Any]) -> Path:
+    request_id = safe_cache_token(str(request.get("key") or dataset_request_file_stem(context.dataset_name, request)))
+    return context.cache_root / provider / api_name / f"{request_id}.json"
+
+
+def safe_cache_token(value: str) -> str:
+    token = re.sub(r"[^A-Za-z0-9._-]+", "_", value).strip("_") or "request"
+    if len(token) <= 180:
+        return token
+    digest = hashlib.sha1(token.encode("utf-8")).hexdigest()[:16]
+    return f"{token[:80]}_{digest}"
+
+
 def fake_rows_for_dataset(dataset_name: str, symbols: list[str], trade_date: str) -> list[dict[str, str]]:
     if dataset_name == "tushare_daily_basic":
         return [row.as_dict() for row in fake_daily_basic_rows(symbols, trade_date)]
+    if dataset_name == "tushare_stk_factor_pro":
+        return fake_stk_factor_pro_rows(symbols, trade_date)
+    if dataset_name == "tushare_moneyflow":
+        return fake_moneyflow_rows(symbols, trade_date)
     return [row.as_dict() for row in fake_daily_rows(symbols, trade_date)]
 
 
 def fake_fields_for_dataset(dataset_name: str) -> tuple[str, ...]:
     if dataset_name == "tushare_daily_basic":
         return DAILY_BASIC_FIELDS
+    if dataset_name == "tushare_stk_factor_pro":
+        return STK_FACTOR_PRO_FIELDS
+    if dataset_name == "tushare_moneyflow":
+        return MONEYFLOW_FIELDS
     return FIELDS
 
 
@@ -364,48 +439,33 @@ def write_fake_response(context: RunContext, request: dict[str, Any]) -> tuple[P
     return raw_path, len(rows)
 
 
-def write_mock_instrument_universe_response(raw_root: Path, request: dict[str, Any]) -> tuple[Path, int]:
+def write_mock_index_weight_response(raw_root: Path, request: dict[str, Any]) -> tuple[Path, int]:
     rows = [
         {
-            "universe_id": request["universe_id"],
-            "provider": "mock",
-            "source_id": request["source_id"],
-            "member_code": "600000.SH",
-            "member_name": "",
-            "valid_from": request["end_date"],
-            "valid_to": "",
-            "as_of_date": request["end_date"],
-            "weight": "60",
-            "rank": "1",
-            "member_type": "equity",
+            "index_code": request["index_code"],
+            "con_code": "600000.SH",
+            "trade_date": request["end_date"],
+            "weight": "0.62",
         },
         {
-            "universe_id": request["universe_id"],
-            "provider": "mock",
-            "source_id": request["source_id"],
-            "member_code": "600519.SH",
-            "member_name": "",
-            "valid_from": request["end_date"],
-            "valid_to": "",
-            "as_of_date": request["end_date"],
-            "weight": "40",
-            "rank": "2",
-            "member_type": "equity",
+            "index_code": request["index_code"],
+            "con_code": "000001.SZ",
+            "trade_date": request["end_date"],
+            "weight": "0.58",
         },
     ]
     payload = {
         "provider": "mock",
         "api": "index_weight",
-        "universe_id": request["universe_id"],
-        "source_id": request["source_id"],
+        "index_code": request["index_code"],
         "start_date": request["start_date"],
         "end_date": request["end_date"],
-        "fields": list(INSTRUMENT_UNIVERSE_FIELDS),
+        "fields": list(TUSHARE_INDEX_WEIGHT_FIELDS),
         "items": rows,
         "row_count": len(rows),
         "prepared_at": utc_stamp(),
     }
-    raw_path = raw_root / f"{dataset_request_file_stem('instrument_universe', request)}.json"
+    raw_path = raw_root / f"{dataset_request_file_stem('tushare_index_weight', request)}.json"
     write_json(raw_path, payload)
     return raw_path, len(rows)
 
@@ -506,10 +566,11 @@ def fetch_tushare_response(
             is_open=request.get("is_open"),
             transport=transport,
         )
+        spec = get_spec(context.dataset_name)
         rows = response.rows
         payload = {
-            "provider": "tushare",
-            "api": "trade_cal",
+            "provider": spec.provider,
+            "api": spec.api_name,
             "exchange": request["exchange"],
             "start_date": request["start_date"],
             "end_date": request["end_date"],
@@ -522,45 +583,84 @@ def fetch_tushare_response(
         write_json(raw_path, payload)
         return raw_path, len(rows)
 
-    if context.dataset_name == "instrument_universe":
-        response = fetch_index_weight(
+    if context.dataset_name == "tushare_index_weight":
+        response = fetch_raw_index_weight(
             token=token,
-            index_code=request["source_id"],
+            index_code=request["index_code"],
             start_date=request["start_date"],
             end_date=request["end_date"],
             transport=transport,
         )
-        provider_rows = [dict(zip(response.fields, item)) for item in response.items]
-        provider_rows.sort(key=lambda row: (str(row.get("trade_date", "")), float(row.get("weight") or 0)), reverse=True)
-        rows = [
-            {
-                "universe_id": request["universe_id"],
-                "provider": "tushare",
-                "source_id": row.get("index_code", request["source_id"]),
-                "member_code": row.get("con_code", ""),
-                "member_name": "",
-                "valid_from": row.get("trade_date", ""),
-                "valid_to": "",
-                "as_of_date": row.get("trade_date", ""),
-                "weight": row.get("weight", ""),
-                "rank": str(index),
-                "member_type": "equity",
-            }
-            for index, row in enumerate(provider_rows, start=1)
-        ]
+        rows = response.rows
         payload = {
             "provider": "tushare",
             "api": "index_weight",
-            "universe_id": request["universe_id"],
-            "source_id": request["source_id"],
+            "request_mode": request.get("request_mode"),
+            "index_code": request["index_code"],
             "start_date": request["start_date"],
             "end_date": request["end_date"],
-            "fields": list(INSTRUMENT_UNIVERSE_FIELDS),
+            "fields": list(TUSHARE_INDEX_WEIGHT_FIELDS),
             "items": rows,
             "row_count": len(rows),
             "prepared_at": utc_stamp(),
         }
-        raw_path = context.raw_root / f"{dataset_request_file_stem('instrument_universe', request)}.json"
+        raw_path = context.raw_root / f"{dataset_request_file_stem('tushare_index_weight', request)}.json"
+        write_json(raw_path, payload)
+        return raw_path, len(rows)
+
+    if context.dataset_name == "tushare_stk_factor_pro":
+        response = fetch_stk_factor_pro(
+            token=token,
+            ts_code=request.get("ts_code") or None,
+            trade_date=request.get("trade_date"),
+            start_date=request.get("start_date"),
+            end_date=request.get("end_date"),
+            transport=transport,
+        )
+        rows = response.rows
+        payload = {
+            "provider": "tushare",
+            "api": "stk_factor_pro",
+            "request_mode": request.get("request_mode"),
+            "trade_date": request.get("trade_date"),
+            "start_date": request.get("start_date"),
+            "end_date": request.get("end_date"),
+            "ts_code": request.get("ts_code", ""),
+            "symbols": request_target_symbols(request),
+            "fields": list(STK_FACTOR_PRO_FIELDS),
+            "items": rows,
+            "row_count": len(rows),
+            "prepared_at": utc_stamp(),
+        }
+        raw_path = context.raw_root / f"{dataset_request_file_stem('tushare_stk_factor_pro', request)}.json"
+        write_json(raw_path, payload)
+        return raw_path, len(rows)
+
+    if context.dataset_name == "tushare_moneyflow":
+        response = fetch_moneyflow(
+            token=token,
+            ts_code=request.get("ts_code") or None,
+            trade_date=request.get("trade_date"),
+            start_date=request.get("start_date"),
+            end_date=request.get("end_date"),
+            transport=transport,
+        )
+        rows = response.rows
+        payload = {
+            "provider": "tushare",
+            "api": "moneyflow",
+            "request_mode": request.get("request_mode"),
+            "trade_date": request.get("trade_date"),
+            "start_date": request.get("start_date"),
+            "end_date": request.get("end_date"),
+            "ts_code": request.get("ts_code", ""),
+            "symbols": request_target_symbols(request),
+            "fields": list(MONEYFLOW_FIELDS),
+            "items": rows,
+            "row_count": len(rows),
+            "prepared_at": utc_stamp(),
+        }
+        raw_path = context.raw_root / f"{dataset_request_file_stem('tushare_moneyflow', request)}.json"
         write_json(raw_path, payload)
         return raw_path, len(rows)
 

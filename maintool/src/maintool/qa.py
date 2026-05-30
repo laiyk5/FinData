@@ -8,12 +8,14 @@ from pathlib import Path
 from typing import Any
 
 from .dataset_specs import DatasetSpec, expected_keys, get_spec
-from .dataset_specs import INSTRUMENT_UNIVERSE_FIELDS, REPORT_CATALOG_FIELDS
+from .dataset_specs import REPORT_CATALOG_FIELDS, TUSHARE_INDEX_WEIGHT_FIELDS
 from .jsonio import read_json, write_json
+from .moneyflow import FIELDS as MONEYFLOW_FIELDS
 from .run_sandbox import RunContext, load_run_manifest, mark_step, utc_stamp
 from .stage_logs import append_stage_event, write_stage_summary
 from .tushare_daily import FIELDS
 from .tushare_daily_basic import FIELDS as DAILY_BASIC_FIELDS
+from .stk_factor_pro import FIELDS as STK_FACTOR_PRO_FIELDS
 from .trade_calendar import FIELDS as TRADE_CALENDAR_FIELDS
 
 
@@ -122,26 +124,30 @@ def build_validation_report(context: RunContext) -> dict[str, Any]:
     checked_files: list[str] = []
     errors: list[str] = []
 
-    for root in (dataset_root / "data" / "staged", dataset_root / "data" / "published" / "current"):
+    for root in (dataset_root / "staged", dataset_root / "published" / "current"):
         seen_keys: dict[tuple[str, ...], Path] = {}
         for csv_path in sorted(root.rglob("*.csv")):
             checked_files.append(str(csv_path.relative_to(context.sandbox_root)))
             if context.dataset_name == "trade_calendar":
                 errors.extend(validate_trade_calendar_csv(csv_path))
-            elif context.dataset_name == "instrument_universe":
-                errors.extend(validate_instrument_universe_csv(csv_path))
+            elif context.dataset_name == "tushare_index_weight":
+                errors.extend(validate_index_weight_csv(csv_path))
             elif context.dataset_name == "report_catalog":
                 errors.extend(validate_report_catalog_csv(csv_path))
             elif context.dataset_name == "tushare_daily_basic":
                 errors.extend(validate_daily_basic_csv(csv_path))
+            elif context.dataset_name == "tushare_stk_factor_pro":
+                errors.extend(validate_stk_factor_pro_csv(csv_path))
+            elif context.dataset_name == "tushare_moneyflow":
+                errors.extend(validate_moneyflow_csv(csv_path))
             else:
                 errors.extend(validate_daily_csv(csv_path))
             errors.extend(validate_unique_keys_across_files(root, csv_path, spec, seen_keys))
 
-    if context.dataset_name == "instrument_universe":
-        current_keys = read_actual_keys(dataset_root / "data" / "published" / "current", spec)
+    if context.dataset_name in {"tushare_index_weight"}:
+        current_keys = read_actual_keys(dataset_root / "published" / "current", spec)
         if not current_keys:
-            errors.append("instrument_universe: empty published current")
+            errors.append(f"{context.dataset_name}: empty published current")
 
     return {
         "run_id": context.run_id,
@@ -244,6 +250,137 @@ def validate_daily_basic_csv(path: Path) -> list[str]:
     return errors
 
 
+def validate_stk_factor_pro_csv(path: Path) -> list[str]:
+    errors: list[str] = []
+    seen_keys: set[tuple[str, str]] = set()
+    nullable_fields = set(NULLABLE_DAILY_BASIC_DECIMAL_FIELDS)
+    nullable_fields.update(
+        {
+            "adj_factor",
+            "macd_bfq",
+            "macd_dea_bfq",
+            "macd_dif_bfq",
+            "boll_lower_bfq",
+            "boll_mid_bfq",
+            "boll_upper_bfq",
+            "dmi_adx_bfq",
+            "dmi_adxr_bfq",
+            "dmi_mdi_bfq",
+            "dmi_pdi_bfq",
+            "kdj_bfq",
+            "kdj_d_bfq",
+            "kdj_k_bfq",
+            "bias1_bfq",
+            "bias2_bfq",
+            "bias3_bfq",
+            "atr_bfq",
+            "ma_bfq_5",
+            "ma_bfq_10",
+            "ma_bfq_20",
+            "ema_bfq_5",
+            "ema_bfq_10",
+            "ema_bfq_20",
+            "open_hfq",
+            "open_qfq",
+            "high_hfq",
+            "high_qfq",
+            "low_hfq",
+            "low_qfq",
+            "close_hfq",
+            "close_qfq",
+        }
+    )
+
+    with path.open(newline="", encoding="utf-8") as input_file:
+        reader = csv.DictReader(input_file)
+        fieldnames = reader.fieldnames or []
+        for field in STK_FACTOR_PRO_FIELDS:
+            if field not in fieldnames:
+                errors.append(f"{path.name}: missing column {field}")
+        if errors:
+            return errors
+
+        for row_number, row in enumerate(reader, start=2):
+            key = (row["ts_code"], row["trade_date"])
+            if key in seen_keys:
+                errors.append(f"{path.name}:{row_number}: duplicate primary key {key}")
+            seen_keys.add(key)
+
+            if not valid_trade_date(row["trade_date"]):
+                errors.append(f"{path.name}:{row_number}: invalid trade_date {row['trade_date']}")
+
+            decimals: dict[str, Decimal] = {}
+            for field in STK_FACTOR_PRO_FIELDS:
+                if field in {"ts_code", "trade_date"}:
+                    continue
+                if field in nullable_fields and row.get(field, "") == "":
+                    continue
+                try:
+                    decimals[field] = Decimal(row[field])
+                except (InvalidOperation, KeyError):
+                    errors.append(f"{path.name}:{row_number}: invalid decimal in {field}")
+
+            required_prices = {"open", "high", "low", "close"}
+            if not required_prices.issubset(decimals):
+                continue
+
+            if decimals["high"] < max(decimals["open"], decimals["close"], decimals["low"]):
+                errors.append(f"{path.name}:{row_number}: high is lower than another OHLC price")
+            if decimals["low"] > min(decimals["open"], decimals["close"], decimals["high"]):
+                errors.append(f"{path.name}:{row_number}: low is higher than another OHLC price")
+            if decimals.get("vol", Decimal("0")) < 0:
+                errors.append(f"{path.name}:{row_number}: vol is negative")
+            if decimals.get("amount", Decimal("0")) < 0:
+                errors.append(f"{path.name}:{row_number}: amount is negative")
+            if "float_share" in decimals and "total_share" in decimals and decimals["float_share"] > decimals["total_share"]:
+                errors.append(f"{path.name}:{row_number}: float_share exceeds total_share")
+
+    return errors
+
+
+def validate_moneyflow_csv(path: Path) -> list[str]:
+    errors: list[str] = []
+    seen_keys: set[tuple[str, str]] = set()
+    nullable_decimal_fields = set(MONEYFLOW_FIELDS) - {"ts_code", "trade_date"}
+
+    with path.open(newline="", encoding="utf-8") as input_file:
+        reader = csv.DictReader(input_file)
+        fieldnames = reader.fieldnames or []
+        for field in MONEYFLOW_FIELDS:
+            if field not in fieldnames:
+                errors.append(f"{path.name}: missing column {field}")
+        if errors:
+            return errors
+
+        for row_number, row in enumerate(reader, start=2):
+            key = (row["ts_code"], row["trade_date"])
+            if key in seen_keys:
+                errors.append(f"{path.name}:{row_number}: duplicate primary key {key}")
+            seen_keys.add(key)
+
+            if not valid_trade_date(row["trade_date"]):
+                errors.append(f"{path.name}:{row_number}: invalid trade_date {row['trade_date']}")
+
+            decimals: dict[str, Decimal] = {}
+            for field in MONEYFLOW_FIELDS:
+                if field in {"ts_code", "trade_date"}:
+                    continue
+                if field in nullable_decimal_fields and row.get(field, "") == "":
+                    continue
+                try:
+                    decimals[field] = Decimal(row[field])
+                except (InvalidOperation, KeyError):
+                    errors.append(f"{path.name}:{row_number}: invalid decimal in {field}")
+
+            for field in MONEYFLOW_FIELDS:
+                if field in {"ts_code", "trade_date", "net_mf_vol", "net_mf_amount"}:
+                    continue
+                if decimals.get(field, Decimal("0")) < 0:
+                    errors.append(f"{path.name}:{row_number}: {field} is negative")
+
+    return errors
+
+
 def build_missingness_report(context: RunContext, manifest: dict[str, Any]) -> dict[str, Any]:
     spec = get_spec(context.dataset_name)
     expected_source = "manifest"
@@ -252,11 +389,12 @@ def build_missingness_report(context: RunContext, manifest: dict[str, Any]) -> d
         expected_source = "prepared_raw"
     else:
         expected = expected_keys(context.dataset_name, manifest)
-    actual_keys = read_actual_keys(context.sandbox_dataset_root / "data" / "published" / "current", spec)
+    actual_keys = read_actual_keys(context.sandbox_dataset_root / "published" / "current", spec)
+    actual_history = build_actual_history_bounds(actual_keys) if context.dataset_name in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_moneyflow"} else {}
     accepted = read_accepted_missingness(context)
     trading_calendar = (
         load_trade_calendar(context.repo_root)
-        if context.dataset_name in {"tushare_daily", "tushare_daily_basic"}
+        if context.dataset_name in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_moneyflow"}
         else {}
     )
 
@@ -264,20 +402,21 @@ def build_missingness_report(context: RunContext, manifest: dict[str, Any]) -> d
     blocks_publish = False
     for first, date_value in sorted(expected - actual_keys, key=lambda item: (item[1], item[0])):
         calendar_missing_reason = classify_daily_missingness(first, date_value, trading_calendar)
+        history_missing_reason = classify_history_missingness(first, date_value, actual_history)
         accepted_record = accepted_missingness_record(accepted, first, date_value)
         if accepted_record:
             record = {
                 "key": first,
                 "date": date_value,
-                "ts_code": first if context.dataset_name in {"tushare_daily", "tushare_daily_basic"} else None,
-                "trade_date": date_value if context.dataset_name in {"tushare_daily", "tushare_daily_basic"} else None,
+                "ts_code": first if context.dataset_name in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_moneyflow"} else None,
+                "trade_date": date_value if context.dataset_name in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_moneyflow"} else None,
                 "exchange": first if context.dataset_name == "trade_calendar" else None,
                 "cal_date": date_value if context.dataset_name == "trade_calendar" else None,
                 "reason": accepted_record["reason"],
                 "status": "accepted",
                 "blocks_publish": "false",
             }
-        elif context.dataset_name in {"tushare_daily", "tushare_daily_basic"} and calendar_missing_reason:
+        elif context.dataset_name in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_moneyflow"} and calendar_missing_reason:
             record = {
                 "key": first,
                 "date": date_value,
@@ -289,12 +428,24 @@ def build_missingness_report(context: RunContext, manifest: dict[str, Any]) -> d
                 "status": "accepted",
                 "blocks_publish": "false",
             }
+        elif context.dataset_name in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_moneyflow"} and history_missing_reason:
+            record = {
+                "key": first,
+                "date": date_value,
+                "ts_code": first,
+                "trade_date": date_value,
+                "exchange": None,
+                "cal_date": None,
+                "reason": history_missing_reason,
+                "status": "accepted",
+                "blocks_publish": "false",
+            }
         else:
             record = {
                 "key": first,
                 "date": date_value,
-                "ts_code": first if context.dataset_name in {"tushare_daily", "tushare_daily_basic"} else None,
-                "trade_date": date_value if context.dataset_name in {"tushare_daily", "tushare_daily_basic"} else None,
+                "ts_code": first if context.dataset_name in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_moneyflow"} else None,
+                "trade_date": date_value if context.dataset_name in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_moneyflow"} else None,
                 "exchange": first if context.dataset_name == "trade_calendar" else None,
                 "cal_date": date_value if context.dataset_name == "trade_calendar" else None,
                 "reason": "unknown",
@@ -314,6 +465,45 @@ def build_missingness_report(context: RunContext, manifest: dict[str, Any]) -> d
         "missing": missing,
         "finished_at": utc_stamp(),
     }
+
+
+def build_actual_history_bounds(actual_keys: set[tuple[str, str]]) -> dict[str, dict[str, str]]:
+    history: dict[str, dict[str, str]] = {}
+    for ts_code, trade_date in actual_keys:
+        if not ts_code or not trade_date:
+            continue
+        bounds = history.setdefault(ts_code, {"first": trade_date, "last": trade_date})
+        if trade_date < bounds["first"]:
+            bounds["first"] = trade_date
+        if trade_date > bounds["last"]:
+            bounds["last"] = trade_date
+    return history
+
+
+def classify_prelist_missingness(
+    ts_code: str,
+    trade_date: str,
+    actual_history: dict[str, dict[str, str]],
+) -> str | None:
+    bounds = actual_history.get(ts_code)
+    if not bounds:
+        return None
+    if trade_date < bounds["first"]:
+        return "outside_scope"
+    return None
+
+
+def classify_history_missingness(
+    ts_code: str,
+    trade_date: str,
+    actual_history: dict[str, dict[str, str]],
+) -> str | None:
+    bounds = actual_history.get(ts_code)
+    if not bounds:
+        return None
+    if trade_date < bounds["first"] or trade_date > bounds["last"]:
+        return "outside_scope"
+    return "suspension"
 
 
 def read_raw_primary_keys(context: RunContext, spec: DatasetSpec) -> set[tuple[str, str]]:
@@ -386,7 +576,8 @@ def accepted_missingness_record(
 
 
 def load_trade_calendar(repo_root: Path) -> dict[tuple[str, str], str]:
-    calendar_root = repo_root / "datasets" / "trade_calendar" / "data" / "published" / "current"
+    from .workspace import dataset_current_root
+    calendar_root = dataset_current_root(repo_root, "trade_calendar")
     calendar: dict[tuple[str, str], str] = {}
     if not calendar_root.exists():
         return calendar
@@ -428,10 +619,10 @@ def exchange_for_ts_code(ts_code: str) -> str | None:
 
 
 def build_unusual_values_report(context: RunContext) -> dict[str, Any]:
-    if context.dataset_name != "tushare_daily":
+    if context.dataset_name not in {"tushare_daily", "tushare_stk_factor_pro"}:
         return {"run_id": context.run_id, "warning_count": 0, "warnings": [], "finished_at": utc_stamp()}
 
-    rows = read_daily_rows(context.sandbox_dataset_root / "data" / "published" / "current")
+    rows = read_daily_rows(context.sandbox_dataset_root / "published" / "current")
     warnings: list[str] = []
     previous_by_symbol: dict[str, dict[str, str]] = {}
 
@@ -451,6 +642,11 @@ def build_unusual_values_report(context: RunContext) -> dict[str, Any]:
             move = abs((close - pre_close) / pre_close)
             if move > Decimal("0.20"):
                 warnings.append(f"{location}: close/pre_close move exceeds 20%")
+        if context.dataset_name == "tushare_stk_factor_pro":
+            float_share = decimals.get("float_share")
+            free_share = decimals.get("free_share")
+            if float_share is not None and free_share is not None and free_share > float_share:
+                warnings.append(f"{location}: free_share exceeds float_share")
 
         previous = previous_by_symbol.get(row["ts_code"])
         if previous:
@@ -566,7 +762,8 @@ def validate_trade_calendar_csv(path: Path) -> list[str]:
     return errors
 
 
-def validate_instrument_universe_csv(path: Path) -> list[str]:
+
+def validate_index_weight_csv(path: Path) -> list[str]:
     errors: list[str] = []
     seen_keys: set[tuple[str, str, str]] = set()
     row_count = 0
@@ -574,7 +771,7 @@ def validate_instrument_universe_csv(path: Path) -> list[str]:
     with path.open(newline="", encoding="utf-8") as input_file:
         reader = csv.DictReader(input_file)
         fieldnames = reader.fieldnames or []
-        for field in INSTRUMENT_UNIVERSE_FIELDS:
+        for field in TUSHARE_INDEX_WEIGHT_FIELDS:
             if field not in fieldnames:
                 errors.append(f"{path.name}: missing column {field}")
         if errors:
@@ -582,31 +779,30 @@ def validate_instrument_universe_csv(path: Path) -> list[str]:
 
         for row_number, row in enumerate(reader, start=2):
             row_count += 1
-            key = (row["universe_id"], row["member_code"], row["as_of_date"])
+            key = (row["index_code"], row["con_code"], row["trade_date"])
             if key in seen_keys:
                 errors.append(f"{path.name}:{row_number}: duplicate primary key {key}")
             seen_keys.add(key)
 
-            for field in ("universe_id", "member_code", "as_of_date"):
+            for field in ("index_code", "con_code", "trade_date", "weight"):
                 if not row.get(field):
                     errors.append(f"{path.name}:{row_number}: missing required field {field}")
-            for field in ("valid_from", "valid_to", "as_of_date"):
-                if row.get(field) and not valid_trade_date(row[field]):
-                    errors.append(f"{path.name}:{row_number}: invalid {field} {row[field]}")
-            if not valid_member_code(row.get("member_code", "")):
-                errors.append(f"{path.name}:{row_number}: invalid member_code {row.get('member_code', '')}")
-            if row.get("weight"):
-                try:
-                    weight = Decimal(row["weight"])
-                    if weight < 0:
-                        errors.append(f"{path.name}:{row_number}: weight is negative")
-                except InvalidOperation:
-                    errors.append(f"{path.name}:{row_number}: invalid decimal in weight")
-            if row.get("rank") and not row["rank"].isdigit():
-                errors.append(f"{path.name}:{row_number}: invalid rank {row['rank']}")
+            if not valid_index_code(row.get("index_code", "")):
+                errors.append(f"{path.name}:{row_number}: invalid index_code {row.get('index_code', '')}")
+            if not valid_member_code(row.get("con_code", "")):
+                errors.append(f"{path.name}:{row_number}: invalid con_code {row.get('con_code', '')}")
+            if not valid_trade_date(row.get("trade_date", "")):
+                errors.append(f"{path.name}:{row_number}: invalid trade_date {row.get('trade_date', '')}")
+            try:
+                weight = Decimal(row["weight"])
+            except (InvalidOperation, KeyError):
+                errors.append(f"{path.name}:{row_number}: invalid decimal in weight")
+            else:
+                if weight < 0:
+                    errors.append(f"{path.name}:{row_number}: weight is negative")
 
     if row_count == 0:
-        errors.append(f"{path.name}: empty universe file")
+        errors.append(f"{path.name}: empty index weight file")
     return errors
 
 
@@ -676,3 +872,10 @@ def valid_member_code(value: str) -> bool:
         return False
     symbol, exchange = value.split(".", 1)
     return bool(symbol) and symbol.isdigit() and exchange in {"SH", "SZ", "BJ"}
+
+
+def valid_index_code(value: str) -> bool:
+    if "." not in value:
+        return False
+    symbol, exchange = value.split(".", 1)
+    return bool(symbol) and symbol.isdigit() and exchange in {"SH", "SZ", "CSI", "CNI"}

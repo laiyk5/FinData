@@ -1,0 +1,23 @@
+dataset: tushare_index_weight
+version: 0.1.0
+primary_key:
+  - index_code
+  - con_code
+  - trade_date
+fields:
+  - name: index_code
+    type: string
+    required: true
+    description: Tushare index code, such as 000300.SH.
+  - name: con_code
+    type: string
+    required: true
+    description: Tushare constituent security code.
+  - name: trade_date
+    type: string
+    required: true
+    description: Provider snapshot date in YYYYMMDD format.
+  - name: weight
+    type: decimal
+    required: true
+    description: Constituent weight in percent as reported by Tushare.

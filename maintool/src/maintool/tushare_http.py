@@ -7,16 +7,20 @@ from typing import Any, Callable
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from .dataset_specs import INSTRUMENT_UNIVERSE_FIELDS, TRADE_CALENDAR_FIELDS
+from .dataset_specs import TRADE_CALENDAR_FIELDS, TUSHARE_INDEX_WEIGHT_FIELDS
+from .moneyflow import FIELDS as MONEYFLOW_FIELDS
 from .tushare_daily import FIELDS
 from .tushare_daily_basic import FIELDS as DAILY_BASIC_FIELDS
+from .stk_factor_pro import FIELDS as STK_FACTOR_PRO_FIELDS
 
 
 TUSHARE_HTTP_URL = "http://api.tushare.pro"
 TUSHARE_DAILY_FIELDS = ",".join(FIELDS)
 TUSHARE_DAILY_BASIC_FIELDS = ",".join(DAILY_BASIC_FIELDS)
+TUSHARE_STK_FACTOR_PRO_FIELDS = ",".join(STK_FACTOR_PRO_FIELDS)
+TUSHARE_MONEYFLOW_FIELDS = ",".join(MONEYFLOW_FIELDS)
 TUSHARE_TRADE_CAL_FIELDS = "exchange,cal_date,is_open,pretrade_date"
-TUSHARE_INDEX_WEIGHT_FIELDS = "index_code,con_code,trade_date,weight"
+TUSHARE_INDEX_WEIGHT_FIELD_LIST = ",".join(TUSHARE_INDEX_WEIGHT_FIELDS)
 
 
 class TushareProviderError(RuntimeError):
@@ -108,6 +112,64 @@ def fetch_daily_basic(
     )
 
 
+def fetch_stk_factor_pro(
+    token: str,
+    ts_code: str | None,
+    trade_date: str | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    transport: Transport | None = None,
+    timeout: float = 30.0,
+) -> TushareDailyResponse:
+    params = {}
+    if ts_code:
+        params["ts_code"] = ts_code
+    if trade_date is not None:
+        params["trade_date"] = trade_date
+    if start_date is not None:
+        params["start_date"] = start_date
+    if end_date is not None:
+        params["end_date"] = end_date
+    return fetch_api(
+        token=token,
+        api_name="stk_factor_pro",
+        params=params,
+        fields=TUSHARE_STK_FACTOR_PRO_FIELDS,
+        canonical_fields=STK_FACTOR_PRO_FIELDS,
+        transport=transport,
+        timeout=timeout,
+    )
+
+
+def fetch_moneyflow(
+    token: str,
+    ts_code: str | None,
+    trade_date: str | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    transport: Transport | None = None,
+    timeout: float = 30.0,
+) -> TushareDailyResponse:
+    params = {}
+    if ts_code:
+        params["ts_code"] = ts_code
+    if trade_date is not None:
+        params["trade_date"] = trade_date
+    if start_date is not None:
+        params["start_date"] = start_date
+    if end_date is not None:
+        params["end_date"] = end_date
+    return fetch_api(
+        token=token,
+        api_name="moneyflow",
+        params=params,
+        fields=TUSHARE_MONEYFLOW_FIELDS,
+        canonical_fields=MONEYFLOW_FIELDS,
+        transport=transport,
+        timeout=timeout,
+    )
+
+
 def fetch_trade_cal(
     token: str,
     exchange: str,
@@ -135,7 +197,7 @@ def fetch_trade_cal(
     )
 
 
-def fetch_index_weight(
+def fetch_raw_index_weight(
     token: str,
     index_code: str,
     start_date: str,
@@ -151,8 +213,8 @@ def fetch_index_weight(
             "start_date": start_date,
             "end_date": end_date,
         },
-        fields=TUSHARE_INDEX_WEIGHT_FIELDS,
-        canonical_fields=INSTRUMENT_UNIVERSE_FIELDS,
+        fields=TUSHARE_INDEX_WEIGHT_FIELD_LIST,
+        canonical_fields=TUSHARE_INDEX_WEIGHT_FIELDS,
         transport=transport,
         timeout=timeout,
     )

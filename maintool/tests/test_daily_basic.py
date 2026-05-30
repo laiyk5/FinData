@@ -12,7 +12,7 @@ sys.path.insert(0, str(SRC_ROOT))
 
 from maintool.ingest import ingest_prepared_raw
 from maintool.jsonio import read_json, write_json
-from maintool.pipeline import run_full_fake_pipeline
+from maintool.pipeline import run_full_pipeline
 from maintool.prepare import prepare_fake_raw
 from maintool.qa import run_qa
 from maintool.run_sandbox import create_run_sandbox
@@ -25,9 +25,9 @@ class DailyBasicTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.repo_root = Path(self.temp_dir.name)
-        for dataset_name in ("tushare_daily_basic", "trade_calendar"):
-            source = REPO_ROOT / "datasets" / dataset_name
-            target = self.repo_root / "datasets" / dataset_name
+        for dataset_name, api_name in (("tushare_daily_basic", "daily_basic"), ("trade_calendar", "trade_cal")):
+            source = REPO_ROOT / "datasets" / "tushare" / api_name
+            target = self.repo_root / "datasets" / "tushare" / api_name
             shutil.copytree(source, target)
         (self.repo_root / "sandboxes" / "runs").mkdir(parents=True)
 
@@ -35,16 +35,17 @@ class DailyBasicTests(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def test_full_fake_pipeline_publishes_daily_basic(self) -> None:
-        context, result = run_full_fake_pipeline(
+        context, result = run_full_pipeline(
             repo_root=self.repo_root,
             dataset_name="tushare_daily_basic",
             symbols=["000001.SZ", "600000.SH"],
             trade_dates=["20240506"],
             run_id="daily-basic-run-ok",
+            use_fake=True,
         )
 
         self.assertEqual(result["prepare"]["prepared"], 2)
-        current_file = context.dataset_root / "data" / "published" / "current" / "daily_basic.csv"
+        current_file = context.sandbox_dataset_root / "published" / "current" / "daily_basic.csv"
         self.assertTrue(current_file.is_file())
         self.assertTrue((context.sandbox_root / "logs" / "prepare_summary.json").is_file())
 
@@ -54,10 +55,10 @@ class DailyBasicTests(unittest.TestCase):
         context = create_run_sandbox(
             repo_root=self.repo_root,
             dataset_name="tushare_daily_basic",
-            provider="fake",
             symbols=symbols,
             trade_dates=[],
             run_id="daily-basic-scheduled-range",
+            use_fake=True,
             extras={
                 "start_date": expected_trade_dates[0],
                 "end_date": expected_trade_dates[-1],
@@ -78,10 +79,10 @@ class DailyBasicTests(unittest.TestCase):
         context = create_run_sandbox(
             repo_root=self.repo_root,
             dataset_name="tushare_daily_basic",
-            provider="fake",
             symbols=["000001.SZ"],
             trade_dates=["20240506"],
             run_id="daily-basic-bad-shares",
+            use_fake=True,
         )
         prepare_fake_raw(context)
         raw_path = next(context.raw_root.glob("*.json"))
@@ -100,15 +101,15 @@ class DailyBasicTests(unittest.TestCase):
         context = create_run_sandbox(
             repo_root=self.repo_root,
             dataset_name="tushare_daily_basic",
-            provider="fake",
             symbols=["000001.SZ", "600000.SH"],
             trade_dates=["20240506"],
             run_id="daily-basic-missing-prepared-key",
+            use_fake=True,
         )
         prepare_fake_raw(context)
         ingest_prepared_raw(context)
 
-        current_file = context.sandbox_dataset_root / "data" / "published" / "current" / "daily_basic.csv"
+        current_file = context.sandbox_dataset_root / "published" / "current" / "daily_basic.csv"
         current_file.unlink()
 
         status = run_qa(context)

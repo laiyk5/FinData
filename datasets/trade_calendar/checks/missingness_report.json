@@ -1,9 +1,0 @@
-{
-  "actual_count": 12744,
-  "blocks_publish": false,
-  "expected_count": 12744,
-  "finished_at": "20260523T095858Z",
-  "missing": [],
-  "missing_count": 0,
-  "run_id": "trade-calendar-SZSE-19910703-20260523-clean"
-}

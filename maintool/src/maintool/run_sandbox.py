@@ -9,17 +9,48 @@ from typing import Any
 
 from .dataset_specs import plan_requests, request_key, summarize_request_plan
 from .jsonio import read_json, write_json
+from .workspace import (
+    cache_root as workspace_cache_root,
+    dataset_backup_root,
+    dataset_current_root,
+    dataset_root as workspace_dataset_root,
+    sandbox_dataset_current_root,
+    sandbox_dataset_root as workspace_sandbox_dataset_root,
+    sandbox_dataset_staged_root,
+)
 
 
 @dataclass(frozen=True)
 class RunContext:
     repo_root: Path
     dataset_name: str
+    provider: str
+    api_name: str
     run_id: str
 
     @property
+    def path_key(self) -> str:
+        return f"{self.provider}/{self.api_name}"
+
+    @property
     def dataset_root(self) -> Path:
-        return self.repo_root / "datasets" / self.dataset_name
+        return workspace_dataset_root(self.repo_root, self.dataset_name)
+
+    @property
+    def published_root(self) -> Path:
+        return self.dataset_root / "published"
+
+    @property
+    def published_current_root(self) -> Path:
+        return dataset_current_root(self.repo_root, self.dataset_name)
+
+    @property
+    def backup_root(self) -> Path:
+        return dataset_backup_root(self.repo_root, self.dataset_name)
+
+    @property
+    def cache_root(self) -> Path:
+        return workspace_cache_root(self.repo_root)
 
     @property
     def sandbox_root(self) -> Path:
@@ -27,11 +58,23 @@ class RunContext:
 
     @property
     def sandbox_dataset_root(self) -> Path:
-        return self.sandbox_root / "dataset"
+        return workspace_sandbox_dataset_root(self.sandbox_root)
+
+    @property
+    def sandbox_published_current_root(self) -> Path:
+        return sandbox_dataset_current_root(self.sandbox_root)
+
+    @property
+    def sandbox_staged_root(self) -> Path:
+        return sandbox_dataset_staged_root(self.sandbox_root)
 
     @property
     def raw_root(self) -> Path:
         return self.sandbox_root / "raw"
+
+    @property
+    def cache_dataset_root(self) -> Path:
+        return self.cache_root / self.provider / self.api_name
 
     @property
     def qa_root(self) -> Path:
@@ -75,7 +118,16 @@ def request_file_stem(trade_date: str, ts_code: str) -> str:
 
 
 def get_run_context(repo_root: Path, dataset_name: str, run_id: str) -> RunContext:
-    return RunContext(repo_root=repo_root, dataset_name=dataset_name, run_id=run_id)
+    from .dataset_specs import get_spec
+
+    spec = get_spec(dataset_name)
+    return RunContext(
+        repo_root=repo_root,
+        dataset_name=dataset_name,
+        provider=spec.provider,
+        api_name=spec.api_name,
+        run_id=run_id,
+    )
 
 
 def load_run_manifest(context: RunContext) -> dict[str, Any]:
@@ -91,24 +143,22 @@ def save_prepare_ledger(context: RunContext, ledger: dict[str, Any]) -> None:
 
 
 def active_dataset_ignore(source_dir: str, names: list[str]) -> set[str]:
-    ignored = {"__pycache__"}
-    source_path = Path(source_dir)
-    if source_path.name == "data" and "archive" in names:
-        ignored.add("archive")
+    ignored = {"__pycache__", "data", "checks", "logs", "raw", "staged", "archive"}
     return ignored.intersection(names)
 
 
-def inspect_current_state(dataset_root: Path) -> dict[str, Any]:
-    current_dir = dataset_root / "data" / "published" / "current"
-    staged_dir = dataset_root / "data" / "staged"
-    raw_dir = dataset_root / "data" / "raw"
+def inspect_current_state(repo_root: Path, dataset_name: str) -> dict[str, Any]:
+    current_dir = dataset_current_root(repo_root, dataset_name)
+    backup_dir = dataset_backup_root(repo_root, dataset_name)
 
     return {
-        "dataset_root": str(dataset_root),
-        "raw_file_count": count_files(raw_dir),
-        "staged_file_count": count_files(staged_dir),
+        "dataset_root": str(workspace_dataset_root(repo_root, dataset_name)),
+        "raw_file_count": 0,
+        "staged_file_count": 0,
         "published_file_count": count_files(current_dir),
         "published_row_count": count_csv_rows(current_dir),
+        "backup_file_count": count_files(backup_dir),
+        "backup_version_count": count_directories(backup_dir),
     }
 
 
@@ -128,12 +178,18 @@ def count_csv_rows(root: Path) -> int:
     return row_count
 
 
+def count_directories(root: Path) -> int:
+    if not root.exists():
+        return 0
+    return sum(1 for path in root.iterdir() if path.is_dir())
+
+
 def create_run_sandbox(
     repo_root: Path,
     dataset_name: str,
-    provider: str,
-    symbols: list[str],
-    trade_dates: list[str],
+    use_fake: bool = False,
+    symbols: list[str] | None = None,
+    trade_dates: list[str] | None = None,
     run_id: str | None = None,
     rate_limit_seconds: float = 0.0,
     max_retries: int = 3,
@@ -142,23 +198,37 @@ def create_run_sandbox(
     request_budget: int | None = None,
     extras: dict[str, Any] | None = None,
 ) -> RunContext:
-    if dataset_name not in {"tushare_daily", "tushare_daily_basic", "trade_calendar", "instrument_universe", "report_catalog"}:
+    from .dataset_specs import get_spec
+
+    spec = get_spec(dataset_name)
+    provider = "fake" if use_fake else spec.provider
+    if dataset_name not in {
+        "tushare_daily",
+        "tushare_daily_basic",
+        "tushare_stk_factor_pro",
+        "tushare_moneyflow",
+        "tushare_index_weight",
+        "trade_calendar",
+        "report_catalog",
+    }:
         raise ValueError(f"Maintenance pipeline is not implemented for dataset: {dataset_name}")
     if provider not in {"fake", "mock", "tushare", "cninfo"}:
         raise ValueError(f"Unsupported provider: {provider}")
+    symbols = symbols or []
+    trade_dates = trade_dates or []
     extras = extras or {}
-    if dataset_name in {"tushare_daily", "tushare_daily_basic"} and not symbols:
+    if dataset_name in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_moneyflow"} and not symbols:
         raise ValueError("At least one symbol is required.")
-    if dataset_name in {"tushare_daily", "tushare_daily_basic"} and not trade_dates and not extras.get("start_date"):
+    if dataset_name in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_moneyflow"} and not trade_dates and not extras.get("start_date"):
         raise ValueError("At least one trade date is required.")
     if dataset_name == "trade_calendar":
         for key in ("exchange", "start_date", "end_date"):
             if not extras.get(key):
                 raise ValueError(f"{key} is required for trade_calendar.")
-    if dataset_name == "instrument_universe":
-        for key in ("universe_id", "source_id", "start_date", "end_date"):
+    if dataset_name == "tushare_index_weight":
+        for key in ("index_code", "start_date", "end_date"):
             if not extras.get(key):
-                raise ValueError(f"{key} is required for instrument_universe.")
+                raise ValueError(f"{key} is required for tushare_index_weight.")
     if dataset_name == "report_catalog":
         for key in ("universe_id", "start_year", "end_year", "report_types"):
             if not extras.get(key):
@@ -166,7 +236,13 @@ def create_run_sandbox(
         if not symbols:
             raise ValueError("At least one symbol is required for report_catalog.")
 
-    context = RunContext(repo_root=repo_root, dataset_name=dataset_name, run_id=run_id or default_run_id(dataset_name))
+    context = RunContext(
+        repo_root=repo_root,
+        dataset_name=dataset_name,
+        provider=spec.provider,
+        api_name=spec.api_name,
+        run_id=run_id or default_run_id(dataset_name),
+    )
     if not context.dataset_root.is_dir():
         raise FileNotFoundError(f"Dataset not found: {context.dataset_root}")
     if context.sandbox_root.exists():
@@ -189,6 +265,7 @@ def create_run_sandbox(
             "attempts": 0,
             "attempt_history": [],
             "raw_path": None,
+            "cache_path": None,
             "row_count": None,
             "last_error": None,
             "error_type": None,
@@ -204,20 +281,19 @@ def create_run_sandbox(
         "sandbox_dataset_path": str(context.sandbox_dataset_root),
         "symbols": symbols,
         "trade_dates": trade_dates,
-        "daily_request": extras
-        if dataset_name in {"tushare_daily", "tushare_daily_basic"} and extras.get("start_date")
-        else None,
+        "daily_request": extras if dataset_name in {"tushare_daily", "tushare_daily_basic", "tushare_moneyflow"} and extras.get("start_date") else None,
+        "factor_request": extras if dataset_name == "tushare_stk_factor_pro" and extras.get("start_date") else None,
         "calendar_request": extras if dataset_name == "trade_calendar" else None,
-        "universe_request": extras if dataset_name == "instrument_universe" else None,
+        "index_weight_request": extras if dataset_name == "tushare_index_weight" else None,
         "report_catalog_request": extras if dataset_name == "report_catalog" else None,
         "symbol_selector": extras.get("symbol_selector")
-        if dataset_name in {"tushare_daily", "tushare_daily_basic", "report_catalog"}
+        if dataset_name in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_moneyflow", "report_catalog"}
         else None,
         "symbol_selector_resolved_at": extras.get("symbol_selector_resolved_at")
-        if dataset_name in {"tushare_daily", "tushare_daily_basic", "report_catalog"}
+        if dataset_name in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_moneyflow", "report_catalog"}
         else None,
         "resolved_symbols": symbols
-        if dataset_name in {"tushare_daily", "tushare_daily_basic", "report_catalog"} and extras.get("symbol_selector")
+        if dataset_name in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_moneyflow", "report_catalog"} and extras.get("symbol_selector")
         else None,
         "request_settings": {
             "rate_limit_seconds": rate_limit_seconds,
@@ -227,7 +303,7 @@ def create_run_sandbox(
             "request_budget": request_budget,
         },
         "request_plan": summarize_request_plan(dataset_name, planned_requests),
-        "current_state": inspect_current_state(context.dataset_root),
+        "current_state": inspect_current_state(repo_root, dataset_name),
         "steps": {
             "planned": True,
             "prepared": False,

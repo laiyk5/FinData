@@ -1,9 +1,0 @@
-{
-  "dataset": "instrument_universe",
-  "finished_at": "20260523T165007Z",
-  "missingness_blocks_publish": false,
-  "passed": true,
-  "run_id": "instrument-universe-csi300-20260506",
-  "validation_passed": true,
-  "warning_count": 0
-}

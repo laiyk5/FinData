@@ -1,8 +1,0 @@
-{
-  "archive_path": "data/archive/20260523T102834Z-tushare-daily-sse50-20260522-current",
-  "current_path": "data/published/current",
-  "dataset": "tushare_daily",
-  "file_count": 1,
-  "published_at": "20260523T102834Z",
-  "run_id": "tushare-daily-sse50-20260522"
-}

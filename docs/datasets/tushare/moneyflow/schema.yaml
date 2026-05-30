@@ -1,0 +1,104 @@
+dataset: tushare_moneyflow
+version: 0.1.0
+primary_key:
+  - ts_code
+  - trade_date
+fields:
+  - name: ts_code
+    type: string
+    required: true
+    description: Tushare security code, such as 000001.SZ.
+  - name: trade_date
+    type: string
+    required: true
+    description: Trading date in YYYYMMDD format.
+  - name: buy_sm_vol
+    type: decimal
+    required: true
+    nullable: true
+    description: Small-order buy volume in hands.
+  - name: buy_sm_amount
+    type: decimal
+    required: true
+    nullable: true
+    description: Small-order buy amount in ten thousand yuan.
+  - name: sell_sm_vol
+    type: decimal
+    required: true
+    nullable: true
+    description: Small-order sell volume in hands.
+  - name: sell_sm_amount
+    type: decimal
+    required: true
+    nullable: true
+    description: Small-order sell amount in ten thousand yuan.
+  - name: buy_md_vol
+    type: decimal
+    required: true
+    nullable: true
+    description: Medium-order buy volume in hands.
+  - name: buy_md_amount
+    type: decimal
+    required: true
+    nullable: true
+    description: Medium-order buy amount in ten thousand yuan.
+  - name: sell_md_vol
+    type: decimal
+    required: true
+    nullable: true
+    description: Medium-order sell volume in hands.
+  - name: sell_md_amount
+    type: decimal
+    required: true
+    nullable: true
+    description: Medium-order sell amount in ten thousand yuan.
+  - name: buy_lg_vol
+    type: decimal
+    required: true
+    nullable: true
+    description: Large-order buy volume in hands.
+  - name: buy_lg_amount
+    type: decimal
+    required: true
+    nullable: true
+    description: Large-order buy amount in ten thousand yuan.
+  - name: sell_lg_vol
+    type: decimal
+    required: true
+    nullable: true
+    description: Large-order sell volume in hands.
+  - name: sell_lg_amount
+    type: decimal
+    required: true
+    nullable: true
+    description: Large-order sell amount in ten thousand yuan.
+  - name: buy_elg_vol
+    type: decimal
+    required: true
+    nullable: true
+    description: Extra-large-order buy volume in hands.
+  - name: buy_elg_amount
+    type: decimal
+    required: true
+    nullable: true
+    description: Extra-large-order buy amount in ten thousand yuan.
+  - name: sell_elg_vol
+    type: decimal
+    required: true
+    nullable: true
+    description: Extra-large-order sell volume in hands.
+  - name: sell_elg_amount
+    type: decimal
+    required: true
+    nullable: true
+    description: Extra-large-order sell amount in ten thousand yuan.
+  - name: net_mf_vol
+    type: decimal
+    required: true
+    nullable: true
+    description: Net moneyflow volume in hands.
+  - name: net_mf_amount
+    type: decimal
+    required: true
+    nullable: true
+    description: Net moneyflow amount in ten thousand yuan.

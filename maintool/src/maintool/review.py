@@ -46,8 +46,9 @@ def render_header(context: RunContext, manifest: dict[str, Any] | None) -> list[
         ]
 
     calendar_request = manifest.get("calendar_request") or {}
-    universe_request = manifest.get("universe_request") or {}
+    index_weight_request = manifest.get("index_weight_request") or {}
     daily_request = manifest.get("daily_request") or {}
+    factor_request = manifest.get("factor_request") or {}
     symbols = ", ".join(manifest.get("symbols", [])) or "-"
     trade_dates = ", ".join(manifest.get("trade_dates", [])) or "-"
     settings = manifest.get("request_settings", {})
@@ -61,8 +62,9 @@ def render_header(context: RunContext, manifest: dict[str, Any] | None) -> list[
         f"Symbol selector resolved at: {manifest.get('symbol_selector_resolved_at') or '-'}",
         f"Trade dates: {trade_dates}",
         f"Daily request: {format_daily_request(daily_request)}",
+        f"Factor request: {format_daily_request(factor_request)}",
         f"Calendar request: {format_calendar_request(calendar_request)}",
-        f"Universe request: {format_universe_request(universe_request)}",
+        f"Index weight request: {format_index_weight_request(index_weight_request)}",
         f"Request plan: {format_request_plan(request_plan)}",
         f"Rate limit seconds: {settings.get('rate_limit_seconds', '-')}",
         f"Max retries: {settings.get('max_retries', '-')}",
@@ -237,14 +239,13 @@ def format_daily_request(daily_request: dict[str, Any]) -> str:
     )
 
 
-def format_universe_request(universe_request: dict[str, Any]) -> str:
-    if not universe_request:
+def format_index_weight_request(index_weight_request: dict[str, Any]) -> str:
+    if not index_weight_request:
         return "-"
     return (
-        f"universe_id={universe_request.get('universe_id', '-')}, "
-        f"source_id={universe_request.get('source_id', '-')}, "
-        f"start={universe_request.get('start_date', '-')}, "
-        f"end={universe_request.get('end_date', '-')}"
+        f"index_code={index_weight_request.get('index_code', '-')}, "
+        f"start={index_weight_request.get('start_date', '-')}, "
+        f"end={index_weight_request.get('end_date', '-')}"
     )
 
 

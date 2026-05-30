@@ -1,8 +1,0 @@
-{
-  "archive_path": "data/archive/20260523T085703Z-smoke-trade-calendar-mock-202405-current",
-  "current_path": "data/published/current",
-  "dataset": "trade_calendar",
-  "file_count": 1,
-  "published_at": "20260523T085703Z",
-  "run_id": "smoke-trade-calendar-mock-202405"
-}

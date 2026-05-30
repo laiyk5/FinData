@@ -2,80 +2,68 @@
 
 This document defines the minimum structure for datasets in FinData.
 
-## Required Files
+## Directory Layout
 
-Each dataset should contain:
+Datasets live in `datasets/<provider>/<api_name>/`:
 
 ```text
-dataset_card.md
-schema.yaml
-maintenance.md
-manifest.yaml
-published/current/
+datasets/
+  tushare/
+    daily/
+    daily_basic/
+    ...
+  cninfo/
+    report_catalog/
 ```
 
-`published/current/` is the stable consumer path for the latest accepted
-version. The extra `current/` layer exists so the maintainer can prepare a new
-published directory and atomically swap it into place.
+`datasets/` is an output folder — nothing under it is tracked in git.
+
+## Required Documentation
+
+Documentation is tracked in `docs/datasets/<provider>/<api_name>/`:
+
+```text
+dataset_card.md   # Reference link, brief intro, metadata
+schema.yaml       # Field definitions and primary key
+```
+
+Maintenance SOPs live in `docs/maintenance/<name>.md`.
 
 ## Required Workspace Roots
 
 ```text
-datasets/   Dataset contracts and current published versions.
+datasets/   Published data (output only).
 sandboxes/  Run-local raw, staged, QA, and logs.
-archived/   Historical published versions for every dataset.
+backups/    Rolling backup copies of previous published versions.
 cache/      Provider/API response cache for reuse and recovery.
 ```
 
-## Required Metadata
-
-`dataset_card.md` explains the dataset for humans. It should describe purpose, source, schema, coverage, known missingness, update policy, validation checks, and usage notes.
-
-`schema.yaml` defines fields, types, meanings, units, and primary keys.
-
-`manifest.yaml`, when present locally, records generated operational metadata
-such as dataset status, coverage, current publish location, archive location,
-and known missingness summary. It is a dataset artifact rather than a
-git-managed contract.
-
 ## Git Boundary
 
-Git is the source of truth for dataset contracts and maintenance mechanics, not for
-large or frequently regenerated data products.
-
-Track these files in git:
+Track these in git:
 
 ```text
-dataset_card.md
-schema.yaml
-maintenance.md
+docs/datasets/<provider>/<api_name>/dataset_card.md
+docs/datasets/<provider>/<api_name>/schema.yaml
+docs/maintenance/<name>.md
+maintool/
 ```
 
-Do not track generated artifacts unless a dataset-specific document explicitly
-allows a small fixture:
+Do not track generated artifacts:
 
 ```text
-published/
-manifest.yaml
-archived/
+datasets/
+backups/
 cache/
 sandboxes/runs/
 ```
-
-`schema.yaml` is a human-reviewed contract. It should not be generated from a
-single run.
-
-`manifest.yaml` should be generated or updated by maintenance commands when a
-dataset is initialized or published. Do not hand-maintain it as source code, and
-do not commit it. Stable source-controlled metadata belongs in
-`dataset_card.md`, `schema.yaml`, and `maintenance.md`.
 
 ## Required Checks
 
 Run QA artifacts live in the sandbox:
 
 ```text
-sandboxes/runs/{dataset}/{run_id}/qa/
+sandboxes/runs/{dataset_name}/{run_id}/qa/
 ```
 
 ## Publishing Rule
@@ -84,21 +72,14 @@ A dataset version can be published only when validation passes or all exceptions
 
 ## Maintenance Runs
 
-Dataset updates should run through a sandbox:
+Dataset updates run through a sandbox:
 
 ```text
-sandboxes/runs/{dataset}/{run_id}/
+sandboxes/runs/{dataset_name}/{run_id}/
 ```
 
-The sandbox contains a dataset copy, prepared raw files, a request ledger, QA
-reports, and run metadata. The canonical dataset under `datasets/` should be
-changed only during the final publish step.
+The sandbox contains a dataset copy, prepared raw files, a request ledger, QA reports, and run metadata. The canonical dataset under `datasets/` is changed only during the final publish step.
 
-Historical publish outputs belong under `archived/`. Each archived version
-should be a complete package, not just bare data files. At minimum that package
-should include the published data plus the matching dataset card, schema,
-maintenance notes, manifest snapshot, and archive metadata.
+## Backup
 
-Provider raw responses may be mirrored into `sandboxes/runs/{dataset}/{run_id}/raw/`
-for run-local debugging, but the reusable canonical copy should live under
-`cache/{provider}/{api}/`.
+On publish, the previous `published/current/` is copied to `backups/<provider>/<api_name>/<timestamp>/`. The last 3 backups are kept; older ones are pruned automatically.

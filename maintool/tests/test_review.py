@@ -12,7 +12,7 @@ SRC_ROOT = Path(__file__).resolve().parents[1] / "src"
 sys.path.insert(0, str(SRC_ROOT))
 
 from maintool.ingest import ingest_prepared_raw
-from maintool.pipeline import run_full_fake_pipeline
+from maintool.pipeline import run_full_pipeline
 from maintool.prepare import prepare_fake_raw
 from maintool.qa import run_qa
 from maintool.review import build_review
@@ -26,18 +26,19 @@ class ReviewTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.repo_root = Path(self.temp_dir.name)
-        shutil.copytree(REPO_ROOT / "datasets" / "tushare_daily", self.repo_root / "datasets" / "tushare_daily")
+        shutil.copytree(REPO_ROOT / "datasets" / "tushare" / "daily", self.repo_root / "datasets" / "tushare" / "daily")
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
 
     def test_review_completed_run(self) -> None:
-        context, _ = run_full_fake_pipeline(
+        context, _ = run_full_pipeline(
             repo_root=self.repo_root,
             dataset_name="tushare_daily",
             symbols=["000001.SZ"],
             trade_dates=["20240506"],
             run_id="review-complete",
+            use_fake=True,
         )
 
         output = build_review(context)
@@ -56,10 +57,10 @@ class ReviewTests(unittest.TestCase):
         context = create_run_sandbox(
             repo_root=self.repo_root,
             dataset_name="tushare_daily",
-            provider="fake",
             symbols=["000001.SZ"],
             trade_dates=["20240506"],
             run_id="review-incomplete",
+            use_fake=True,
         )
 
         output = build_review(context)
@@ -72,10 +73,10 @@ class ReviewTests(unittest.TestCase):
         context = create_run_sandbox(
             repo_root=self.repo_root,
             dataset_name="tushare_daily",
-            provider="fake",
             symbols=["000001.SZ", "600001.SH"],
             trade_dates=["20240506"],
             run_id="review-missing",
+            use_fake=True,
         )
         prepare_fake_raw(context)
         raw_path = next(context.raw_root.glob("*.json"))

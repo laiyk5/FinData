@@ -16,7 +16,7 @@ Example:
 @universe:index:SSE50
 ```
 
-When used with `tushare_daily --symbols`, the maintool resolves the selector from `datasets/instrument_universe/published/current`, chooses the latest `as_of_date` for that universe, and writes both the selector and the concrete resolved symbols into the run manifest.
+When used with `tushare_daily --symbols`, the maintool resolves the selector from `datasets/tushare/index_weight/published/current`, queries all `con_code` values for the matching `index_code`, and writes both the selector and the concrete resolved symbols into the run manifest.
 
 Example command:
 
@@ -52,4 +52,4 @@ index:CSI300 -> 000300.SH
 index:CSI500 -> 000905.SH
 ```
 
-The maintained source of truth for these mappings is the `instrument_universe` dataset card and run manifests.
+The maintained source of truth for these mappings is the `tushare_index_weight` dataset card and run manifests.

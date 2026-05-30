@@ -14,7 +14,7 @@ sys.path.insert(0, str(SRC_ROOT))
 
 from maintool.ingest import ingest_prepared_raw
 from maintool.jsonio import read_json, write_json
-from maintool.pipeline import run_full_fake_pipeline
+from maintool.pipeline import run_full_pipeline
 from maintool.prepare import prepare_fake_raw
 from maintool.publish import publish_sandbox, published_coverage, render_coverage_block
 from maintool.qa import run_qa
@@ -28,8 +28,8 @@ class PipelineTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.repo_root = Path(self.temp_dir.name)
-        dataset_source = REPO_ROOT / "datasets" / "tushare_daily"
-        dataset_target = self.repo_root / "datasets" / "tushare_daily"
+        dataset_source = REPO_ROOT / "datasets" / "tushare" / "daily"
+        dataset_target = self.repo_root / "datasets" / "tushare" / "daily"
         shutil.copytree(dataset_source, dataset_target)
         (self.repo_root / "sandboxes" / "runs").mkdir(parents=True)
 
@@ -37,19 +37,25 @@ class PipelineTests(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def test_full_fake_pipeline_publishes_current_and_archives_previous_current(self) -> None:
-        context, result = run_full_fake_pipeline(
+        context, result = run_full_pipeline(
             repo_root=self.repo_root,
             dataset_name="tushare_daily",
             symbols=["000001.SZ", "600000.SH"],
             trade_dates=["20240506"],
             run_id="run-ok",
+            use_fake=True,
         )
 
         self.assertEqual(result["prepare"]["prepared"], 1)
         self.assertTrue((context.sandbox_root / "run_manifest.json").is_file())
-        self.assertTrue((context.dataset_root / "data" / "published" / "current" / "daily.csv").is_file())
-        self.assertTrue(any((context.dataset_root / "data" / "archive").iterdir()))
-        self.assertTrue((context.dataset_root / "checks" / "checksum_manifest.json").is_file())
+        self.assertTrue((context.dataset_root / "published" / "current" / "daily.csv").is_file())
+        backup_dir = context.repo_root / "backups" / "tushare" / "daily"
+        self.assertTrue(backup_dir.is_dir())
+        backups = [path for path in backup_dir.iterdir() if path.is_dir()]
+        self.assertTrue(backups)
+        backup_package = backups[0]
+        self.assertTrue((backup_package / "daily.csv").is_file())
+        self.assertTrue((context.qa_root / "checksum_manifest.json").is_file())
         for stage in ("prepare", "ingest", "qa", "publish"):
             self.assertTrue((context.sandbox_root / "logs" / f"{stage}_summary.json").is_file())
             self.assertTrue((context.sandbox_root / "logs" / f"{stage}_events.jsonl").is_file())
@@ -58,10 +64,10 @@ class PipelineTests(unittest.TestCase):
         context = create_run_sandbox(
             repo_root=self.repo_root,
             dataset_name="tushare_daily",
-            provider="fake",
             symbols=["000001.SZ"],
             trade_dates=["20240506"],
             run_id="run-restart",
+            use_fake=True,
         )
 
         first = prepare_fake_raw(context)
@@ -70,6 +76,30 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(first["prepared"], 1)
         self.assertEqual(second["prepared"], 0)
         self.assertEqual(second["skipped"], 1)
+        ledger = read_json(context.prepare_ledger_path)
+        request = next(iter(ledger["requests"].values()))
+        self.assertIsNotNone(request["cache_path"])
+        self.assertTrue((context.repo_root / request["cache_path"]).is_file())
+
+    def test_prepare_can_restore_sandbox_raw_from_cache(self) -> None:
+        context = create_run_sandbox(
+            repo_root=self.repo_root,
+            dataset_name="tushare_daily",
+            symbols=["000001.SZ"],
+            trade_dates=["20240506"],
+            run_id="run-restore-cache",
+            use_fake=True,
+        )
+
+        first = prepare_fake_raw(context)
+        sandbox_raw = next(context.raw_root.glob("*.json"))
+        sandbox_raw.unlink()
+        second = prepare_fake_raw(context)
+
+        self.assertEqual(first["prepared"], 1)
+        self.assertEqual(second["prepared"], 0)
+        self.assertEqual(second["skipped"], 1)
+        self.assertTrue(any(context.raw_root.glob("*.json")))
 
     def test_daily_range_scheduler_batches_symbols_under_row_limit(self) -> None:
         symbols = [f"{index:06d}.SZ" for index in range(300)]
@@ -77,10 +107,10 @@ class PipelineTests(unittest.TestCase):
         context = create_run_sandbox(
             repo_root=self.repo_root,
             dataset_name="tushare_daily",
-            provider="fake",
             symbols=symbols,
             trade_dates=[],
             run_id="run-scheduled-range",
+            use_fake=True,
             extras={
                 "start_date": expected_trade_dates[0],
                 "end_date": expected_trade_dates[-1],
@@ -100,10 +130,10 @@ class PipelineTests(unittest.TestCase):
         context = create_run_sandbox(
             repo_root=self.repo_root,
             dataset_name="tushare_daily",
-            provider="fake",
             symbols=["000001.SZ"],
             trade_dates=["20240506"],
             run_id="run-trade-date-all-filter",
+            use_fake=True,
             extras={"daily_request_strategy": "trade_date_all"},
         )
         prepare_fake_raw(context)
@@ -157,10 +187,10 @@ class PipelineTests(unittest.TestCase):
         context = create_run_sandbox(
             repo_root=self.repo_root,
             dataset_name="tushare_daily",
-            provider="fake",
             symbols=["000001.SZ", "600001.SH"],
             trade_dates=["20240506"],
             run_id="run-missing",
+            use_fake=True,
         )
         prepare_fake_raw(context)
         raw_path = next(context.raw_root.glob("*.json"))
@@ -193,10 +223,10 @@ class PipelineTests(unittest.TestCase):
         context = create_run_sandbox(
             repo_root=self.repo_root,
             dataset_name="tushare_daily",
-            provider="fake",
             symbols=["000001.SZ", "600001.SH"],
             trade_dates=["20240506"],
             run_id="run-missing-wildcard",
+            use_fake=True,
         )
         prepare_fake_raw(context)
         raw_path = next(context.raw_root.glob("*.json"))
@@ -228,10 +258,10 @@ class PipelineTests(unittest.TestCase):
         context = create_run_sandbox(
             repo_root=self.repo_root,
             dataset_name="tushare_daily",
-            provider="fake",
             symbols=["600001.SH"],
             trade_dates=["20240506"],
             run_id="run-calendar-holiday",
+            use_fake=True,
         )
         prepare_fake_raw(context)
         ledger = read_json(context.prepare_ledger_path)
@@ -253,10 +283,10 @@ class PipelineTests(unittest.TestCase):
         context = create_run_sandbox(
             repo_root=self.repo_root,
             dataset_name="tushare_daily",
-            provider="fake",
             symbols=["600001.SH"],
             trade_dates=["20240506"],
             run_id="run-calendar-open-missing",
+            use_fake=True,
         )
         prepare_fake_raw(context)
         ledger = read_json(context.prepare_ledger_path)
@@ -274,7 +304,7 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(missingness["missing"][0]["reason"], "unknown")
 
     def test_daily_coverage_renders_symbol_ranges(self) -> None:
-        coverage = published_coverage("tushare_daily", self.repo_root / "datasets" / "tushare_daily" / "data" / "published" / "current")
+        coverage = published_coverage("tushare_daily", self.repo_root / "datasets" / "tushare" / "daily" / "published" / "current")
         rendered = render_coverage_block("tushare_daily", coverage)
 
         self.assertIn("  symbol_ranges:", rendered)
@@ -282,14 +312,15 @@ class PipelineTests(unittest.TestCase):
         self.assertTrue(any(line.startswith("      start_date:") for line in rendered))
 
     def test_failed_publish_before_final_rename_leaves_current_unchanged(self) -> None:
-        context, _ = run_full_fake_pipeline(
+        context, _ = run_full_pipeline(
             repo_root=self.repo_root,
             dataset_name="tushare_daily",
             symbols=["000001.SZ"],
             trade_dates=["20240506"],
             run_id="run-first",
+            use_fake=True,
         )
-        current_file = context.dataset_root / "data" / "published" / "current" / "daily.csv"
+        current_file = context.dataset_root / "published" / "current" / "daily.csv"
         before = current_file.read_text(encoding="utf-8")
 
         second = self.create_prepared_context("run-failed-publish", trade_date="20240507")
@@ -306,16 +337,16 @@ class PipelineTests(unittest.TestCase):
         context = create_run_sandbox(
             repo_root=self.repo_root,
             dataset_name="tushare_daily",
-            provider="fake",
             symbols=["000001.SZ"],
             trade_dates=[trade_date],
             run_id=run_id,
+            use_fake=True,
         )
         prepare_fake_raw(context)
         return context
 
     def write_trade_calendar(self, exchange: str, rows: list[tuple[str, str]]) -> None:
-        current_dir = self.repo_root / "datasets" / "trade_calendar" / "data" / "published" / "current" / f"exchange={exchange}"
+        current_dir = self.repo_root / "datasets" / "tushare" / "trade_cal" / "published" / "current" / f"exchange={exchange}"
         current_dir.mkdir(parents=True, exist_ok=True)
         with (current_dir / "trade_calendar.csv").open("w", newline="", encoding="utf-8") as output:
             writer = csv.DictWriter(output, fieldnames=["exchange", "cal_date", "is_open", "pretrade_date"])

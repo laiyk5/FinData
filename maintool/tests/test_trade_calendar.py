@@ -31,8 +31,8 @@ class TradeCalendarTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.repo_root = Path(self.temp_dir.name)
-        shutil.copytree(REPO_ROOT / "datasets" / "trade_calendar", self.repo_root / "datasets" / "trade_calendar")
-        clear_current(self.repo_root / "datasets" / "trade_calendar")
+        shutil.copytree(REPO_ROOT / "datasets" / "tushare" / "trade_cal", self.repo_root / "datasets" / "tushare" / "trade_cal")
+        clear_current(self.repo_root / "datasets" / "tushare" / "trade_cal")
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
@@ -41,7 +41,7 @@ class TradeCalendarTests(unittest.TestCase):
         context, result = run_full_pipeline(
             repo_root=self.repo_root,
             dataset_name="trade_calendar",
-            provider="mock",
+            use_fake=True,
             symbols=[],
             trade_dates=[],
             run_id="calendar-mock",
@@ -52,7 +52,6 @@ class TradeCalendarTests(unittest.TestCase):
         self.assertTrue(
             (
                 context.dataset_root
-                / "data"
                 / "published"
                 / "current"
                 / "exchange=SSE"
@@ -114,7 +113,7 @@ class TradeCalendarTests(unittest.TestCase):
         context = create_run_sandbox(
             repo_root=self.repo_root,
             dataset_name="trade_calendar",
-            provider="mock",
+            use_fake=True,
             symbols=[],
             trade_dates=[],
             run_id=run_id,
@@ -141,8 +140,8 @@ class TradeCalendarTushareTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.repo_root = Path(self.temp_dir.name)
-        shutil.copytree(REPO_ROOT / "datasets" / "trade_calendar", self.repo_root / "datasets" / "trade_calendar")
-        clear_current(self.repo_root / "datasets" / "trade_calendar")
+        shutil.copytree(REPO_ROOT / "datasets" / "tushare" / "trade_cal", self.repo_root / "datasets" / "tushare" / "trade_cal")
+        clear_current(self.repo_root / "datasets" / "tushare" / "trade_cal")
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
@@ -191,7 +190,6 @@ class TradeCalendarTushareTests(unittest.TestCase):
         status = run_qa(context)
         current_file = (
             context.sandbox_dataset_root
-            / "data"
             / "published"
             / "current"
             / "exchange=SSE"
@@ -244,7 +242,6 @@ class TradeCalendarTushareTests(unittest.TestCase):
         return create_run_sandbox(
             repo_root=self.repo_root,
             dataset_name="trade_calendar",
-            provider="tushare",
             symbols=[],
             trade_dates=[],
             run_id=run_id,
@@ -254,7 +251,7 @@ class TradeCalendarTushareTests(unittest.TestCase):
 
 
 def clear_current(dataset_root: Path) -> None:
-    current_dir = dataset_root / "data" / "published" / "current"
+    current_dir = dataset_root / "published" / "current"
     if not current_dir.exists():
         return
     for path in sorted(current_dir.rglob("*"), reverse=True):

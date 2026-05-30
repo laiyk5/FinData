@@ -14,7 +14,7 @@ sys.path.insert(0, str(SRC_ROOT))
 from maintool.cninfo import CninfoProviderError, fetch_cninfo_announcements, normalize_cninfo_announcement
 from maintool.ingest import ingest_prepared_raw
 from maintool.jsonio import read_json
-from maintool.pipeline import run_full_fake_pipeline
+from maintool.pipeline import run_full_pipeline
 from maintool.prepare import prepare_fake_raw
 from maintool.qa import run_qa
 from maintool.run_sandbox import create_run_sandbox
@@ -27,33 +27,33 @@ class ReportCatalogTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.repo_root = Path(self.temp_dir.name)
-        for dataset_name in ("report_catalog", "instrument_universe"):
-            shutil.copytree(REPO_ROOT / "datasets" / dataset_name, self.repo_root / "datasets" / dataset_name)
-        self.reset_runtime_dataset_state(self.repo_root / "datasets" / "report_catalog")
+        shutil.copytree(REPO_ROOT / "datasets" / "cninfo" / "report_catalog", self.repo_root / "datasets" / "cninfo" / "report_catalog")
+        self.reset_runtime_dataset_state(self.repo_root / "datasets" / "cninfo" / "report_catalog")
         (self.repo_root / "sandboxes" / "runs").mkdir(parents=True)
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
 
     def reset_runtime_dataset_state(self, dataset_root: Path) -> None:
-        data_root = dataset_root / "data"
-        if data_root.exists():
-            shutil.rmtree(data_root)
-        for relative in ("data/raw", "data/staged", "data/published/current", "data/archive"):
-            (dataset_root / relative).mkdir(parents=True, exist_ok=True)
+        for relative in ("published/current",):
+            path = dataset_root / relative
+            if path.exists():
+                shutil.rmtree(path)
+            path.mkdir(parents=True, exist_ok=True)
 
-        for generated_path in (dataset_root / "checks").glob("*.json"):
-            generated_path.unlink()
-        for generated_path in (dataset_root / "logs").glob("*.json"):
-            generated_path.unlink()
+        for forbidden in ("data", "checks", "logs"):
+            forbidden_path = dataset_root / forbidden
+            if forbidden_path.exists():
+                shutil.rmtree(forbidden_path)
 
     def test_fake_pipeline_filters_summary_and_marks_latest_version(self) -> None:
-        context, result = run_full_fake_pipeline(
+        context, result = run_full_pipeline(
             repo_root=self.repo_root,
             dataset_name="report_catalog",
             symbols=["600000.SH"],
             trade_dates=[],
             run_id="report-catalog-fake",
+            use_fake=True,
             extras={
                 "universe_id": "manual",
                 "start_year": "2024",
@@ -66,7 +66,6 @@ class ReportCatalogTests(unittest.TestCase):
         self.assertEqual(result["prepare"]["prepared"], 1)
         current_path = (
             context.dataset_root
-            / "data"
             / "published"
             / "current"
             / "universe_id=manual"
@@ -82,10 +81,10 @@ class ReportCatalogTests(unittest.TestCase):
         context = create_run_sandbox(
             repo_root=self.repo_root,
             dataset_name="report_catalog",
-            provider="fake",
             symbols=["600000.SH", "600519.SH"],
             trade_dates=[],
             run_id="report-catalog-selector",
+            use_fake=True,
             extras={
                 "universe_id": "index:SSE50",
                 "symbol_selector": "@universe:index:SSE50",
@@ -106,10 +105,10 @@ class ReportCatalogTests(unittest.TestCase):
         context = create_run_sandbox(
             repo_root=self.repo_root,
             dataset_name="report_catalog",
-            provider="fake",
             symbols=["600000.SH"],
             trade_dates=[],
             run_id="report-catalog-bad-latest",
+            use_fake=True,
             extras={
                 "universe_id": "manual",
                 "start_year": "2024",
@@ -120,7 +119,7 @@ class ReportCatalogTests(unittest.TestCase):
         )
         prepare_fake_raw(context)
         ingest_prepared_raw(context)
-        current_path = next((context.sandbox_dataset_root / "data" / "published" / "current").rglob("report_catalog.csv"))
+        current_path = next((context.sandbox_dataset_root / "published" / "current").rglob("report_catalog.csv"))
         rows = self.read_rows(current_path)
         for row in rows:
             if row["report_type"] == "annual":
