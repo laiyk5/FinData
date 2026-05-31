@@ -202,6 +202,7 @@ def create_run_sandbox(
         "tushare_daily",
         "tushare_daily_basic",
         "tushare_stk_factor_pro",
+        "tushare_adj_factor",
         "tushare_moneyflow",
         "tushare_index_weight",
         "trade_calendar",
@@ -213,7 +214,7 @@ def create_run_sandbox(
     symbols = symbols or []
     trade_dates = trade_dates or []
     extras = extras or {}
-    if dataset_name in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_moneyflow"} and not symbols:
+    if dataset_name in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_adj_factor", "tushare_moneyflow"} and not symbols:
         raise ValueError("At least one symbol is required.")
     if dataset_name in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_moneyflow"} and not trade_dates and not extras.get("start_date"):
         raise ValueError("At least one trade date is required.")

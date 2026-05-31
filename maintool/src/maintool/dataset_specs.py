@@ -7,6 +7,7 @@ from typing import Any
 
 from .moneyflow import FIELDS as MONEYFLOW_FIELDS
 from .stk_factor_pro import FIELDS as STK_FACTOR_PRO_FIELDS
+from .adj_factor import FIELDS as ADJ_FACTOR_FIELDS
 from .tushare_daily import FIELDS as DAILY_FIELDS
 from .tushare_daily_basic import FIELDS as DAILY_BASIC_FIELDS
 
@@ -66,10 +67,11 @@ class DatasetSpec:
     published_filename: str
     staged_prefix: str
     publish_partition_field: str | None = None
+    dir_name: str | None = None
 
     @property
     def path_key(self) -> str:
-        return f"{self.provider}/{self.api_name}"
+        return f"{self.provider}/{self.dir_name or self.api_name}"
 
     def row_key(self, row: dict[str, str]) -> tuple[str, ...]:
         return tuple(row[field] for field in self.primary_key)
@@ -138,6 +140,18 @@ SPECS = {
         published_filename="daily_basic.csv",
         staged_prefix="daily_basic",
     ),
+    "tushare_adj_factor": DatasetSpec(
+        name="tushare_adj_factor",
+        provider="tushare",
+        api_name="stk_factor_pro",
+        dir_name="adj_factor",
+        fields=ADJ_FACTOR_FIELDS,
+        primary_key=("ts_code", "trade_date"),
+        date_field="trade_date",
+        partition_field="trade_date",
+        published_filename="adj_factor.csv",
+        staged_prefix="adj_factor",
+    ),
     "tushare_index_weight": DatasetSpec(
         name="tushare_index_weight",
         provider="tushare",
@@ -173,11 +187,12 @@ def get_spec(dataset_name: str) -> DatasetSpec:
 
 
 def request_key(dataset_name: str, request: dict[str, Any]) -> str:
-    if dataset_name in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_moneyflow"}:
+    if dataset_name in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_adj_factor", "tushare_moneyflow"}:
         prefix = {
             "tushare_daily": "daily",
             "tushare_daily_basic": "daily_basic",
             "tushare_stk_factor_pro": "stk_factor_pro",
+            "tushare_adj_factor": "adj_factor",
             "tushare_moneyflow": "moneyflow",
         }[dataset_name]
         if request.get("request_mode") == "trade_date_all":
@@ -198,11 +213,12 @@ def request_key(dataset_name: str, request: dict[str, Any]) -> str:
 
 
 def request_file_stem(dataset_name: str, request: dict[str, Any]) -> str:
-    if dataset_name in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_moneyflow"}:
+    if dataset_name in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_adj_factor", "tushare_moneyflow"}:
         prefix = {
             "tushare_daily": "daily",
             "tushare_daily_basic": "daily_basic",
             "tushare_stk_factor_pro": "stk_factor_pro",
+            "tushare_adj_factor": "adj_factor",
             "tushare_moneyflow": "moneyflow",
         }[dataset_name]
         if request.get("request_mode") == "trade_date_all":
@@ -229,6 +245,8 @@ def plan_requests(dataset_name: str, symbols: list[str], trade_dates: list[str],
     if dataset_name == "tushare_daily_basic":
         return plan_daily_basic_requests(symbols, trade_dates, extras)
     if dataset_name == "tushare_stk_factor_pro":
+        return plan_stk_factor_pro_requests(symbols, trade_dates, extras)
+    if dataset_name == "tushare_adj_factor":
         return plan_stk_factor_pro_requests(symbols, trade_dates, extras)
     if dataset_name == "tushare_moneyflow":
         return plan_moneyflow_requests(symbols, trade_dates, extras)
@@ -510,7 +528,7 @@ def summarize_request_plan(dataset_name: str, requests: list[dict[str, Any]]) ->
         "request_count": len(requests),
         "modes": modes,
     }
-    if dataset_name in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_moneyflow"}:
+    if dataset_name in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_adj_factor", "tushare_moneyflow"}:
         row_limit = request_row_limit(dataset_name)
         estimates = [int(request.get("estimated_max_rows") or 0) for request in requests]
         summary.update(
@@ -569,7 +587,7 @@ def parse_symbols(value: str) -> list[str]:
 
 
 def expected_keys(dataset_name: str, manifest: dict[str, Any]) -> set[tuple[str, str]]:
-    if dataset_name in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_moneyflow"}:
+    if dataset_name in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_adj_factor", "tushare_moneyflow"}:
         request_key = "factor_request" if dataset_name == "tushare_stk_factor_pro" else "daily_request"
         request_window = manifest.get(request_key) or {}
         if request_window.get("start_date") and request_window.get("end_date"):
@@ -597,7 +615,7 @@ def expected_keys(dataset_name: str, manifest: dict[str, Any]) -> set[tuple[str,
 
 
 def coverage_from_rows(dataset_name: str, rows: list[dict[str, str]]) -> dict[str, Any]:
-    if dataset_name in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_moneyflow"}:
+    if dataset_name in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_adj_factor", "tushare_moneyflow"}:
         symbols = sorted({row["ts_code"] for row in rows if row.get("ts_code")})
         dates = sorted({row["trade_date"] for row in rows if row.get("trade_date")})
         symbol_ranges = {}
@@ -737,3 +755,91 @@ def infer_cninfo_org_id(ts_code: str) -> str:
     if ts_code.endswith(".BJ"):
         return f"bj{stock_code}"
     return ""
+
+
+def read_published_coverage(repo_root, dataset_name: str) -> dict[str, Any] | None:
+    """Read the published manifest.yaml to extract coverage info.
+
+    Returns a dict with ``end_date`` (str, YYYYMMDD) and ``symbol_ranges``
+    (dict of ts_code -> {start_date, end_date}), or None if no manifest
+    exists or the dataset does not use daily-style coverage.
+    """
+    from .workspace import dataset_root as _dataset_root
+
+    manifest_path = _dataset_root(repo_root, dataset_name) / "manifest.yaml"
+    if not manifest_path.is_file():
+        return None
+
+    coverage: dict[str, Any] = {"symbol_ranges": {}}
+    in_coverage = False
+    current_symbol: str | None = None
+
+    for line in manifest_path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if stripped == "coverage:" or stripped.startswith("coverage:"):
+            in_coverage = True
+            continue
+        if not in_coverage:
+            continue
+        if line and not line.startswith(" "):
+            in_coverage = False
+            continue
+
+        if stripped.startswith("end_date: "):
+            coverage["end_date"] = stripped.split("end_date: ", 1)[1]
+        elif stripped.startswith("start_date: "):
+            coverage["start_date"] = stripped.split("start_date: ", 1)[1]
+        elif line.startswith("    ") and not line.startswith("      ") and stripped.endswith(":"):
+            current_symbol = stripped.rstrip(":")
+            coverage["symbol_ranges"][current_symbol] = {}
+        elif current_symbol and stripped.startswith("start_date: "):
+            coverage["symbol_ranges"][current_symbol]["start_date"] = stripped.split("start_date: ", 1)[1]
+        elif current_symbol and stripped.startswith("end_date: "):
+            coverage["symbol_ranges"][current_symbol]["end_date"] = stripped.split("end_date: ", 1)[1]
+
+    if "end_date" not in coverage:
+        return None
+    return coverage
+
+
+def compute_incremental_gap(
+    symbols: list[str],
+    requested_start: str,
+    requested_end: str,
+    coverage: dict[str, Any] | None,
+) -> tuple[str, list[str]]:
+    """Compute the effective start date and list of new symbols for an incremental run.
+
+    Returns ``(effective_start, new_symbols)`` where:
+    - *effective_start* is the later of *requested_start* and the published
+      coverage end_date + 1 day, so we don't re-request data we already have.
+    - *new_symbols* lists symbols that have no published coverage (e.g. IPO
+      additions) and need their full individual range.
+    """
+    if coverage is None:
+        return requested_start, list(symbols)
+
+    published_end = coverage.get("end_date", "")
+    if not published_end or len(published_end) != 8:
+        return requested_start, list(symbols)
+
+    try:
+        pub_end = datetime.strptime(published_end, "%Y%m%d").date()
+    except ValueError:
+        return requested_start, list(symbols)
+
+    try:
+        req_start = datetime.strptime(requested_start, "%Y%m%d").date()
+    except ValueError:
+        req_start = pub_end
+
+    gap_start_dt = pub_end + timedelta(days=1)
+    if gap_start_dt > req_start:
+        effective_start = gap_start_dt.strftime("%Y%m%d")
+    else:
+        effective_start = requested_start
+
+    symbol_ranges = coverage.get("symbol_ranges", {})
+    new_symbols = [s for s in symbols if s not in symbol_ranges]
+
+    return effective_start, new_symbols

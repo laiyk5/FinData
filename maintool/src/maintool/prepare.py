@@ -27,6 +27,7 @@ from .run_sandbox import (
     utc_stamp,
 )
 from .stage_logs import append_stage_event, write_stage_summary
+from .adj_factor import FIELDS as ADJ_FACTOR_FIELDS, fake_adj_factor_rows
 from .tushare_daily import FIELDS, fake_daily_rows
 from .tushare_daily_basic import FIELDS as DAILY_BASIC_FIELDS, fake_daily_basic_rows
 from .stk_factor_pro import FIELDS as STK_FACTOR_PRO_FIELDS, fake_stk_factor_pro_rows
@@ -379,6 +380,8 @@ def fake_rows_for_dataset(dataset_name: str, symbols: list[str], trade_date: str
         return [row.as_dict() for row in fake_daily_basic_rows(symbols, trade_date)]
     if dataset_name == "tushare_stk_factor_pro":
         return fake_stk_factor_pro_rows(symbols, trade_date)
+    if dataset_name == "tushare_adj_factor":
+        return fake_adj_factor_rows(symbols, trade_date)
     if dataset_name == "tushare_moneyflow":
         return fake_moneyflow_rows(symbols, trade_date)
     return [row.as_dict() for row in fake_daily_rows(symbols, trade_date)]
@@ -389,6 +392,8 @@ def fake_fields_for_dataset(dataset_name: str) -> tuple[str, ...]:
         return DAILY_BASIC_FIELDS
     if dataset_name == "tushare_stk_factor_pro":
         return STK_FACTOR_PRO_FIELDS
+    if dataset_name == "tushare_adj_factor":
+        return ADJ_FACTOR_FIELDS
     if dataset_name == "tushare_moneyflow":
         return MONEYFLOW_FIELDS
     return FIELDS
@@ -633,6 +638,34 @@ def fetch_tushare_response(
             "prepared_at": utc_stamp(),
         }
         raw_path = context.raw_root / f"{dataset_request_file_stem('tushare_stk_factor_pro', request)}.json"
+        write_json(raw_path, payload)
+        return raw_path, len(rows)
+
+    if context.dataset_name == "tushare_adj_factor":
+        response = fetch_stk_factor_pro(
+            token=token,
+            ts_code=request.get("ts_code") or None,
+            trade_date=request.get("trade_date"),
+            start_date=request.get("start_date"),
+            end_date=request.get("end_date"),
+            transport=transport,
+        )
+        rows = response.rows
+        payload = {
+            "provider": "tushare",
+            "api": "stk_factor_pro",
+            "request_mode": request.get("request_mode"),
+            "trade_date": request.get("trade_date"),
+            "start_date": request.get("start_date"),
+            "end_date": request.get("end_date"),
+            "ts_code": request.get("ts_code", ""),
+            "symbols": request_target_symbols(request),
+            "fields": list(ADJ_FACTOR_FIELDS),
+            "items": rows,
+            "row_count": len(rows),
+            "prepared_at": utc_stamp(),
+        }
+        raw_path = context.raw_root / f"{dataset_request_file_stem('tushare_adj_factor', request)}.json"
         write_json(raw_path, payload)
         return raw_path, len(rows)
 

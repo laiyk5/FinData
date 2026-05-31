@@ -10,6 +10,7 @@ from typing import Any
 from .dataset_specs import DatasetSpec, expected_keys, get_spec
 from .dataset_specs import REPORT_CATALOG_FIELDS, TUSHARE_INDEX_WEIGHT_FIELDS
 from .jsonio import read_json, write_json
+from .adj_factor import FIELDS as ADJ_FACTOR_FIELDS
 from .moneyflow import FIELDS as MONEYFLOW_FIELDS
 from .run_sandbox import RunContext, load_run_manifest, mark_step, utc_stamp
 from .stage_logs import append_stage_event, write_stage_summary
@@ -138,6 +139,8 @@ def build_validation_report(context: RunContext) -> dict[str, Any]:
                 errors.extend(validate_daily_basic_csv(csv_path))
             elif context.dataset_name == "tushare_stk_factor_pro":
                 errors.extend(validate_stk_factor_pro_csv(csv_path))
+            elif context.dataset_name == "tushare_adj_factor":
+                errors.extend(validate_adj_factor_csv(csv_path))
             elif context.dataset_name == "tushare_moneyflow":
                 errors.extend(validate_moneyflow_csv(csv_path))
             else:
@@ -879,3 +882,36 @@ def valid_index_code(value: str) -> bool:
         return False
     symbol, exchange = value.split(".", 1)
     return bool(symbol) and symbol.isdigit() and exchange in {"SH", "SZ", "CSI", "CNI"}
+
+
+def validate_adj_factor_csv(path: Path) -> list[str]:
+    errors: list[str] = []
+    seen_keys: set[tuple[str, str]] = set()
+
+    with path.open(newline="", encoding="utf-8") as input_file:
+        reader = csv.DictReader(input_file)
+        fieldnames = reader.fieldnames or []
+        for field in ADJ_FACTOR_FIELDS:
+            if field not in fieldnames:
+                errors.append(f"{path.name}: missing column {field}")
+        if errors:
+            return errors
+
+        for row_number, row in enumerate(reader, start=2):
+            key = (row["ts_code"], row["trade_date"])
+            if key in seen_keys:
+                errors.append(f"{path.name}:{row_number}: duplicate primary key {key}")
+            seen_keys.add(key)
+
+            if not valid_trade_date(row["trade_date"]):
+                errors.append(f"{path.name}:{row_number}: invalid trade_date {row['trade_date']}")
+
+            try:
+                value = Decimal(row["adj_factor"])
+            except (InvalidOperation, KeyError):
+                errors.append(f"{path.name}:{row_number}: invalid decimal in adj_factor")
+                continue
+            if value <= 0:
+                errors.append(f"{path.name}:{row_number}: adj_factor must be positive")
+
+    return errors

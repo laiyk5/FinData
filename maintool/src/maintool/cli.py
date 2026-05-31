@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from .cninfo import CninfoProviderError, fetch_cninfo_org_id_map
-from .dataset_specs import get_spec
+from .dataset_specs import compute_incremental_gap, get_spec, read_published_coverage
 from .ingest import ingest_prepared_raw
 from .pipeline import run_full_pipeline
 from .prepare import prepare_raw
@@ -33,6 +33,7 @@ UNIVERSE_TO_INDEX_CODE = {
     "index:SSE50": "000016.SH",
     "index:CSI300": "000300.SH",
     "index:CSI500": "000905.SH",
+    "index:CSI800": "000906.SH",
 }
 
 
@@ -160,7 +161,7 @@ def validate_dataset(repo_root: Path, dataset_name: str) -> int:
                     errors.append(f"Schema missing key: {key}")
 
         current_dir = paths.root / "current"
-        if dataset_name in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_moneyflow", "tushare_index_weight", "trade_calendar", "report_catalog"}:
+        if dataset_name in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_adj_factor", "tushare_moneyflow", "tushare_index_weight", "trade_calendar", "report_catalog"}:
             published_files = sorted(current_dir.rglob("*.csv"))
             for published_file in published_files:
                 if dataset_name == "tushare_daily_basic":
@@ -508,7 +509,7 @@ def main(argv: list[str] | None = None) -> int:
         symbols = resolve_symbols_arg(repo_root, args.dataset, args.symbols, dataset_extras)
         if args.dataset in {"trade_calendar", "tushare_index_weight", "report_catalog"}:
             trade_dates = []
-        if args.dataset in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_moneyflow"} and dataset_extras and dataset_extras.get("start_date"):
+        if args.dataset in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_adj_factor", "tushare_moneyflow"} and dataset_extras and dataset_extras.get("start_date"):
             trade_dates = []
         return maintain_plan(
             repo_root,
@@ -538,7 +539,7 @@ def main(argv: list[str] | None = None) -> int:
         symbols = resolve_symbols_arg(repo_root, args.dataset, args.symbols, dataset_extras)
         if args.dataset in {"trade_calendar", "tushare_index_weight", "report_catalog"}:
             trade_dates = []
-        if args.dataset in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_moneyflow"} and dataset_extras and dataset_extras.get("start_date"):
+        if args.dataset in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_adj_factor", "tushare_moneyflow"} and dataset_extras and dataset_extras.get("start_date"):
             trade_dates = []
         return maintain_run(
             repo_root,
@@ -594,16 +595,26 @@ def build_dataset_extras(args, repo_root: Path) -> dict[str, str | None] | None:
             "request_budget": str(args.request_budget) if args.request_budget is not None else None,
             "org_id_map": org_id_map,
         }
-    if args.dataset in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_moneyflow"} and (args.start_date or args.end_date):
+    if args.dataset in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_adj_factor", "tushare_moneyflow"} and (args.start_date or args.end_date):
         start_date = args.start_date or args.trade_date
         end_date = args.end_date or args.start_date or args.trade_date
+
+        # Auto-shorten start_date from published coverage for incremental runs
+        coverage = read_published_coverage(repo_root, args.dataset)
+        if coverage:
+            effective_start, _ = compute_incremental_gap([], start_date, end_date, coverage)
+            if effective_start != start_date:
+                print(f"[incremental] shortening start_date from {start_date} to {effective_start} "
+                      f"(published through {coverage.get('end_date', '?')})")
+                start_date = effective_start
+
         return {
             "start_date": start_date,
             "end_date": end_date,
             "expected_trade_dates": open_trade_dates(repo_root, start_date, end_date),
             "daily_request_strategy": args.daily_request_strategy,
         }
-    if args.dataset in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_moneyflow"}:
+    if args.dataset in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_adj_factor", "tushare_moneyflow"}:
         return {
             "daily_request_strategy": args.daily_request_strategy,
         }

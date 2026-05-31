@@ -178,28 +178,29 @@ def sha256_file(path: Path) -> str:
 
 def update_manifest_after_publish(dataset_root: Path, context: RunContext, publish_log: dict[str, Any]) -> None:
     manifest_path = dataset_root / "manifest.yaml"
-    if not manifest_path.is_file():
-        return
-
     coverage = published_coverage(context.dataset_name, dataset_root / "current")
-    text = manifest_path.read_text(encoding="utf-8")
-    text = replace_block(text, "storage", render_storage_block(context.dataset_name))
-    text = replace_block(text, "coverage", render_coverage_block(context.dataset_name, coverage))
-    text = replace_block(text, "quality", render_quality_block(context, publish_log))
-    text = replace_block(text, "missingness", render_missingness_block(context, publish_log))
-    text = replace_block(text, "publication", render_publication_block(context, publish_log))
-    replacements = {
-        "status:": "status: published",
-    }
-    lines = []
-    for line in text.splitlines():
-        replacement = None
-        for prefix, value in replacements.items():
-            if line.startswith(prefix):
-                replacement = value
-                break
-        lines.append(replacement or line)
-    manifest_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    if not manifest_path.is_file():
+        text = _render_initial_manifest(context, publish_log, coverage)
+    else:
+        text = manifest_path.read_text(encoding="utf-8")
+        text = replace_block(text, "storage", render_storage_block(context.dataset_name))
+        text = replace_block(text, "coverage", render_coverage_block(context.dataset_name, coverage))
+        text = replace_block(text, "quality", render_quality_block(context, publish_log))
+        text = replace_block(text, "missingness", render_missingness_block(context, publish_log))
+        text = replace_block(text, "publication", render_publication_block(context, publish_log))
+        replacements = {"status:": "status: published"}
+        lines = []
+        for line in text.splitlines():
+            replacement = None
+            for prefix, value in replacements.items():
+                if line.startswith(prefix):
+                    replacement = value
+                    break
+            lines.append(replacement or line)
+        text = "\n".join(lines) + "\n"
+
+    manifest_path.write_text(text, encoding="utf-8")
 
 
 def published_coverage(dataset_name: str, current_dir: Path) -> dict[str, Any]:
@@ -318,6 +319,27 @@ def render_publication_block(context: RunContext, publish_log: dict[str, Any]) -
         "  current_version_path: current",
         f"  backup_path: {publish_log.get('backup_path') or 'null'}",
     ]
+
+
+def _render_initial_manifest(context: RunContext, publish_log: dict[str, Any], coverage: dict[str, Any]) -> str:
+    """Create an initial manifest.yaml for a new dataset."""
+    blocks: list[str] = [
+        f"dataset: {context.dataset_name}",
+        "status: published",
+        "version: 0.1.0",
+        "",
+    ]
+    blocks.extend(render_storage_block(context.dataset_name))
+    blocks.append("")
+    blocks.extend(render_coverage_block(context.dataset_name, coverage))
+    blocks.append("")
+    blocks.extend(render_quality_block(context, publish_log))
+    blocks.append("")
+    blocks.extend(render_missingness_block(context, publish_log))
+    blocks.append("")
+    blocks.extend(render_publication_block(context, publish_log))
+    blocks.append("")
+    return "\n".join(blocks)
 
 
 def replace_block(text: str, block_name: str, replacement: list[str]) -> str:

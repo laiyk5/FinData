@@ -19,7 +19,7 @@ def dataset_root(repo_root: Path, dataset_name: str) -> Path:
     from .dataset_specs import get_spec
 
     spec = get_spec(dataset_name)
-    return published_datasets_root(repo_root) / spec.provider / spec.api_name
+    return published_datasets_root(repo_root) / spec.provider / (spec.dir_name or spec.api_name)
 
 
 def dataset_current_root(repo_root: Path, dataset_name: str) -> Path:
@@ -30,14 +30,14 @@ def dataset_backup_root(repo_root: Path, dataset_name: str) -> Path:
     from .dataset_specs import get_spec
 
     spec = get_spec(dataset_name)
-    return backups_root(repo_root) / spec.provider / spec.api_name
+    return backups_root(repo_root) / spec.provider / (spec.dir_name or spec.api_name)
 
 
 def dataset_docs_dir(repo_root: Path, dataset_name: str) -> Path:
     from .dataset_specs import get_spec
 
     spec = get_spec(dataset_name)
-    return repo_root / "docs" / "datasets" / spec.provider / spec.api_name
+    return repo_root / "docs" / "datasets" / spec.provider / (spec.dir_name or spec.api_name)
 
 
 def sandbox_dataset_root(sandbox_root: Path) -> Path:
