@@ -1,29 +1,70 @@
 # FinData
 
-FinData is a personal financial data repository for centralized storage, validation, documentation, and publication of research-ready datasets.
+A general-purpose financial data repository for research and development. Datasets are stored with enough structure, documentation, and maintenance evidence that both humans and agents can safely inspect, update, validate, and use the data.
 
-The repository is designed around a few durable rules:
+## Scope
 
-- Every dataset has a human-readable dataset card.
-- Every dataset has machine-readable schema and manifest files.
-- Raw, staged, published, and archived data are separated.
-- Missing data is documented; invalid data is rejected.
-- Published data should be reproducible from its metadata, logs, and checks.
+Currently maintained datasets (8):
+
+| Dataset | Provider | Description |
+|---|---|---|
+| `tushare_daily` | Tushare Pro | Unadjusted daily OHLCV bars |
+| `tushare_daily_basic` | Tushare Pro | Daily fundamental indicators (PE, PB, turnover, etc.) |
+| `tushare_stk_factor_pro` | Tushare Pro | Adjusted OHLCV + technical analysis factors |
+| `tushare_adj_factor` | Tushare Pro | Daily forward-adjustment factor (复权因子) |
+| `tushare_moneyflow` | Tushare Pro | Money flow data |
+| `tushare_index_weight` | Tushare Pro | Index constituent weights |
+| `trade_calendar` | Multi-provider | Exchange trading calendars |
+| `report_catalog` | Cninfo | Financial report catalog |
+
+Planned families: fundamentals, macro data, news and event data.
+
+## Data Lifecycle
+
+```text
+raw → staged → validated → published → archived/backed up
+```
+
+- **Raw** — provider responses preserved verbatim
+- **Staged** — normalized but not yet trusted
+- **Validated** — schema checks, duplicate detection, missingness, unusual values
+- **Published** — consumer-facing, atomic swap with previous version archived
+- **Archived** — previous accepted versions packaged for reproducibility
+
+## Quality Policy
+
+- Invalid data is rejected; publish is blocked until QA passes.
+- Missing data is accepted only when documented (dataset card, manifest, or missingness records).
+- Every dataset has a human-readable dataset card, machine-readable schema, and manifest.
+- Published data is reproducible from its metadata, logs, and checksums.
 
 ## Layout
 
 ```text
-datasets/      Dataset storage, metadata, checks, and logs.
-maintool/      Maintenance CLI and supporting code.
-docs/          Repository standards and operating notes.
-sandboxes/     Disposable development data.
+datasets/      Dataset storage, metadata, and published data.
+maintool/      Zero-dependency Python 3.11+ CLI (stdlib only).
+docs/          Repository standards, dataset cards, maintenance SOPs.
+sandboxes/     Isolated run sandboxes for maintenance operations.
 backups/       Disaster recovery snapshots.
 ```
 
-## First Dataset
+## Quick Start
 
-The first pilot dataset is `tushare_daily`, based on the Tushare Pro `daily` API. The second maintained dataset is `trade_calendar`, a provider-independent exchange calendar dataset. These exist to harden the repository standard before adding broader financial datasets such as reports, filings, fundamentals, macro data, and news.
+```bash
+# List all datasets
+python -m maintool --repo-root . list
+
+# Validate a dataset
+python -m maintool --repo-root . validate tushare_daily
+
+# Full maintenance pipeline (single dataset)
+python -m maintool --repo-root . maintain-run tushare_daily \
+  --fake --symbols 000001.SZ --trade-date 20240506
+
+# Run tests
+cd maintool && python -m unittest discover tests -v
+```
 
 ## Maintenance Principle
 
-Publish for consumers, archive for reproducibility, and back up for survival.
+Publish for consumers, archive for reproducibility, back up for survival.
