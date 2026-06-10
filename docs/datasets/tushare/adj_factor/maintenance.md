@@ -5,10 +5,10 @@ Prerequisite: [`../../__shared__/_general_maintenance_sop.md`](../../__shared__/
 ## Source
 
 - **Provider**: Tushare Pro
-- **API**: `stk_factor_pro` (docs: https://tushare.pro/document/2?doc_id=28)
+- **API**: `adj_factor` (docs: https://tushare.pro/document/2?doc_id=28)
 - **Grain**: one security × one trading date
 - **Primary key**: `ts_code`, `trade_date`
-- **Data**: daily adjustment factor (复权因子) — extracts only `ts_code`, `trade_date`, `adj_factor` from the 68-field API response
+- **Data**: daily adjustment factor (复权因子) — uses the dedicated `adj_factor` endpoint, storing `ts_code`, `trade_date`, `adj_factor`
 
 ## Smoke Test
 
@@ -49,7 +49,7 @@ The `symbol_range` strategy sends one request per symbol over the full date rang
 
 ## Request Strategy
 
-Reuses the `stk_factor_pro` request scheduler with a 10000-row per-request limit. For `symbol_range`, each symbol gets one request covering the full date window. For `auto`, the scheduler may batch symbols into date chunks.
+Uses the same request scheduler as `stk_factor_pro` with a 10000-row per-request limit. The API call goes through the dedicated `adj_factor` endpoint. For `symbol_range`, each symbol gets one request covering the full date window. For `auto`, the scheduler may batch symbols into date chunks.
 
 ## QA Expectations
 
