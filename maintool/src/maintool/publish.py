@@ -78,7 +78,7 @@ def publish_sandbox(context: RunContext, fail_before_final_rename: bool = False)
     backup_path = None
     if current_dir.exists():
         spec = get_spec(context.dataset_name)
-        backup_root = context.repo_root / "backups" / spec.provider / spec.api_name
+        backup_root = context.backup_root
         backup_root.mkdir(parents=True, exist_ok=True)
         backup_path = backup_root / utc_stamp()
         shutil.copytree(dataset_root, backup_path, ignore=shutil.ignore_patterns(f"next-*"))

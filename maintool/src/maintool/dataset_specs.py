@@ -757,7 +757,7 @@ def infer_cninfo_org_id(ts_code: str) -> str:
     return ""
 
 
-def read_published_coverage(repo_root, dataset_name: str) -> dict[str, Any] | None:
+def read_published_coverage(repo_root, dataset_name: str, layout=None) -> dict[str, Any] | None:
     """Read the published manifest.yaml to extract coverage info.
 
     Returns a dict with ``end_date`` (str, YYYYMMDD) and ``symbol_ranges``
@@ -766,7 +766,11 @@ def read_published_coverage(repo_root, dataset_name: str) -> dict[str, Any] | No
     """
     from .workspace import dataset_root as _dataset_root
 
-    manifest_path = _dataset_root(repo_root, dataset_name) / "manifest.yaml"
+    if layout is None:
+        from .workspace_config import load_layout
+        layout = load_layout(repo_root)
+
+    manifest_path = _dataset_root(repo_root, dataset_name, layout) / "manifest.yaml"
     if not manifest_path.is_file():
         return None
 

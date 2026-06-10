@@ -14,3 +14,6 @@ cache/
 
 published/datasets/
 backups/
+
+# Local workspace customization
+workspace.yaml

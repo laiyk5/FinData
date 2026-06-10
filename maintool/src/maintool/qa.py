@@ -6,6 +6,10 @@ from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .workspace_config import WorkspaceLayout
 
 from .dataset_specs import DatasetSpec, expected_keys, get_spec
 from .dataset_specs import REPORT_CATALOG_FIELDS, TUSHARE_INDEX_WEIGHT_FIELDS
@@ -396,7 +400,7 @@ def build_missingness_report(context: RunContext, manifest: dict[str, Any]) -> d
     actual_history = build_actual_history_bounds(actual_keys) if context.dataset_name in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_moneyflow"} else {}
     accepted = read_accepted_missingness(context)
     trading_calendar = (
-        load_trade_calendar(context.repo_root)
+        load_trade_calendar(context.repo_root, context.layout)
         if context.dataset_name in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_moneyflow"}
         else {}
     )
@@ -578,9 +582,12 @@ def accepted_missingness_record(
     return None
 
 
-def load_trade_calendar(repo_root: Path) -> dict[tuple[str, str], str]:
+def load_trade_calendar(repo_root: Path, layout: WorkspaceLayout | None = None) -> dict[tuple[str, str], str]:
+    if layout is None:
+        from .workspace_config import load_layout
+        layout = load_layout(repo_root)
     from .workspace import dataset_current_root
-    calendar_root = dataset_current_root(repo_root, "trade_calendar")
+    calendar_root = dataset_current_root(repo_root, "trade_calendar", layout)
     calendar: dict[tuple[str, str], str] = {}
     if not calendar_root.exists():
         return calendar

@@ -4,8 +4,13 @@ import csv
 import shutil
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from functools import cached_property
 from pathlib import Path
 from typing import Any
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .workspace_config import WorkspaceLayout
 
 from .dataset_specs import plan_requests, request_key, summarize_request_plan
 from .jsonio import read_json, write_json
@@ -32,25 +37,31 @@ class RunContext:
     def path_key(self) -> str:
         return f"{self.provider}/{self.api_name}"
 
+    @cached_property
+    def layout(self) -> WorkspaceLayout:
+        from .workspace_config import load_layout
+
+        return load_layout(self.repo_root)
+
     @property
     def dataset_root(self) -> Path:
-        return workspace_dataset_root(self.repo_root, self.dataset_name)
+        return workspace_dataset_root(self.repo_root, self.dataset_name, self.layout)
 
     @property
     def published_current_root(self) -> Path:
-        return dataset_current_root(self.repo_root, self.dataset_name)
+        return dataset_current_root(self.repo_root, self.dataset_name, self.layout)
 
     @property
     def backup_root(self) -> Path:
-        return dataset_backup_root(self.repo_root, self.dataset_name)
+        return dataset_backup_root(self.repo_root, self.dataset_name, self.layout)
 
     @property
     def cache_root(self) -> Path:
-        return workspace_cache_root(self.repo_root)
+        return workspace_cache_root(self.repo_root, self.layout)
 
     @property
     def sandbox_root(self) -> Path:
-        return self.repo_root / "sandboxes" / "runs" / self.dataset_name / self.run_id
+        return self.layout.sandboxes_root / self.dataset_name / self.run_id
 
     @property
     def sandbox_dataset_root(self) -> Path:
@@ -143,12 +154,15 @@ def active_dataset_ignore(source_dir: str, names: list[str]) -> set[str]:
     return ignored.intersection(names)
 
 
-def inspect_current_state(repo_root: Path, dataset_name: str) -> dict[str, Any]:
-    current_dir = dataset_current_root(repo_root, dataset_name)
-    backup_dir = dataset_backup_root(repo_root, dataset_name)
+def inspect_current_state(repo_root: Path, dataset_name: str, layout: WorkspaceLayout | None = None) -> dict[str, Any]:
+    if layout is None:
+        from .workspace_config import load_layout
+        layout = load_layout(repo_root)
+    current_dir = dataset_current_root(repo_root, dataset_name, layout)
+    backup_dir = dataset_backup_root(repo_root, dataset_name, layout)
 
     return {
-        "dataset_root": str(workspace_dataset_root(repo_root, dataset_name)),
+        "dataset_root": str(workspace_dataset_root(repo_root, dataset_name, layout)),
         "raw_file_count": 0,
         "staged_file_count": 0,
         "published_file_count": count_files(current_dir),

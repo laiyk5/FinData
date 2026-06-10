@@ -26,7 +26,8 @@ from .qa import (
 from .review import build_review
 from .run_sandbox import create_run_sandbox, get_run_context
 from .tushare_daily import validate_staged_csv
-from .workspace import dataset_current_root
+from .workspace import dataset_current_root, published_datasets_root
+from .workspace_config import load_layout
 
 
 UNIVERSE_TO_INDEX_CODE = {
@@ -63,11 +64,37 @@ class DatasetPaths:
     @property
     def root(self) -> Path:
         from .workspace import dataset_root
-        return dataset_root(self.repo_root, self.dataset_name)
+        return dataset_root(self.repo_root, self.dataset_name, load_layout(self.repo_root))
 
 
 def resolve_repo_root(value: str) -> Path:
     return Path(value).expanduser().resolve()
+
+
+def init_workspace(repo_root: Path, create_dirs: bool = False) -> int:
+    """Initialize a workspace.yaml configuration file at repo_root."""
+    from .workspace_config import write_default_config
+
+    config_path = repo_root / "workspace.yaml"
+    if config_path.exists():
+        print(f"workspace.yaml already exists: {config_path}")
+        return 1
+
+    created = write_default_config(repo_root, create_dirs=create_dirs)
+    print(f"Created workspace config: {created}")
+    if create_dirs:
+        from .workspace_config import default_layout
+
+        layout = default_layout(repo_root)
+        for label, path in [
+            ("published", layout.published_root),
+            ("sandboxes", layout.sandboxes_root),
+            ("cache", layout.cache_dir),
+            ("backups", layout.backups_dir),
+            ("docs", layout.docs_dir),
+        ]:
+            print(f"  {label}: {path}")
+    return 0
 
 
 def dataset_paths(repo_root: Path, dataset_name: str) -> DatasetPaths:
@@ -75,8 +102,7 @@ def dataset_paths(repo_root: Path, dataset_name: str) -> DatasetPaths:
 
 
 def list_datasets(repo_root: Path) -> int:
-    from .workspace import published_datasets_root
-    datasets_root = published_datasets_root(repo_root)
+    datasets_root = published_datasets_root(repo_root, load_layout(repo_root))
     if not datasets_root.exists():
         print(f"No datasets directory found at {datasets_root}")
         return 1
@@ -436,6 +462,12 @@ def build_parser() -> argparse.ArgumentParser:
     maintain_run_parser = subparsers.add_parser("maintain-run", help="Run the full maintenance pipeline.")
     add_pipeline_arguments(maintain_run_parser, include_run_id=True)
 
+    init_parser = subparsers.add_parser("init", help="Initialize a workspace configuration.")
+    init_parser.add_argument(
+        "--create-dirs", action="store_true",
+        help="Create configured output directories if they don't exist.",
+    )
+
     return parser
 
 
@@ -497,6 +529,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     repo_root = resolve_repo_root(args.repo_root)
 
+    if args.command == "init":
+        return init_workspace(repo_root, create_dirs=args.create_dirs)
     if args.command == "list":
         return list_datasets(repo_root)
     if args.command == "inspect":
@@ -666,7 +700,7 @@ def latest_universe_date(repo_root: Path, universe_id: str) -> str | None:
 
 
 def read_index_weight_rows(repo_root: Path, index_code: str) -> list[dict[str, str]]:
-    current_dir = dataset_current_root(repo_root, "tushare_index_weight")
+    current_dir = dataset_current_root(repo_root, "tushare_index_weight", load_layout(repo_root))
     rows: list[dict[str, str]] = []
     for csv_path in sorted(current_dir.rglob("*.csv")):
         with csv_path.open(newline="", encoding="utf-8") as input_file:
@@ -690,7 +724,7 @@ def open_trade_dates(repo_root: Path, start_date: str, end_date: str) -> list[st
 
 
 def load_calendar_rows(repo_root: Path) -> dict[tuple[str, str], str]:
-    current_dir = dataset_current_root(repo_root, "trade_calendar")
+    current_dir = dataset_current_root(repo_root, "trade_calendar", load_layout(repo_root))
     calendar: dict[tuple[str, str], str] = {}
     for csv_path in sorted(current_dir.rglob("*.csv")):
         with csv_path.open(newline="", encoding="utf-8") as input_file:
