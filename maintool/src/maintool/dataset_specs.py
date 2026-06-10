@@ -143,7 +143,7 @@ SPECS = {
     "tushare_adj_factor": DatasetSpec(
         name="tushare_adj_factor",
         provider="tushare",
-        api_name="stk_factor_pro",
+        api_name="adj_factor",
         dir_name="adj_factor",
         fields=ADJ_FACTOR_FIELDS,
         primary_key=("ts_code", "trade_date"),

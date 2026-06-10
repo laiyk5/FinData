@@ -35,6 +35,7 @@ from .trade_calendar import FIELDS as TRADE_CALENDAR_FIELDS, write_mock_trade_ca
 from .tushare_http import (
     TushareProviderError,
     Transport,
+    fetch_adj_factor,
     fetch_daily,
     fetch_daily_basic,
     fetch_raw_index_weight,
@@ -642,7 +643,7 @@ def fetch_tushare_response(
         return raw_path, len(rows)
 
     if context.dataset_name == "tushare_adj_factor":
-        response = fetch_stk_factor_pro(
+        response = fetch_adj_factor(
             token=token,
             ts_code=request.get("ts_code") or None,
             trade_date=request.get("trade_date"),
@@ -653,7 +654,7 @@ def fetch_tushare_response(
         rows = response.rows
         payload = {
             "provider": "tushare",
-            "api": "stk_factor_pro",
+            "api": "adj_factor",
             "request_mode": request.get("request_mode"),
             "trade_date": request.get("trade_date"),
             "start_date": request.get("start_date"),

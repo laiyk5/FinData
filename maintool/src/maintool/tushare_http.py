@@ -11,10 +11,12 @@ from .dataset_specs import TRADE_CALENDAR_FIELDS, TUSHARE_INDEX_WEIGHT_FIELDS
 from .moneyflow import FIELDS as MONEYFLOW_FIELDS
 from .tushare_daily import FIELDS
 from .tushare_daily_basic import FIELDS as DAILY_BASIC_FIELDS
+from .adj_factor import FIELD_LIST as ADJ_FACTOR_FIELD_LIST, FIELDS as ADJ_FACTOR_FIELDS
 from .stk_factor_pro import FIELDS as STK_FACTOR_PRO_FIELDS
 
 
 TUSHARE_HTTP_URL = "http://api.tushare.pro"
+TUSHARE_ADJ_FACTOR_FIELDS = ",".join(ADJ_FACTOR_FIELD_LIST)
 TUSHARE_DAILY_FIELDS = ",".join(FIELDS)
 TUSHARE_DAILY_BASIC_FIELDS = ",".join(DAILY_BASIC_FIELDS)
 TUSHARE_STK_FACTOR_PRO_FIELDS = ",".join(STK_FACTOR_PRO_FIELDS)
@@ -136,6 +138,35 @@ def fetch_stk_factor_pro(
         params=params,
         fields=TUSHARE_STK_FACTOR_PRO_FIELDS,
         canonical_fields=STK_FACTOR_PRO_FIELDS,
+        transport=transport,
+        timeout=timeout,
+    )
+
+
+def fetch_adj_factor(
+    token: str,
+    ts_code: str | None,
+    trade_date: str | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    transport: Transport | None = None,
+    timeout: float = 30.0,
+) -> TushareDailyResponse:
+    params = {}
+    if ts_code:
+        params["ts_code"] = ts_code
+    if trade_date is not None:
+        params["trade_date"] = trade_date
+    if start_date is not None:
+        params["start_date"] = start_date
+    if end_date is not None:
+        params["end_date"] = end_date
+    return fetch_api(
+        token=token,
+        api_name="adj_factor",
+        params=params,
+        fields=TUSHARE_ADJ_FACTOR_FIELDS,
+        canonical_fields=ADJ_FACTOR_FIELDS,
         transport=transport,
         timeout=timeout,
     )
