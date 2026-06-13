@@ -1,7 +1,0 @@
-environment: prod
-repo_root: ..
-dataset_root: ../datasets
-allow_publish: true
-allow_destructive_ops: false
-require_validation_passed: true
-require_backup_before_publish: true

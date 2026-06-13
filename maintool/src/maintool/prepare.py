@@ -170,7 +170,7 @@ def prepare_provider_raw(context: RunContext, fetcher) -> dict[str, Any]:
                 cache_path = persist_raw_to_cache(context, provider, request, raw_path)
                 request["status"] = "success"
                 request["raw_path"] = str(raw_path.relative_to(context.sandbox_root))
-                request["cache_path"] = str(cache_path.relative_to(context.repo_root))
+                request["cache_path"] = str(cache_path.relative_to(context.workspace_root))
                 request["last_error"] = None
                 request["error_type"] = None
                 request["row_count"] = row_count
@@ -350,7 +350,7 @@ def restore_cached_raw(context: RunContext, provider: str, request: dict[str, An
     sandbox_raw_path.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(cache_path, sandbox_raw_path)
     request["raw_path"] = str(sandbox_raw_path.relative_to(context.sandbox_root))
-    request["cache_path"] = str(cache_path.relative_to(context.repo_root))
+    request["cache_path"] = str(cache_path.relative_to(context.workspace_root))
     request["updated_at"] = utc_stamp()
     return True
 
@@ -358,7 +358,7 @@ def restore_cached_raw(context: RunContext, provider: str, request: dict[str, An
 def resolve_cache_path(context: RunContext, provider: str, request: dict[str, Any]) -> Path | None:
     cache_path_text = request.get("cache_path")
     if cache_path_text:
-        return context.repo_root / cache_path_text
+        return context.workspace_root / cache_path_text
     api_name = str(request.get("api") or context.dataset_name)
     return build_cache_path(context, provider, api_name, request)
 

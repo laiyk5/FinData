@@ -13,28 +13,28 @@ class WorkspaceLayout:
     docs_dir: Path
 
 
-def default_layout(repo_root: Path) -> WorkspaceLayout:
+def default_layout(workspace_root: Path) -> WorkspaceLayout:
     """Return the classic hardcoded layout (current defaults)."""
     return WorkspaceLayout(
-        published_root=repo_root / "published" / "datasets",
-        sandboxes_root=repo_root / "sandboxes" / "runs",
-        cache_dir=repo_root / "cache",
-        backups_dir=repo_root / "backups",
-        docs_dir=repo_root / "docs" / "datasets",
+        published_root=workspace_root / "published" / "datasets",
+        sandboxes_root=workspace_root / "sandboxes" / "runs",
+        cache_dir=workspace_root / "cache",
+        backups_dir=workspace_root / "backups",
+        docs_dir=workspace_root / "docs" / "datasets",
     )
 
 
 _layout_cache: dict[int, WorkspaceLayout] = {}
 
 
-def load_layout(repo_root: Path) -> WorkspaceLayout:
-    """Load workspace layout from repo_root/workspace.yaml, falling back to defaults."""
-    cache_key = hash(repo_root.resolve())
+def load_layout(workspace_root: Path) -> WorkspaceLayout:
+    """Load workspace layout from workspace_root/workspace.yaml, falling back to defaults."""
+    cache_key = hash(workspace_root.resolve())
     if cache_key in _layout_cache:
         return _layout_cache[cache_key]
 
-    config_path = repo_root / "workspace.yaml"
-    layout = default_layout(repo_root)
+    config_path = workspace_root / "workspace.yaml"
+    layout = default_layout(workspace_root)
 
     if config_path.exists():
         import yaml
@@ -50,7 +50,7 @@ def load_layout(repo_root: Path) -> WorkspaceLayout:
             pub_root = data["published"].get("root")
             if pub_root:
                 layout = WorkspaceLayout(
-                    published_root=_resolve_path(repo_root, pub_root),
+                    published_root=_resolve_path(workspace_root, pub_root),
                     sandboxes_root=layout.sandboxes_root,
                     cache_dir=layout.cache_dir,
                     backups_dir=layout.backups_dir,
@@ -63,7 +63,7 @@ def load_layout(repo_root: Path) -> WorkspaceLayout:
             if sb_root:
                 layout = WorkspaceLayout(
                     published_root=layout.published_root,
-                    sandboxes_root=_resolve_path(repo_root, sb_root),
+                    sandboxes_root=_resolve_path(workspace_root, sb_root),
                     cache_dir=layout.cache_dir,
                     backups_dir=layout.backups_dir,
                     docs_dir=layout.docs_dir,
@@ -78,9 +78,9 @@ def load_layout(repo_root: Path) -> WorkspaceLayout:
             layout = WorkspaceLayout(
                 published_root=layout.published_root,
                 sandboxes_root=layout.sandboxes_root,
-                cache_dir=_resolve_path(repo_root, cache) if cache else layout.cache_dir,
-                backups_dir=_resolve_path(repo_root, backups) if backups else layout.backups_dir,
-                docs_dir=_resolve_path(repo_root, docs) if docs else layout.docs_dir,
+                cache_dir=_resolve_path(workspace_root, cache) if cache else layout.cache_dir,
+                backups_dir=_resolve_path(workspace_root, backups) if backups else layout.backups_dir,
+                docs_dir=_resolve_path(workspace_root, docs) if docs else layout.docs_dir,
             )
 
     _layout_cache[cache_key] = layout
@@ -92,12 +92,12 @@ def clear_layout_cache() -> None:
     _layout_cache.clear()
 
 
-def _resolve_path(repo_root: Path, value: str) -> Path:
-    """Resolve a relative or absolute path string against repo_root."""
+def _resolve_path(workspace_root: Path, value: str) -> Path:
+    """Resolve a relative or absolute path string against workspace_root."""
     p = Path(value)
     if p.is_absolute():
         return p
-    return repo_root / p
+    return workspace_root / p
 
 
 DEFAULT_CONFIG_TEXT = """\
@@ -118,13 +118,13 @@ maintenance:
 """
 
 
-def write_default_config(repo_root: Path, create_dirs: bool = False) -> Path:
-    """Write a default workspace.yaml to repo_root. Returns the config file path."""
-    config_path = repo_root / "workspace.yaml"
+def write_default_config(workspace_root: Path, create_dirs: bool = False) -> Path:
+    """Write a default workspace.yaml to workspace_root. Returns the config file path."""
+    config_path = workspace_root / "workspace.yaml"
     config_path.write_text(DEFAULT_CONFIG_TEXT, encoding="utf-8")
 
     if create_dirs:
-        layout = default_layout(repo_root)
+        layout = default_layout(workspace_root)
         for path in [
             layout.published_root,
             layout.sandboxes_root,

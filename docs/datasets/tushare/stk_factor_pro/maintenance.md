@@ -17,7 +17,7 @@ The v1 contract keeps a curated subset of the full provider field set.
 ### Fake Provider
 
 ```bash
-python -m maintool --repo-root . maintain-run tushare_stk_factor_pro \
+python -m maintool maintain-run tushare_stk_factor_pro \
   --fake \
   --symbols 000001.SZ \
   --trade-date 20240506 \
@@ -27,20 +27,20 @@ python -m maintool --repo-root . maintain-run tushare_stk_factor_pro \
 ### Real Provider
 
 ```bash
-python -m maintool --repo-root . maintain-plan tushare_stk_factor_pro \
+python -m maintool maintain-plan tushare_stk_factor_pro \
   --symbols 000001.SZ \
   --trade-date 20240506 \
   --run-id stk-factor-smoke-real
 
-python -m maintool --repo-root . prepare tushare_stk_factor_pro --run-id <run_id>
-python -m maintool --repo-root . ingest tushare_stk_factor_pro --run-id <run_id>
-python -m maintool --repo-root . qa tushare_stk_factor_pro --run-id <run_id>
+python -m maintool prepare tushare_stk_factor_pro --run-id <run_id>
+python -m maintool ingest tushare_stk_factor_pro --run-id <run_id>
+python -m maintool qa tushare_stk_factor_pro --run-id <run_id>
 ```
 
 ## Historical Backfill
 
 ```bash
-python -m maintool --repo-root . maintain-plan tushare_stk_factor_pro \
+python -m maintool maintain-plan tushare_stk_factor_pro \
   --symbols '@universe:index:CSI300' \
   --start-date 20160527 --end-date 20260526 \
   --daily-request-strategy auto \

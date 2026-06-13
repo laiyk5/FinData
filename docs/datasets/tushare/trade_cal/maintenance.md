@@ -15,7 +15,7 @@ Prerequisite: [`../../__shared__/_general_maintenance_sop.md`](../../__shared__/
 ### Fake Provider
 
 ```bash
-python -m maintool --repo-root . maintain-run trade_calendar \
+python -m maintool maintain-run trade_calendar \
   --fake \
   --trade-date 20240506
 ```
@@ -25,14 +25,14 @@ python -m maintool --repo-root . maintain-run trade_calendar \
 Use a short known week first:
 
 ```bash
-python -m maintool --repo-root . maintain-plan trade_calendar \
+python -m maintool maintain-plan trade_calendar \
   --exchange SSE \
   --start-date 20240513 --end-date 20240517 \
   --run-id trade-calendar-sse-smoke-YYYYMMDD
 
-python -m maintool --repo-root . prepare trade_calendar --run-id <run_id>
-python -m maintool --repo-root . ingest trade_calendar --run-id <run_id>
-python -m maintool --repo-root . qa trade_calendar --run-id <run_id>
+python -m maintool prepare trade_calendar --run-id <run_id>
+python -m maintool ingest trade_calendar --run-id <run_id>
+python -m maintool qa trade_calendar --run-id <run_id>
 ```
 
 Publish only after checking date continuity and `pretrade_date` behavior.
@@ -43,13 +43,13 @@ Maintain exchanges separately for easier review:
 
 ```bash
 # SSE full history — use exchange listing date (1990-12-19) as start
-python -m maintool --repo-root . maintain-plan trade_calendar \
+python -m maintool maintain-plan trade_calendar \
   --exchange SSE \
   --start-date 19901219 --end-date YYYYMMDD \
   --run-id trade-calendar-SSE-full-YYYYMMDD
 
 # SZSE full history — use exchange listing date (1991-07-03) as start
-python -m maintool --repo-root . maintain-plan trade_calendar \
+python -m maintool maintain-plan trade_calendar \
   --exchange SZSE \
   --start-date 19910703 --end-date YYYYMMDD \
   --run-id trade-calendar-SZSE-full-YYYYMMDD

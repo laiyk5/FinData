@@ -26,10 +26,10 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 class ReportCatalogTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
-        self.repo_root = Path(self.temp_dir.name)
-        shutil.copytree(REPO_ROOT / "published" / "datasets" / "cninfo" / "report_catalog", self.repo_root / "published" / "datasets" / "cninfo" / "report_catalog")
-        self.reset_runtime_dataset_state(self.repo_root / "published" / "datasets" / "cninfo" / "report_catalog")
-        (self.repo_root / "sandboxes" / "runs").mkdir(parents=True)
+        self.workspace_root = Path(self.temp_dir.name)
+        shutil.copytree(REPO_ROOT / "workspace" / "published" / "datasets" / "cninfo" / "report_catalog", self.workspace_root / "published" / "datasets" / "cninfo" / "report_catalog")
+        self.reset_runtime_dataset_state(self.workspace_root / "published" / "datasets" / "cninfo" / "report_catalog")
+        (self.workspace_root / "sandboxes" / "runs").mkdir(parents=True)
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
@@ -48,7 +48,7 @@ class ReportCatalogTests(unittest.TestCase):
 
     def test_fake_pipeline_filters_summary_and_marks_latest_version(self) -> None:
         context, result = run_full_pipeline(
-            repo_root=self.repo_root,
+            workspace_root=self.workspace_root,
             dataset_name="report_catalog",
             symbols=["600000.SH"],
             trade_dates=[],
@@ -78,7 +78,7 @@ class ReportCatalogTests(unittest.TestCase):
 
     def test_universe_selector_is_recorded_in_manifest(self) -> None:
         context = create_run_sandbox(
-            repo_root=self.repo_root,
+            workspace_root=self.workspace_root,
             dataset_name="report_catalog",
             symbols=["600000.SH", "600519.SH"],
             trade_dates=[],
@@ -102,7 +102,7 @@ class ReportCatalogTests(unittest.TestCase):
 
     def test_report_catalog_qa_rejects_multiple_latest_versions(self) -> None:
         context = create_run_sandbox(
-            repo_root=self.repo_root,
+            workspace_root=self.workspace_root,
             dataset_name="report_catalog",
             symbols=["600000.SH"],
             trade_dates=[],

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shutil
 import sys
 import tempfile
@@ -21,26 +22,26 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 class InstrumentUniverseTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
-        self.repo_root = Path(self.temp_dir.name)
+        self.workspace_root = Path(self.temp_dir.name)
         shutil.copytree(
-            REPO_ROOT / "published" / "datasets" / "tushare" / "index_weight",
-            self.repo_root / "published" / "datasets" / "tushare" / "index_weight",
+            REPO_ROOT / "workspace" / "published" / "datasets" / "tushare" / "index_weight",
+            self.workspace_root / "published" / "datasets" / "tushare" / "index_weight",
         )
         shutil.copytree(
-            REPO_ROOT / "published" / "datasets" / "tushare" / "daily",
-            self.repo_root / "published" / "datasets" / "tushare" / "daily",
+            REPO_ROOT / "workspace" / "published" / "datasets" / "tushare" / "daily",
+            self.workspace_root / "published" / "datasets" / "tushare" / "daily",
         )
         # Clear published data so tests start with a clean state
-        _clear_current(self.repo_root / "published" / "datasets" / "tushare" / "index_weight")
-        _clear_current(self.repo_root / "published" / "datasets" / "tushare" / "daily")
-        (self.repo_root / "sandboxes" / "runs").mkdir(parents=True)
+        _clear_current(self.workspace_root / "published" / "datasets" / "tushare" / "index_weight")
+        _clear_current(self.workspace_root / "published" / "datasets" / "tushare" / "daily")
+        (self.workspace_root / "sandboxes" / "runs").mkdir(parents=True)
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
 
     def test_symbols_resolve_from_published_index_weight_csi300(self) -> None:
         run_full_pipeline(
-            repo_root=self.repo_root,
+            workspace_root=self.workspace_root,
             dataset_name="tushare_index_weight",
             symbols=[],
             trade_dates=[],
@@ -53,25 +54,28 @@ class InstrumentUniverseTests(unittest.TestCase):
             },
         )
 
-        exit_code = main(
-            [
-                "--repo-root",
-                str(self.repo_root),
-                "maintain-plan",
-                "tushare_daily",
-                "--fake",
-                "--trade-date",
-                "20240506",
-                "--symbols",
-                "@universe:index:CSI300",
-                "--run-id",
-                "daily-from-csi300",
-            ]
-        )
+        old_cwd = os.getcwd()
+        os.chdir(str(self.workspace_root))
+        try:
+            exit_code = main(
+                [
+                    "maintain-plan",
+                    "tushare_daily",
+                    "--fake",
+                    "--trade-date",
+                    "20240506",
+                    "--symbols",
+                    "@universe:index:CSI300",
+                    "--run-id",
+                    "daily-from-csi300",
+                ]
+            )
+        finally:
+            os.chdir(old_cwd)
 
         self.assertEqual(exit_code, 0)
         manifest = read_json(
-            self.repo_root
+            self.workspace_root
             / "sandboxes"
             / "runs"
             / "tushare_daily"
@@ -86,7 +90,7 @@ class InstrumentUniverseTests(unittest.TestCase):
 
     def test_symbols_resolve_from_published_index_weight_sse50(self) -> None:
         run_full_pipeline(
-            repo_root=self.repo_root,
+            workspace_root=self.workspace_root,
             dataset_name="tushare_index_weight",
             symbols=[],
             trade_dates=[],
@@ -99,25 +103,28 @@ class InstrumentUniverseTests(unittest.TestCase):
             },
         )
 
-        exit_code = main(
-            [
-                "--repo-root",
-                str(self.repo_root),
-                "maintain-plan",
-                "tushare_daily",
-                "--fake",
-                "--trade-date",
-                "20240506",
-                "--symbols",
-                "@universe:index:SSE50",
-                "--run-id",
-                "daily-from-sse50",
-            ]
-        )
+        old_cwd = os.getcwd()
+        os.chdir(str(self.workspace_root))
+        try:
+            exit_code = main(
+                [
+                    "maintain-plan",
+                    "tushare_daily",
+                    "--fake",
+                    "--trade-date",
+                    "20240506",
+                    "--symbols",
+                    "@universe:index:SSE50",
+                    "--run-id",
+                    "daily-from-sse50",
+                ]
+            )
+        finally:
+            os.chdir(old_cwd)
 
         self.assertEqual(exit_code, 0)
         manifest = read_json(
-            self.repo_root
+            self.workspace_root
             / "sandboxes"
             / "runs"
             / "tushare_daily"
@@ -131,22 +138,25 @@ class InstrumentUniverseTests(unittest.TestCase):
         self.assertIn("600000.SH", manifest["resolved_symbols"])
 
     def test_universe_resolution_fails_without_published_index_weight(self) -> None:
-        with self.assertRaises((ValueError, RuntimeError)):
-            main(
-                [
-                    "--repo-root",
-                    str(self.repo_root),
-                    "maintain-plan",
-                    "tushare_daily",
-                    "--fake",
-                    "--trade-date",
-                    "20240506",
-                    "--symbols",
-                    "@universe:index:CSI300",
-                    "--run-id",
-                    "daily-no-index-weight",
-                ]
-            )
+        old_cwd = os.getcwd()
+        os.chdir(str(self.workspace_root))
+        try:
+            with self.assertRaises((ValueError, RuntimeError)):
+                main(
+                    [
+                        "maintain-plan",
+                        "tushare_daily",
+                        "--fake",
+                        "--trade-date",
+                        "20240506",
+                        "--symbols",
+                        "@universe:index:CSI300",
+                        "--run-id",
+                        "daily-no-index-weight",
+                    ]
+                )
+        finally:
+            os.chdir(old_cwd)
 
 
 def _clear_current(dataset_root: Path) -> None:

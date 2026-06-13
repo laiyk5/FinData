@@ -51,14 +51,17 @@ backups/       Disaster recovery snapshots.
 ## Quick Start
 
 ```bash
+# Initialize a workspace
+python -m maintool init workspace --create-dirs
+
 # List all datasets
-python -m maintool --repo-root . list
+cd workspace && python -m maintool list
 
 # Validate a dataset
-python -m maintool --repo-root . validate tushare_daily
+cd workspace && python -m maintool validate tushare_daily
 
 # Full maintenance pipeline (single dataset)
-python -m maintool --repo-root . maintain-run tushare_daily \
+cd workspace && python -m maintool maintain-run tushare_daily \
   --fake --symbols 000001.SZ --trade-date 20240506
 
 # Run tests

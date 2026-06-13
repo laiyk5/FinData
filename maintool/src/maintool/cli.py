@@ -58,34 +58,47 @@ FORBIDDEN_DATASET_DIRS = (
 
 @dataclass(frozen=True)
 class DatasetPaths:
-    repo_root: Path
+    workspace_root: Path
     dataset_name: str
 
     @property
     def root(self) -> Path:
         from .workspace import dataset_root
-        return dataset_root(self.repo_root, self.dataset_name, load_layout(self.repo_root))
+        return dataset_root(self.workspace_root, self.dataset_name, load_layout(self.workspace_root))
 
 
-def resolve_repo_root(value: str) -> Path:
+def resolve_path(value: str) -> Path:
     return Path(value).expanduser().resolve()
 
 
-def init_workspace(repo_root: Path, create_dirs: bool = False) -> int:
-    """Initialize a workspace.yaml configuration file at repo_root."""
+def init_workspace(workspace_root: Path, create_dirs: bool = False) -> int:
+    """Initialize a workspace.yaml configuration file at workspace_root.
+
+    Validates that the target directory is empty (no existing workspace
+    or data directories) before initializing.
+    """
     from .workspace_config import write_default_config
 
-    config_path = repo_root / "workspace.yaml"
-    if config_path.exists():
-        print(f"workspace.yaml already exists: {config_path}")
+    # Validate: target must not already be an initialized workspace
+    if (workspace_root / "workspace.yaml").exists():
+        print(f"error: workspace already initialized at {workspace_root}")
         return 1
 
-    created = write_default_config(repo_root, create_dirs=create_dirs)
+    # Validate: target must not contain existing data directories
+    for subdir in ["published", "cache", "backups", "sandboxes"]:
+        if (workspace_root / subdir).exists():
+            print(f"error: target directory contains existing data: {workspace_root / subdir}")
+            print("init requires an empty directory.")
+            return 1
+
+    workspace_root.mkdir(parents=True, exist_ok=True)
+
+    created = write_default_config(workspace_root, create_dirs=create_dirs)
     print(f"Created workspace config: {created}")
     if create_dirs:
         from .workspace_config import default_layout
 
-        layout = default_layout(repo_root)
+        layout = default_layout(workspace_root)
         for label, path in [
             ("published", layout.published_root),
             ("sandboxes", layout.sandboxes_root),
@@ -97,12 +110,12 @@ def init_workspace(repo_root: Path, create_dirs: bool = False) -> int:
     return 0
 
 
-def dataset_paths(repo_root: Path, dataset_name: str) -> DatasetPaths:
-    return DatasetPaths(repo_root=repo_root, dataset_name=dataset_name)
+def dataset_paths(workspace_root: Path, dataset_name: str) -> DatasetPaths:
+    return DatasetPaths(workspace_root=workspace_root, dataset_name=dataset_name)
 
 
-def list_datasets(repo_root: Path) -> int:
-    datasets_root = published_datasets_root(repo_root, load_layout(repo_root))
+def list_datasets(workspace_root: Path) -> int:
+    datasets_root = published_datasets_root(workspace_root, load_layout(workspace_root))
     if not datasets_root.exists():
         print(f"No datasets directory found at {datasets_root}")
         return 1
@@ -120,8 +133,8 @@ def list_datasets(repo_root: Path) -> int:
     return 0
 
 
-def inspect_dataset(repo_root: Path, dataset_name: str) -> int:
-    paths = dataset_paths(repo_root, dataset_name)
+def inspect_dataset(workspace_root: Path, dataset_name: str) -> int:
+    paths = dataset_paths(workspace_root, dataset_name)
     if not paths.root.exists():
         print(f"Dataset not found: {paths.root}")
         return 1
@@ -141,8 +154,8 @@ def inspect_dataset(repo_root: Path, dataset_name: str) -> int:
     return 0
 
 
-def validate_dataset(repo_root: Path, dataset_name: str) -> int:
-    paths = dataset_paths(repo_root, dataset_name)
+def validate_dataset(workspace_root: Path, dataset_name: str) -> int:
+    paths = dataset_paths(workspace_root, dataset_name)
     errors: list[str] = []
 
     if not paths.root.exists():
@@ -215,13 +228,13 @@ def validate_dataset(repo_root: Path, dataset_name: str) -> int:
     return 0
 
 
-def update_dataset(repo_root: Path, dataset_name: str, provider: str, symbols: list[str], trade_date: str) -> int:
+def update_dataset(workspace_root: Path, dataset_name: str, provider: str, symbols: list[str], trade_date: str) -> int:
     print("Direct dataset update is disabled. Use maintain-plan/prepare/ingest/qa/publish or maintain-run.")
     return 1
 
 
 def maintain_plan(
-    repo_root: Path,
+    workspace_root: Path,
     dataset_name: str,
     use_fake: bool,
     symbols: list[str],
@@ -242,7 +255,7 @@ def maintain_plan(
     )
     try:
         context = create_run_sandbox(
-            repo_root=repo_root,
+            workspace_root=workspace_root,
             dataset_name=dataset_name,
             use_fake=use_fake,
             symbols=symbols,
@@ -265,8 +278,8 @@ def maintain_plan(
     return 0
 
 
-def prepare_dataset(repo_root: Path, dataset_name: str, run_id: str) -> int:
-    context = get_run_context(repo_root, dataset_name, run_id)
+def prepare_dataset(workspace_root: Path, dataset_name: str, run_id: str) -> int:
+    context = get_run_context(workspace_root, dataset_name, run_id)
     try:
         summary = prepare_raw(context)
     except Exception as exc:
@@ -280,8 +293,8 @@ def prepare_dataset(repo_root: Path, dataset_name: str, run_id: str) -> int:
     return 1 if summary["failed"] else 0
 
 
-def ingest_dataset(repo_root: Path, dataset_name: str, run_id: str) -> int:
-    context = get_run_context(repo_root, dataset_name, run_id)
+def ingest_dataset(workspace_root: Path, dataset_name: str, run_id: str) -> int:
+    context = get_run_context(workspace_root, dataset_name, run_id)
     try:
         report = ingest_prepared_raw(context)
     except Exception as exc:
@@ -294,8 +307,8 @@ def ingest_dataset(repo_root: Path, dataset_name: str, run_id: str) -> int:
     return 0
 
 
-def qa_dataset(repo_root: Path, dataset_name: str, run_id: str) -> int:
-    context = get_run_context(repo_root, dataset_name, run_id)
+def qa_dataset(workspace_root: Path, dataset_name: str, run_id: str) -> int:
+    context = get_run_context(workspace_root, dataset_name, run_id)
     try:
         status = run_qa(context)
     except Exception as exc:
@@ -310,8 +323,8 @@ def qa_dataset(repo_root: Path, dataset_name: str, run_id: str) -> int:
     return 0 if status["passed"] else 1
 
 
-def publish_dataset(repo_root: Path, dataset_name: str, run_id: str, fail_before_final_rename: bool) -> int:
-    context = get_run_context(repo_root, dataset_name, run_id)
+def publish_dataset(workspace_root: Path, dataset_name: str, run_id: str, fail_before_final_rename: bool) -> int:
+    context = get_run_context(workspace_root, dataset_name, run_id)
     try:
         publish_log = publish_sandbox(context, fail_before_final_rename=fail_before_final_rename)
     except Exception as exc:
@@ -324,8 +337,8 @@ def publish_dataset(repo_root: Path, dataset_name: str, run_id: str, fail_before
     return 0
 
 
-def review_run(repo_root: Path, dataset_name: str, run_id: str) -> int:
-    context = get_run_context(repo_root, dataset_name, run_id)
+def review_run(workspace_root: Path, dataset_name: str, run_id: str) -> int:
+    context = get_run_context(workspace_root, dataset_name, run_id)
     try:
         print(build_review(context), end="")
     except Exception as exc:
@@ -335,7 +348,7 @@ def review_run(repo_root: Path, dataset_name: str, run_id: str) -> int:
 
 
 def maintain_run(
-    repo_root: Path,
+    workspace_root: Path,
     dataset_name: str,
     use_fake: bool,
     symbols: list[str],
@@ -357,7 +370,7 @@ def maintain_run(
 
     try:
         context, result = run_full_pipeline(
-            repo_root=repo_root,
+            workspace_root=workspace_root,
             dataset_name=dataset_name,
             use_fake=use_fake,
             symbols=symbols,
@@ -424,9 +437,7 @@ def resolve_request_settings(
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="maintool", description="Maintain the FinData repository.")
-    parser.add_argument("--repo-root", default="..", help="Path to the FinData repository root.")
-
+    parser = argparse.ArgumentParser(prog="maintool", description="Maintain a FinData workspace.")
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("list", help="List datasets.")
 
@@ -462,7 +473,11 @@ def build_parser() -> argparse.ArgumentParser:
     maintain_run_parser = subparsers.add_parser("maintain-run", help="Run the full maintenance pipeline.")
     add_pipeline_arguments(maintain_run_parser, include_run_id=True)
 
-    init_parser = subparsers.add_parser("init", help="Initialize a workspace configuration.")
+    init_parser = subparsers.add_parser("init", help="Initialize a workspace in an empty directory.")
+    init_parser.add_argument(
+        "workspace_dir", nargs="?", default=".",
+        help="Path to the new workspace directory. Defaults to the current directory.",
+    )
     init_parser.add_argument(
         "--create-dirs", action="store_true",
         help="Create configured output directories if they don't exist.",
@@ -527,26 +542,28 @@ def add_pipeline_arguments(parser: argparse.ArgumentParser, include_run_id: bool
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    repo_root = resolve_repo_root(args.repo_root)
 
     if args.command == "init":
-        return init_workspace(repo_root, create_dirs=args.create_dirs)
+        workspace_root = resolve_path(args.workspace_dir)
+        return init_workspace(workspace_root, create_dirs=args.create_dirs)
+
+    workspace_root = Path.cwd()
     if args.command == "list":
-        return list_datasets(repo_root)
+        return list_datasets(workspace_root)
     if args.command == "inspect":
-        return inspect_dataset(repo_root, args.dataset)
+        return inspect_dataset(workspace_root, args.dataset)
     if args.command == "validate":
-        return validate_dataset(repo_root, args.dataset)
+        return validate_dataset(workspace_root, args.dataset)
     if args.command == "maintain-plan":
         trade_dates = parse_csv_arg(args.trade_dates) if args.trade_dates else [args.trade_date]
-        dataset_extras = build_dataset_extras(args, repo_root)
-        symbols = resolve_symbols_arg(repo_root, args.dataset, args.symbols, dataset_extras)
+        dataset_extras = build_dataset_extras(args, workspace_root)
+        symbols = resolve_symbols_arg(workspace_root, args.dataset, args.symbols, dataset_extras)
         if args.dataset in {"trade_calendar", "tushare_index_weight", "report_catalog"}:
             trade_dates = []
         if args.dataset in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_adj_factor", "tushare_moneyflow"} and dataset_extras and dataset_extras.get("start_date"):
             trade_dates = []
         return maintain_plan(
-            repo_root,
+            workspace_root,
             args.dataset,
             args.fake,
             symbols,
@@ -558,25 +575,25 @@ def main(argv: list[str] | None = None) -> int:
             dataset_extras,
         )
     if args.command == "prepare":
-        return prepare_dataset(repo_root, args.dataset, args.run_id)
+        return prepare_dataset(workspace_root, args.dataset, args.run_id)
     if args.command == "ingest":
-        return ingest_dataset(repo_root, args.dataset, args.run_id)
+        return ingest_dataset(workspace_root, args.dataset, args.run_id)
     if args.command == "qa":
-        return qa_dataset(repo_root, args.dataset, args.run_id)
+        return qa_dataset(workspace_root, args.dataset, args.run_id)
     if args.command == "publish":
-        return publish_dataset(repo_root, args.dataset, args.run_id, args.fail_before_final_rename)
+        return publish_dataset(workspace_root, args.dataset, args.run_id, args.fail_before_final_rename)
     if args.command == "review":
-        return review_run(repo_root, args.dataset, args.run_id)
+        return review_run(workspace_root, args.dataset, args.run_id)
     if args.command == "maintain-run":
         trade_dates = parse_csv_arg(args.trade_dates) if args.trade_dates else [args.trade_date]
-        dataset_extras = build_dataset_extras(args, repo_root)
-        symbols = resolve_symbols_arg(repo_root, args.dataset, args.symbols, dataset_extras)
+        dataset_extras = build_dataset_extras(args, workspace_root)
+        symbols = resolve_symbols_arg(workspace_root, args.dataset, args.symbols, dataset_extras)
         if args.dataset in {"trade_calendar", "tushare_index_weight", "report_catalog"}:
             trade_dates = []
         if args.dataset in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_adj_factor", "tushare_moneyflow"} and dataset_extras and dataset_extras.get("start_date"):
             trade_dates = []
         return maintain_run(
-            repo_root,
+            workspace_root,
             args.dataset,
             args.fake,
             symbols,
@@ -592,7 +609,7 @@ def main(argv: list[str] | None = None) -> int:
     return 2
 
 
-def build_dataset_extras(args, repo_root: Path) -> dict[str, str | None] | None:
+def build_dataset_extras(args, workspace_root: Path) -> dict[str, str | None] | None:
     is_real = not args.fake
     if args.dataset == "trade_calendar":
         return {
@@ -634,7 +651,7 @@ def build_dataset_extras(args, repo_root: Path) -> dict[str, str | None] | None:
         end_date = args.end_date or args.start_date or args.trade_date
 
         # Auto-shorten start_date from published coverage for incremental runs
-        coverage = read_published_coverage(repo_root, args.dataset)
+        coverage = read_published_coverage(workspace_root, args.dataset)
         if coverage:
             effective_start, _ = compute_incremental_gap([], start_date, end_date, coverage)
             if effective_start != start_date:
@@ -645,7 +662,7 @@ def build_dataset_extras(args, repo_root: Path) -> dict[str, str | None] | None:
         return {
             "start_date": start_date,
             "end_date": end_date,
-            "expected_trade_dates": open_trade_dates(repo_root, start_date, end_date),
+            "expected_trade_dates": open_trade_dates(workspace_root, start_date, end_date),
             "daily_request_strategy": args.daily_request_strategy,
         }
     if args.dataset in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_adj_factor", "tushare_moneyflow"}:
@@ -662,7 +679,7 @@ def infer_universe_id_from_symbols(symbols_value: str) -> str:
 
 
 def resolve_symbols_arg(
-    repo_root: Path,
+    workspace_root: Path,
     dataset_name: str,
     symbols_value: str,
     dataset_extras: dict[str, str | None] | None,
@@ -673,34 +690,34 @@ def resolve_symbols_arg(
         return parse_csv_arg(symbols_value)
 
     universe_id = symbols_value.removeprefix("@universe:")
-    symbols = resolve_universe_symbols(repo_root, universe_id)
+    symbols = resolve_universe_symbols(workspace_root, universe_id)
     if dataset_extras is not None:
         dataset_extras["symbol_selector"] = symbols_value
-        dataset_extras["symbol_selector_resolved_at"] = latest_universe_date(repo_root, universe_id)
+        dataset_extras["symbol_selector_resolved_at"] = latest_universe_date(workspace_root, universe_id)
     return symbols
 
 
-def resolve_universe_symbols(repo_root: Path, universe_id: str) -> list[str]:
+def resolve_universe_symbols(workspace_root: Path, universe_id: str) -> list[str]:
     index_code = UNIVERSE_TO_INDEX_CODE.get(universe_id)
     if not index_code:
         raise ValueError(f"No index_code mapping for universe: {universe_id}")
-    rows = read_index_weight_rows(repo_root, index_code)
+    rows = read_index_weight_rows(workspace_root, index_code)
     if not rows:
         raise ValueError(f"No published index weight rows found for {index_code}")
     return sorted({row["con_code"] for row in rows if row.get("con_code")})
 
 
-def latest_universe_date(repo_root: Path, universe_id: str) -> str | None:
+def latest_universe_date(workspace_root: Path, universe_id: str) -> str | None:
     index_code = UNIVERSE_TO_INDEX_CODE.get(universe_id)
     if not index_code:
         return None
-    rows = read_index_weight_rows(repo_root, index_code)
+    rows = read_index_weight_rows(workspace_root, index_code)
     dates = [row["trade_date"] for row in rows if row.get("trade_date")]
     return max(dates) if dates else None
 
 
-def read_index_weight_rows(repo_root: Path, index_code: str) -> list[dict[str, str]]:
-    current_dir = dataset_current_root(repo_root, "tushare_index_weight", load_layout(repo_root))
+def read_index_weight_rows(workspace_root: Path, index_code: str) -> list[dict[str, str]]:
+    current_dir = dataset_current_root(workspace_root, "tushare_index_weight", load_layout(workspace_root))
     rows: list[dict[str, str]] = []
     for csv_path in sorted(current_dir.rglob("*.csv")):
         with csv_path.open(newline="", encoding="utf-8") as input_file:
@@ -710,8 +727,8 @@ def read_index_weight_rows(repo_root: Path, index_code: str) -> list[dict[str, s
     return rows
 
 
-def open_trade_dates(repo_root: Path, start_date: str, end_date: str) -> list[str]:
-    calendar = load_calendar_rows(repo_root)
+def open_trade_dates(workspace_root: Path, start_date: str, end_date: str) -> list[str]:
+    calendar = load_calendar_rows(workspace_root)
     expected = []
     for trade_date in all_dates(start_date, end_date):
         if calendar:
@@ -723,8 +740,8 @@ def open_trade_dates(repo_root: Path, start_date: str, end_date: str) -> list[st
     return expected
 
 
-def load_calendar_rows(repo_root: Path) -> dict[tuple[str, str], str]:
-    current_dir = dataset_current_root(repo_root, "trade_calendar", load_layout(repo_root))
+def load_calendar_rows(workspace_root: Path) -> dict[tuple[str, str], str]:
+    current_dir = dataset_current_root(workspace_root, "trade_calendar", load_layout(workspace_root))
     calendar: dict[tuple[str, str], str] = {}
     for csv_path in sorted(current_dir.rglob("*.csv")):
         with csv_path.open(newline="", encoding="utf-8") as input_file:

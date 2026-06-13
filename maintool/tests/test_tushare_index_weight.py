@@ -30,13 +30,13 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 class TushareIndexWeightTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
-        self.repo_root = Path(self.temp_dir.name)
-        source = REPO_ROOT / "published" / "datasets" / "tushare" / "index_weight"
-        target = self.repo_root / "published" / "datasets" / "tushare" / "index_weight"
+        self.workspace_root = Path(self.temp_dir.name)
+        source = REPO_ROOT / "workspace" / "published" / "datasets" / "tushare" / "index_weight"
+        target = self.workspace_root / "published" / "datasets" / "tushare" / "index_weight"
         shutil.copytree(source, target)
         # Clear published data so tests start with a clean state
         clear_current(target)
-        (self.repo_root / "sandboxes" / "runs").mkdir(parents=True)
+        (self.workspace_root / "sandboxes" / "runs").mkdir(parents=True)
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
@@ -82,7 +82,7 @@ class TushareIndexWeightTests(unittest.TestCase):
 
     def test_full_fake_pipeline_publishes_index_weight(self) -> None:
         context, result = run_full_pipeline(
-            repo_root=self.repo_root,
+            workspace_root=self.workspace_root,
             dataset_name="tushare_index_weight",
             symbols=[],
             trade_dates=[],
@@ -109,7 +109,7 @@ class TushareIndexWeightTests(unittest.TestCase):
 
     def test_tushare_response_preserves_raw_index_weight_columns(self) -> None:
         context = create_run_sandbox(
-            repo_root=self.repo_root,
+            workspace_root=self.workspace_root,
             dataset_name="tushare_index_weight",
             symbols=[],
             trade_dates=[],
@@ -191,27 +191,30 @@ class TushareIndexWeightTests(unittest.TestCase):
         self.assertTrue(any("empty published current" in error for error in validation["errors"]))
 
     def test_cli_maintain_plan_accepts_index_code(self) -> None:
-        exit_code = main(
-            [
-                "--repo-root",
-                str(self.repo_root),
-                "maintain-plan",
-                "tushare_index_weight",
-                "--fake",
-                "--index-code",
-                "000300.SH",
-                "--start-date",
-                "20260401",
-                "--end-date",
-                "20260531",
-                "--run-id",
-                "index-weight-cli-plan",
-            ]
-        )
+        old_cwd = os.getcwd()
+        os.chdir(str(self.workspace_root))
+        try:
+            exit_code = main(
+                [
+                    "maintain-plan",
+                    "tushare_index_weight",
+                    "--fake",
+                    "--index-code",
+                    "000300.SH",
+                    "--start-date",
+                    "20260401",
+                    "--end-date",
+                    "20260531",
+                    "--run-id",
+                    "index-weight-cli-plan",
+                ]
+            )
+        finally:
+            os.chdir(old_cwd)
 
         self.assertEqual(exit_code, 0)
         manifest = read_json(
-            self.repo_root
+            self.workspace_root
             / "sandboxes"
             / "runs"
             / "tushare_index_weight"
@@ -223,7 +226,7 @@ class TushareIndexWeightTests(unittest.TestCase):
 
     def prepared_context(self, run_id: str):
         context = create_run_sandbox(
-            repo_root=self.repo_root,
+            workspace_root=self.workspace_root,
             dataset_name="tushare_index_weight",
             use_fake=True,
             symbols=[],

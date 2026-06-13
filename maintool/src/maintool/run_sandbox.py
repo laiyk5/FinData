@@ -27,7 +27,7 @@ from .workspace import (
 
 @dataclass(frozen=True)
 class RunContext:
-    repo_root: Path
+    workspace_root: Path
     dataset_name: str
     provider: str
     api_name: str
@@ -41,23 +41,23 @@ class RunContext:
     def layout(self) -> WorkspaceLayout:
         from .workspace_config import load_layout
 
-        return load_layout(self.repo_root)
+        return load_layout(self.workspace_root)
 
     @property
     def dataset_root(self) -> Path:
-        return workspace_dataset_root(self.repo_root, self.dataset_name, self.layout)
+        return workspace_dataset_root(self.workspace_root, self.dataset_name, self.layout)
 
     @property
     def published_current_root(self) -> Path:
-        return dataset_current_root(self.repo_root, self.dataset_name, self.layout)
+        return dataset_current_root(self.workspace_root, self.dataset_name, self.layout)
 
     @property
     def backup_root(self) -> Path:
-        return dataset_backup_root(self.repo_root, self.dataset_name, self.layout)
+        return dataset_backup_root(self.workspace_root, self.dataset_name, self.layout)
 
     @property
     def cache_root(self) -> Path:
-        return workspace_cache_root(self.repo_root, self.layout)
+        return workspace_cache_root(self.workspace_root, self.layout)
 
     @property
     def sandbox_root(self) -> Path:
@@ -124,12 +124,12 @@ def request_file_stem(trade_date: str, ts_code: str) -> str:
     return f"daily_{trade_date}_{ts_code.replace('.', '_')}"
 
 
-def get_run_context(repo_root: Path, dataset_name: str, run_id: str) -> RunContext:
+def get_run_context(workspace_root: Path, dataset_name: str, run_id: str) -> RunContext:
     from .dataset_specs import get_spec
 
     spec = get_spec(dataset_name)
     return RunContext(
-        repo_root=repo_root,
+        workspace_root=workspace_root,
         dataset_name=dataset_name,
         provider=spec.provider,
         api_name=spec.api_name,
@@ -154,15 +154,15 @@ def active_dataset_ignore(source_dir: str, names: list[str]) -> set[str]:
     return ignored.intersection(names)
 
 
-def inspect_current_state(repo_root: Path, dataset_name: str, layout: WorkspaceLayout | None = None) -> dict[str, Any]:
+def inspect_current_state(workspace_root: Path, dataset_name: str, layout: WorkspaceLayout | None = None) -> dict[str, Any]:
     if layout is None:
         from .workspace_config import load_layout
-        layout = load_layout(repo_root)
-    current_dir = dataset_current_root(repo_root, dataset_name, layout)
-    backup_dir = dataset_backup_root(repo_root, dataset_name, layout)
+        layout = load_layout(workspace_root)
+    current_dir = dataset_current_root(workspace_root, dataset_name, layout)
+    backup_dir = dataset_backup_root(workspace_root, dataset_name, layout)
 
     return {
-        "dataset_root": str(workspace_dataset_root(repo_root, dataset_name, layout)),
+        "dataset_root": str(workspace_dataset_root(workspace_root, dataset_name, layout)),
         "raw_file_count": 0,
         "staged_file_count": 0,
         "published_file_count": count_files(current_dir),
@@ -195,7 +195,7 @@ def count_directories(root: Path) -> int:
 
 
 def create_run_sandbox(
-    repo_root: Path,
+    workspace_root: Path,
     dataset_name: str,
     use_fake: bool = False,
     symbols: list[str] | None = None,
@@ -248,7 +248,7 @@ def create_run_sandbox(
             raise ValueError("At least one symbol is required for report_catalog.")
 
     context = RunContext(
-        repo_root=repo_root,
+        workspace_root=workspace_root,
         dataset_name=dataset_name,
         provider=spec.provider,
         api_name=spec.api_name,
@@ -314,7 +314,7 @@ def create_run_sandbox(
             "request_budget": request_budget,
         },
         "request_plan": summarize_request_plan(dataset_name, planned_requests),
-        "current_state": inspect_current_state(repo_root, dataset_name),
+        "current_state": inspect_current_state(workspace_root, dataset_name),
         "steps": {
             "planned": True,
             "prepared": False,

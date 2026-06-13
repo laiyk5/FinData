@@ -1,7 +1,0 @@
-environment: dev
-repo_root: ..
-dataset_root: ../sandboxes/dev_datasets
-allow_publish: false
-allow_destructive_ops: true
-require_validation_passed: false
-require_backup_before_publish: false

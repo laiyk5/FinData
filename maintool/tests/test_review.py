@@ -25,15 +25,15 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 class ReviewTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
-        self.repo_root = Path(self.temp_dir.name)
-        shutil.copytree(REPO_ROOT / "published" / "datasets" / "tushare" / "daily", self.repo_root / "published" / "datasets" / "tushare" / "daily")
+        self.workspace_root = Path(self.temp_dir.name)
+        shutil.copytree(REPO_ROOT / "workspace" / "published" / "datasets" / "tushare" / "daily", self.workspace_root / "published" / "datasets" / "tushare" / "daily")
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
 
     def test_review_completed_run(self) -> None:
         context, _ = run_full_pipeline(
-            repo_root=self.repo_root,
+            workspace_root=self.workspace_root,
             dataset_name="tushare_daily",
             symbols=["000001.SZ"],
             trade_dates=["20240506"],
@@ -55,7 +55,7 @@ class ReviewTests(unittest.TestCase):
 
     def test_review_incomplete_run_recommends_prepare(self) -> None:
         context = create_run_sandbox(
-            repo_root=self.repo_root,
+            workspace_root=self.workspace_root,
             dataset_name="tushare_daily",
             symbols=["000001.SZ"],
             trade_dates=["20240506"],
@@ -71,7 +71,7 @@ class ReviewTests(unittest.TestCase):
 
     def test_review_failed_qa_recommends_investigating_missingness(self) -> None:
         context = create_run_sandbox(
-            repo_root=self.repo_root,
+            workspace_root=self.workspace_root,
             dataset_name="tushare_daily",
             symbols=["000001.SZ", "600001.SH"],
             trade_dates=["20240506"],

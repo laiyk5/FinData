@@ -15,7 +15,7 @@ Prerequisite: [`../../__shared__/_general_maintenance_sop.md`](../../__shared__/
 ### Fake Provider
 
 ```bash
-python -m maintool --repo-root . maintain-run tushare_daily \
+python -m maintool maintain-run tushare_daily \
   --fake \
   --symbols 000001.SZ,600000.SH \
   --trade-date 20240506
@@ -24,15 +24,15 @@ python -m maintool --repo-root . maintain-run tushare_daily \
 ### Real Provider
 
 ```bash
-python -m maintool --repo-root . maintain-plan tushare_daily \
+python -m maintool maintain-plan tushare_daily \
   --symbols 600000.SH,600519.SH \
   --trade-date 20240513 \
   --run-id tushare-daily-smoke-YYYYMMDD
 
-python -m maintool --repo-root . prepare tushare_daily --run-id <run_id>
-python -m maintool --repo-root . ingest tushare_daily --run-id <run_id>
-python -m maintool --repo-root . qa tushare_daily --run-id <run_id>
-python -m maintool --repo-root . review tushare_daily --run-id <run_id>
+python -m maintool prepare tushare_daily --run-id <run_id>
+python -m maintool ingest tushare_daily --run-id <run_id>
+python -m maintool qa tushare_daily --run-id <run_id>
+python -m maintool review tushare_daily --run-id <run_id>
 ```
 
 ## Historical Backfill
@@ -40,7 +40,7 @@ python -m maintool --repo-root . review tushare_daily --run-id <run_id>
 Use universe selectors to avoid hand-coding symbol lists:
 
 ```bash
-python -m maintool --repo-root . maintain-plan tushare_daily \
+python -m maintool maintain-plan tushare_daily \
   --symbols '@universe:index:CSI300' \
   --start-date 20160523 --end-date 20260522 \
   --daily-request-strategy auto \

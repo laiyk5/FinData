@@ -17,7 +17,7 @@ This dataset is the source for `@universe:` symbol resolution. Use `@universe:in
 ### Fake Provider
 
 ```bash
-python -m maintool --repo-root . maintain-run tushare_index_weight \
+python -m maintool maintain-run tushare_index_weight \
   --fake \
   --trade-date 20240506 \
   --index-code 000300.SH \
@@ -27,15 +27,15 @@ python -m maintool --repo-root . maintain-run tushare_index_weight \
 ### Real Provider
 
 ```bash
-python -m maintool --repo-root . maintain-plan tushare_index_weight \
+python -m maintool maintain-plan tushare_index_weight \
   --index-code 000300.SH \
   --start-date 20260401 --end-date 20260430 \
   --run-id tushare-index-weight-csi300-smoke-YYYYMMDD
 
-python -m maintool --repo-root . prepare tushare_index_weight --run-id <run_id>
-python -m maintool --repo-root . ingest tushare_index_weight --run-id <run_id>
-python -m maintool --repo-root . qa tushare_index_weight --run-id <run_id>
-python -m maintool --repo-root . review tushare_index_weight --run-id <run_id>
+python -m maintool prepare tushare_index_weight --run-id <run_id>
+python -m maintool ingest tushare_index_weight --run-id <run_id>
+python -m maintool qa tushare_index_weight --run-id <run_id>
+python -m maintool review tushare_index_weight --run-id <run_id>
 ```
 
 Publish only after checking that the member count and latest snapshot date are plausible.
@@ -45,7 +45,7 @@ Publish only after checking that the member count and latest snapshot date are p
 CSI300 launch month is April 2005:
 
 ```bash
-python -m maintool --repo-root . maintain-plan tushare_index_weight \
+python -m maintool maintain-plan tushare_index_weight \
   --index-code 000300.SH \
   --start-date 20050401 --end-date YYYYMMDD \
   --rate-limit-seconds 0.5 --max-retries 3 --retry-backoff-seconds 1.0 \

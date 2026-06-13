@@ -17,7 +17,7 @@ Report types: `annual`, `semiannual`, `q1`, `q3`. The `--start-year` / `--end-ye
 ### Fake/Mock Provider
 
 ```bash
-python -m maintool --repo-root . maintain-run report_catalog \
+python -m maintool maintain-run report_catalog \
   --fake \
   --trade-date 20240506 \
   --symbols 000001.SZ
@@ -28,7 +28,7 @@ python -m maintool --repo-root . maintain-run report_catalog \
 Start very small — Cninfo is a website, not a stable API:
 
 ```bash
-python -m maintool --repo-root . maintain-plan report_catalog \
+python -m maintool maintain-plan report_catalog \
   --symbols '@universe:index:SSE50' \
   --start-year 2025 --end-year 2026 \
   --report-types annual,semiannual,q1,q3 \
@@ -36,9 +36,9 @@ python -m maintool --repo-root . maintain-plan report_catalog \
   --request-budget 20 \
   --run-id report-catalog-cninfo-smoke-YYYYMMDD
 
-python -m maintool --repo-root . prepare report_catalog --run-id <run_id>
-python -m maintool --repo-root . ingest report_catalog --run-id <run_id>
-python -m maintool --repo-root . qa report_catalog --run-id <run_id>
+python -m maintool prepare report_catalog --run-id <run_id>
+python -m maintool ingest report_catalog --run-id <run_id>
+python -m maintool qa report_catalog --run-id <run_id>
 ```
 
 Publish only after inspecting raw responses, request ledgers, and QA reports.
@@ -48,7 +48,7 @@ Publish only after inspecting raw responses, request ledgers, and QA reports.
 Use **five-year disclosure windows** per run. Keep each window in its own `run_id` and publish after QA passes:
 
 ```bash
-python -m maintool --repo-root . maintain-plan report_catalog \
+python -m maintool maintain-plan report_catalog \
   --symbols '@universe:index:CSI300' \
   --start-year 2017 --end-year 2021 \
   --report-types annual,semiannual,q1,q3 \

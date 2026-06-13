@@ -59,7 +59,7 @@ The fake path should cover:
 - stage event and summary logs
 
 ```bash
-python -m maintool --repo-root . maintain-run <dataset> --fake \
+cd workspace && python -m maintool maintain-run <dataset> --fake \
   --trade-date 20240506 --symbols 000001.SZ
 ```
 
@@ -76,7 +76,7 @@ small, inspectable, and easy to discard. Confirm:
 - publish is skipped until the smoke output is trusted
 
 ```bash
-python -m maintool --repo-root . maintain-run <dataset> \
+cd workspace && python -m maintool maintain-run <dataset> \
   --trade-date 20240506 --symbols 000001.SZ
 ```
 

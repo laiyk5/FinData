@@ -1,0 +1,74 @@
+site_name: FinData
+docs_dir: docs
+site_dir: site
+use_directory_urls: true
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+
+nav:
+  - Home: index.md
+  - Design:
+      - Dataset Standard: design/dataset_standard.md
+      - Maintenance Workflow: design/maintenance_workflow.md
+      - Reference Selectors: design/reference_selectors.md
+  - Datasets:
+      - Shared SOPs:
+          - General Maintenance SOP: datasets/__shared__/_general_maintenance_sop.md
+          - New Dataset SOP: datasets/__shared__/_new_dataset_sop.md
+      - Tushare:
+          - Daily:
+              - Overview: datasets/tushare/daily/dataset_card.md
+              - Maintenance: datasets/tushare/daily/maintenance.md
+          - Daily Basic:
+              - Overview: datasets/tushare/daily_basic/dataset_card.md
+              - Maintenance: datasets/tushare/daily_basic/maintenance.md
+          - Adj Factor:
+              - Overview: datasets/tushare/adj_factor/dataset_card.md
+              - Maintenance: datasets/tushare/adj_factor/maintenance.md
+          - Stk Factor Pro:
+              - Overview: datasets/tushare/stk_factor_pro/dataset_card.md
+              - Maintenance: datasets/tushare/stk_factor_pro/maintenance.md
+          - Moneyflow:
+              - Overview: datasets/tushare/moneyflow/dataset_card.md
+              - Maintenance: datasets/tushare/moneyflow/maintenance.md
+          - Index Weight:
+              - Overview: datasets/tushare/index_weight/dataset_card.md
+              - Maintenance: datasets/tushare/index_weight/maintenance.md
+          - Trade Calendar:
+              - Overview: datasets/tushare/trade_cal/dataset_card.md
+              - Maintenance: datasets/tushare/trade_cal/maintenance.md
+      - Cninfo:
+          - Report Catalog:
+              - Overview: datasets/cninfo/report_catalog/dataset_card.md
+              - Maintenance: datasets/cninfo/report_catalog/maintenance.md
+  - Development:
+      - Guidelines: dev/README.md
+      - Pre-push Checklist: dev/push.md

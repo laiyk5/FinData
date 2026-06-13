@@ -28,23 +28,23 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 class MoneyflowTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
-        self.repo_root = Path(self.temp_dir.name)
+        self.workspace_root = Path(self.temp_dir.name)
         shutil.copytree(
-            REPO_ROOT / "published" / "datasets" / "tushare" / "moneyflow",
-            self.repo_root / "published" / "datasets" / "tushare" / "moneyflow",
+            REPO_ROOT / "workspace" / "published" / "datasets" / "tushare" / "moneyflow",
+            self.workspace_root / "published" / "datasets" / "tushare" / "moneyflow",
         )
         shutil.copytree(
-            REPO_ROOT / "published" / "datasets" / "tushare" / "trade_cal",
-            self.repo_root / "published" / "datasets" / "tushare" / "trade_cal",
+            REPO_ROOT / "workspace" / "published" / "datasets" / "tushare" / "trade_cal",
+            self.workspace_root / "published" / "datasets" / "tushare" / "trade_cal",
         )
-        (self.repo_root / "sandboxes" / "runs").mkdir(parents=True)
+        (self.workspace_root / "sandboxes" / "runs").mkdir(parents=True)
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
 
     def test_full_fake_pipeline_publishes(self) -> None:
         context, result = run_full_pipeline(
-            repo_root=self.repo_root,
+            workspace_root=self.workspace_root,
             dataset_name="tushare_moneyflow",
             symbols=["000001.SZ", "600000.SH"],
             trade_dates=["20240506"],
@@ -58,7 +58,7 @@ class MoneyflowTests(unittest.TestCase):
 
     def test_real_success_normalizes_raw_json(self) -> None:
         context = create_run_sandbox(
-            repo_root=self.repo_root,
+            workspace_root=self.workspace_root,
             dataset_name="tushare_moneyflow",
             symbols=["000001.SZ"],
             trade_dates=["20240506"],
@@ -81,7 +81,7 @@ class MoneyflowTests(unittest.TestCase):
 
     def test_permission_error_does_not_retry(self) -> None:
         context = create_run_sandbox(
-            repo_root=self.repo_root,
+            workspace_root=self.workspace_root,
             dataset_name="tushare_moneyflow",
             symbols=["000001.SZ"],
             trade_dates=["20240506"],
@@ -102,7 +102,7 @@ class MoneyflowTests(unittest.TestCase):
 
     def test_negative_component_blocks_qa(self) -> None:
         context = create_run_sandbox(
-            repo_root=self.repo_root,
+            workspace_root=self.workspace_root,
             dataset_name="tushare_moneyflow",
             symbols=["000001.SZ"],
             trade_dates=["20240506"],

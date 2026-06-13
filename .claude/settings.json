@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m unittest tests.test_pipeline.PipelineTests.test_full_fake_pipeline_publishes_current_and_archives_previous_current tests.test_pipeline.PipelineTests.test_failed_publish_before_final_rename_leaves_current_unchanged tests.test_daily_basic.DailyBasicTests.test_full_fake_pipeline_publishes_daily_basic tests.test_moneyflow.MoneyflowTests.test_full_fake_pipeline_publishes tests.test_stk_factor_pro.StkFactorProTests.test_full_fake_pipeline_publishes tests.test_review.ReviewTests.test_review_completed_run -v)",
+      "Bash(python -m unittest discover tests -v)"
+    ]
+  }
+}

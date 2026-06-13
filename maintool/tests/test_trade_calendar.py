@@ -30,16 +30,16 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 class TradeCalendarTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
-        self.repo_root = Path(self.temp_dir.name)
-        shutil.copytree(REPO_ROOT / "published" / "datasets" / "tushare" / "trade_cal", self.repo_root / "published" / "datasets" / "tushare" / "trade_cal")
-        clear_current(self.repo_root / "published" / "datasets" / "tushare" / "trade_cal")
+        self.workspace_root = Path(self.temp_dir.name)
+        shutil.copytree(REPO_ROOT / "workspace" / "published" / "datasets" / "tushare" / "trade_cal", self.workspace_root / "published" / "datasets" / "tushare" / "trade_cal")
+        clear_current(self.workspace_root / "published" / "datasets" / "tushare" / "trade_cal")
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
 
     def test_mock_pipeline_publishes(self) -> None:
         context, result = run_full_pipeline(
-            repo_root=self.repo_root,
+            workspace_root=self.workspace_root,
             dataset_name="trade_calendar",
             use_fake=True,
             symbols=[],
@@ -110,7 +110,7 @@ class TradeCalendarTests(unittest.TestCase):
 
     def prepared_context(self, run_id: str):
         context = create_run_sandbox(
-            repo_root=self.repo_root,
+            workspace_root=self.workspace_root,
             dataset_name="trade_calendar",
             use_fake=True,
             symbols=[],
@@ -138,9 +138,9 @@ def trade_cal_response(items) -> bytes:
 class TradeCalendarTushareTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
-        self.repo_root = Path(self.temp_dir.name)
-        shutil.copytree(REPO_ROOT / "published" / "datasets" / "tushare" / "trade_cal", self.repo_root / "published" / "datasets" / "tushare" / "trade_cal")
-        clear_current(self.repo_root / "published" / "datasets" / "tushare" / "trade_cal")
+        self.workspace_root = Path(self.temp_dir.name)
+        shutil.copytree(REPO_ROOT / "workspace" / "published" / "datasets" / "tushare" / "trade_cal", self.workspace_root / "published" / "datasets" / "tushare" / "trade_cal")
+        clear_current(self.workspace_root / "published" / "datasets" / "tushare" / "trade_cal")
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
@@ -238,7 +238,7 @@ class TradeCalendarTushareTests(unittest.TestCase):
 
     def context(self, run_id: str, max_retries: int = 3):
         return create_run_sandbox(
-            repo_root=self.repo_root,
+            workspace_root=self.workspace_root,
             dataset_name="trade_calendar",
             symbols=[],
             trade_dates=[],

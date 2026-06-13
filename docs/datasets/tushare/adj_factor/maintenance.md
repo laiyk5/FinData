@@ -15,7 +15,7 @@ Prerequisite: [`../../__shared__/_general_maintenance_sop.md`](../../__shared__/
 ### Fake Provider
 
 ```bash
-python -m maintool --repo-root . maintain-run tushare_adj_factor \
+python -m maintool maintain-run tushare_adj_factor \
   --fake \
   --symbols 000001.SZ \
   --trade-date 20240506
@@ -24,14 +24,14 @@ python -m maintool --repo-root . maintain-run tushare_adj_factor \
 ### Real Provider
 
 ```bash
-python -m maintool --repo-root . maintain-plan tushare_adj_factor \
+python -m maintool maintain-plan tushare_adj_factor \
   --symbols 000001.SZ \
   --trade-date 20240506 \
   --run-id adj-factor-smoke-YYYYMMDD
 
-python -m maintool --repo-root . prepare tushare_adj_factor --run-id <run_id>
-python -m maintool --repo-root . ingest tushare_adj_factor --run-id <run_id>
-python -m maintool --repo-root . qa tushare_adj_factor --run-id <run_id>
+python -m maintool prepare tushare_adj_factor --run-id <run_id>
+python -m maintool ingest tushare_adj_factor --run-id <run_id>
+python -m maintool qa tushare_adj_factor --run-id <run_id>
 ```
 
 ## Historical Backfill
@@ -39,7 +39,7 @@ python -m maintool --repo-root . qa tushare_adj_factor --run-id <run_id>
 Use `@universe:` selectors to cover all historical index constituents:
 
 ```bash
-python -m maintool --repo-root . maintain-run tushare_adj_factor \
+python -m maintool maintain-run tushare_adj_factor \
   --symbols '@universe:index:CSI300' \
   --start-date 20160530 --end-date 20260530 \
   --daily-request-strategy symbol_range

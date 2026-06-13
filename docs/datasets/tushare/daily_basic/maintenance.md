@@ -15,7 +15,7 @@ Prerequisite: [`../../__shared__/_general_maintenance_sop.md`](../../__shared__/
 ### Fake Provider
 
 ```bash
-python -m maintool --repo-root . maintain-run tushare_daily_basic \
+python -m maintool maintain-run tushare_daily_basic \
   --fake \
   --symbols 000001.SZ,600000.SH \
   --trade-date 20240506
@@ -24,21 +24,21 @@ python -m maintool --repo-root . maintain-run tushare_daily_basic \
 ### Real Provider
 
 ```bash
-python -m maintool --repo-root . maintain-plan tushare_daily_basic \
+python -m maintool maintain-plan tushare_daily_basic \
   --symbols 600000.SH,600519.SH \
   --trade-date 20240513 \
   --request-budget 1 \
   --run-id tushare-daily-basic-smoke-YYYYMMDD
 
-python -m maintool --repo-root . prepare tushare_daily_basic --run-id <run_id>
-python -m maintool --repo-root . ingest tushare_daily_basic --run-id <run_id>
-python -m maintool --repo-root . qa tushare_daily_basic --run-id <run_id>
+python -m maintool prepare tushare_daily_basic --run-id <run_id>
+python -m maintool ingest tushare_daily_basic --run-id <run_id>
+python -m maintool qa tushare_daily_basic --run-id <run_id>
 ```
 
 ## Historical Backfill
 
 ```bash
-python -m maintool --repo-root . maintain-plan tushare_daily_basic \
+python -m maintool maintain-plan tushare_daily_basic \
   --symbols '@universe:index:CSI300' \
   --start-date 20160526 --end-date 20260525 \
   --daily-request-strategy auto \

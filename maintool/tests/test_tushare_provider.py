@@ -155,14 +155,14 @@ def rate_limit_response() -> bytes:
 class TushareProviderTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
-        self.repo_root = Path(self.temp_dir.name)
-        shutil.copytree(REPO_ROOT / "published" / "datasets" / "tushare" / "daily", self.repo_root / "published" / "datasets" / "tushare" / "daily")
+        self.workspace_root = Path(self.temp_dir.name)
+        shutil.copytree(REPO_ROOT / "workspace" / "published" / "datasets" / "tushare" / "daily", self.workspace_root / "published" / "datasets" / "tushare" / "daily")
         shutil.copytree(
-            REPO_ROOT / "published" / "datasets" / "tushare" / "daily_basic",
-            self.repo_root / "published" / "datasets" / "tushare" / "daily_basic",
+            REPO_ROOT / "workspace" / "published" / "datasets" / "tushare" / "daily_basic",
+            self.workspace_root / "published" / "datasets" / "tushare" / "daily_basic",
         )
-        clear_current(self.repo_root / "published" / "datasets" / "tushare" / "daily")
-        clear_current(self.repo_root / "published" / "datasets" / "tushare" / "daily_basic")
+        clear_current(self.workspace_root / "published" / "datasets" / "tushare" / "daily")
+        clear_current(self.workspace_root / "published" / "datasets" / "tushare" / "daily_basic")
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
@@ -286,7 +286,7 @@ class TushareProviderTests(unittest.TestCase):
         with patch.dict(os.environ, {"TUSHARE_API_KEY": "secret-token"}):
             with redirect_stdout(StringIO()):
                 exit_code = maintain_plan(
-                    repo_root=self.repo_root,
+                    workspace_root=self.workspace_root,
                     dataset_name="tushare_daily",
                     symbols=["000001.SZ"],
                     trade_dates=["20240510"],
@@ -298,13 +298,13 @@ class TushareProviderTests(unittest.TestCase):
                 )
 
         self.assertEqual(exit_code, 0)
-        self.assertTrue((self.repo_root / "sandboxes" / "runs" / "tushare_daily" / "with-key").exists())
+        self.assertTrue((self.workspace_root / "sandboxes" / "runs" / "tushare_daily" / "with-key").exists())
 
     def test_real_provider_requires_token(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
             with redirect_stdout(StringIO()):
                 exit_code = maintain_plan(
-                    repo_root=self.repo_root,
+                    workspace_root=self.workspace_root,
                     dataset_name="tushare_daily",
                     symbols=["000001.SZ"],
                     trade_dates=["20240510"],
@@ -316,7 +316,7 @@ class TushareProviderTests(unittest.TestCase):
                 )
 
         self.assertEqual(exit_code, 1)
-        self.assertFalse((self.repo_root / "sandboxes" / "runs" / "tushare_daily" / "no-token").exists())
+        self.assertFalse((self.workspace_root / "sandboxes" / "runs" / "tushare_daily" / "no-token").exists())
 
     def create_tushare_context(
         self,
@@ -326,7 +326,7 @@ class TushareProviderTests(unittest.TestCase):
         dataset_name: str = "tushare_daily",
     ):
         return create_run_sandbox(
-            repo_root=self.repo_root,
+            workspace_root=self.workspace_root,
             dataset_name=dataset_name,
             symbols=["000001.SZ"],
             trade_dates=[trade_date],

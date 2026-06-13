@@ -34,23 +34,23 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 class StkFactorProTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
-        self.repo_root = Path(self.temp_dir.name)
+        self.workspace_root = Path(self.temp_dir.name)
         shutil.copytree(
-            REPO_ROOT / "published" / "datasets" / "tushare" / "stk_factor_pro",
-            self.repo_root / "published" / "datasets" / "tushare" / "stk_factor_pro",
+            REPO_ROOT / "workspace" / "published" / "datasets" / "tushare" / "stk_factor_pro",
+            self.workspace_root / "published" / "datasets" / "tushare" / "stk_factor_pro",
         )
         shutil.copytree(
-            REPO_ROOT / "published" / "datasets" / "tushare" / "trade_cal",
-            self.repo_root / "published" / "datasets" / "tushare" / "trade_cal",
+            REPO_ROOT / "workspace" / "published" / "datasets" / "tushare" / "trade_cal",
+            self.workspace_root / "published" / "datasets" / "tushare" / "trade_cal",
         )
-        (self.repo_root / "sandboxes" / "runs").mkdir(parents=True)
+        (self.workspace_root / "sandboxes" / "runs").mkdir(parents=True)
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
 
     def test_full_fake_pipeline_publishes(self) -> None:
         context, result = run_full_pipeline(
-            repo_root=self.repo_root,
+            workspace_root=self.workspace_root,
             dataset_name="tushare_stk_factor_pro",
             symbols=["000001.SZ", "600000.SH"],
             trade_dates=["20240506"],
@@ -68,7 +68,7 @@ class StkFactorProTests(unittest.TestCase):
         symbols = [f"{index:06d}.SZ" for index in range(300)]
         expected_trade_dates = [f"2024{index:04d}" for index in range(1, 2428)]
         context = create_run_sandbox(
-            repo_root=self.repo_root,
+            workspace_root=self.workspace_root,
             dataset_name="tushare_stk_factor_pro",
             symbols=symbols,
             trade_dates=[],
@@ -90,7 +90,7 @@ class StkFactorProTests(unittest.TestCase):
 
     def test_real_success_normalizes_raw_json(self) -> None:
         context = create_run_sandbox(
-            repo_root=self.repo_root,
+            workspace_root=self.workspace_root,
             dataset_name="tushare_stk_factor_pro",
             symbols=["000001.SZ"],
             trade_dates=["20240506"],
@@ -110,7 +110,7 @@ class StkFactorProTests(unittest.TestCase):
 
     def test_permission_error_does_not_retry(self) -> None:
         context = create_run_sandbox(
-            repo_root=self.repo_root,
+            workspace_root=self.workspace_root,
             dataset_name="tushare_stk_factor_pro",
             symbols=["000001.SZ"],
             trade_dates=["20240506"],
@@ -131,7 +131,7 @@ class StkFactorProTests(unittest.TestCase):
 
     def test_ohlc_contradiction_blocks_qa(self) -> None:
         context = create_run_sandbox(
-            repo_root=self.repo_root,
+            workspace_root=self.workspace_root,
             dataset_name="tushare_stk_factor_pro",
             symbols=["000001.SZ"],
             trade_dates=["20240506"],

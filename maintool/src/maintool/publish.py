@@ -68,7 +68,7 @@ def publish_sandbox(context: RunContext, fail_before_final_rename: bool = False)
     )
 
     # Attach dataset documentation alongside published data
-    docs_dir = dataset_docs_dir(context.repo_root, context.dataset_name)
+    docs_dir = dataset_docs_dir(context.workspace_root, context.dataset_name)
     _copy_doc(docs_dir, dataset_root, "dataset_card.md")
     _copy_doc(docs_dir, dataset_root, "schema.yaml")
 
@@ -90,7 +90,7 @@ def publish_sandbox(context: RunContext, fail_before_final_rename: bool = False)
             {
                 "event": "backup_current",
                 "created_at": utc_stamp(),
-                "backup_path": str(backup_path.relative_to(context.repo_root)),
+                "backup_path": str(backup_path.relative_to(context.workspace_root)),
             },
         )
 
@@ -111,7 +111,7 @@ def publish_sandbox(context: RunContext, fail_before_final_rename: bool = False)
         "dataset": context.dataset_name,
         "published_at": utc_stamp(),
         "current_path": str(current_dir.relative_to(dataset_root)),
-        "backup_path": str(backup_path.relative_to(context.repo_root)) if backup_path else None,
+        "backup_path": str(backup_path.relative_to(context.workspace_root)) if backup_path else None,
         "file_count": len(checksums),
     }
     write_json(context.log_root / f"{publish_log['published_at']}_publish_{context.run_id}.json", publish_log)

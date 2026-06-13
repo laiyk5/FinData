@@ -11,11 +11,15 @@ The maintenance tooling lives in `maintool/` and is a zero-dependency Python 3.1
 ## Commands
 
 ```bash
-# Run the CLI (from repo root)
-python -m maintool --repo-root . <command>
+# Initialize a new workspace in an empty directory
+python -m maintool init ./my-workspace --create-dirs
 
-# Or via the entry point script
-maintool/bin/fintool --repo-root . <command>
+# Run CLI commands from within the workspace directory
+cd workspace && python -m maintool list
+cd workspace && python -m maintool inspect tushare_daily
+
+# Or via the entry point script (from workspace)
+maintool/bin/fintool list
 
 # Run all tests
 cd maintool && python -m unittest discover tests -v
@@ -27,7 +31,9 @@ cd maintool && python -m unittest tests/test_pipeline.py -v
 cd maintool && python -m unittest tests/test_pipeline.py.PipelineTests.test_full_fake_pipeline_publishes_current -v
 ```
 
-Tests run against fake/mock providers by default — no API key needed. They copy dataset fixtures from `datasets/` into temp directories, so `datasets/*/published/current/` must exist before running tests.
+The CLI uses the current working directory as the workspace root. No `--repo-root` flag is needed.
+
+Tests run against fake/mock providers by default — no API key needed. They copy dataset fixtures from `workspace/published/datasets/` into temp directories, so `workspace/published/datasets/*/current/` must exist before running tests.
 
 ## Architecture
 
@@ -37,6 +43,7 @@ Entry point: `maintool/src/maintool/cli.py` → `main()`. Commands:
 
 | Command | What it does |
 |---|---|
+| `init [dir]` | Initialize a workspace in an empty directory (defaults to CWD) |
 | `list` | List all datasets |
 | `inspect <name>` | Check required files/dirs exist |
 | `validate <name>` | Validate scaffold + published CSV content |
@@ -64,7 +71,7 @@ Entry point: `maintool/src/maintool/cli.py` → `main()`. Commands:
 
 - **`tushare_http.py`** — Low-level HTTP client for the Tushare Pro API. Handles error classification (rate_limit/server/permission/network) for retry decisions. Each dataset API has a typed fetch function returning `TushareDailyResponse`.
 
-- **`workspace.py`** — Pure path resolution functions. All paths derive from `repo_root`.
+- **`workspace.py`** — Pure path resolution functions. All paths derive from the workspace root (the current working directory).
 
 - **`review.py`** — Aggregates manifest, ledger, ingest report, and QA reports into a readable run summary with a recommended next action.
 
@@ -79,8 +86,20 @@ The `--symbols` argument accepts either literal comma-separated codes (`000001.S
 ### Docs Structure
 
 - **`docs/design/`** — Repository architecture and design standards: `dataset_standard.md`, `maintenance_workflow.md`, `reference_selectors.md`
-- **`docs/maintenance/`** — Operational SOPs: `_general_maintenance_sop.md` (applies to all datasets), `_new_dataset_sop.md` (how to onboard a dataset), plus per-dataset SOPs (`tushare_daily.md`, `trade_calendar.md`, etc.)
+- **`docs/datasets/__shared__/`** — General maintenance SOPs: `_general_maintenance_sop.md`, `_new_dataset_sop.md`
+- **`docs/datasets/<provider>/<dataset>/`** — Per-dataset documentation: `dataset_card.md`, `schema.yaml`, `maintenance.md` (tracked in git)
+
+### Workspace Layout
+
+The workspace is a self-contained directory (typically `workspace/` inside the git repo, gitignored). It holds all generated data and runtime maintenance artifacts:
+
+- `workspace.yaml` — workspace layout configuration
+- `published/datasets/` — published dataset files (current + archived)
+- `cache/` — provider API response cache
+- `backups/` — versioned dataset backups
+- `sandboxes/runs/` — maintenance run sandboxes
+- `docs/datasets/` — runtime-generated maintenance docs (created as needed)
 
 ### Data Lifecycle (git boundary)
 
-Tracked in git: `dataset_card.md`, `schema.yaml`, `maintenance.md`. Everything else is generated/derived: `published/`, `manifest.yaml`, `archived/`, `cache/`, `sandboxes/runs/`. The `.gitignore` enforces this.
+Tracked in git: `maintool/`, `docs/design/`, `docs/datasets/` (all dataset docs), `CLAUDE.md`. The workspace directory (`workspace/`) and all its contents are gitignored — it contains only generated data and runtime artifacts.

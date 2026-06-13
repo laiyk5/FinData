@@ -6,21 +6,27 @@ The first version is intentionally small and dependency-free. Its job is to insp
 
 ## Usage
 
+All commands must be run from within a workspace directory. The CLI uses the current working directory as the workspace root.
+
 ```bash
-uv run python bin/fintool --repo-root .. list
-uv run python bin/fintool --repo-root .. inspect tushare_daily
-uv run python bin/fintool --repo-root .. validate tushare_daily
-uv run python bin/fintool --repo-root .. maintain-plan tushare_daily --provider fake --trade-date 20240506
-uv run python bin/fintool --repo-root .. prepare tushare_daily --run-id RUN_ID
-uv run python bin/fintool --repo-root .. ingest tushare_daily --run-id RUN_ID
-uv run python bin/fintool --repo-root .. qa tushare_daily --run-id RUN_ID
-uv run python bin/fintool --repo-root .. review tushare_daily --run-id RUN_ID
-uv run python bin/fintool --repo-root .. publish tushare_daily --run-id RUN_ID
-uv run python bin/fintool --repo-root .. maintain-run tushare_daily --provider fake --trade-date 20240506
-uv run python bin/fintool --repo-root .. maintain-run trade_calendar --provider mock --exchange SSE --start-date 20240501 --end-date 20240531
+# From the repo root, cd into the workspace first
+cd workspace && python -m maintool list
+cd workspace && python -m maintool inspect tushare_daily
+cd workspace && python -m maintool validate tushare_daily
+cd workspace && python -m maintool maintain-plan tushare_daily --fake --trade-date 20240506
+cd workspace && python -m maintool prepare tushare_daily --run-id RUN_ID
+cd workspace && python -m maintool ingest tushare_daily --run-id RUN_ID
+cd workspace && python -m maintool qa tushare_daily --run-id RUN_ID
+cd workspace && python -m maintool review tushare_daily --run-id RUN_ID
+cd workspace && python -m maintool publish tushare_daily --run-id RUN_ID
+cd workspace && python -m maintool maintain-run tushare_daily --fake --trade-date 20240506
+cd workspace && python -m maintool maintain-run trade_calendar --provider mock --exchange SSE --start-date 20240501 --end-date 20240531
 ```
 
-Run commands from the `maintool/` directory.
+Or via the entry point script:
+```bash
+cd workspace && python ../maintool/bin/fintool list
+```
 
 `maintain-run` is the full fake-provider pipeline shortcut. It creates a run sandbox, prepares raw data, ingests into the sandbox copy, runs QA, and publishes only if QA passes.
 
@@ -31,9 +37,7 @@ Run commands from the `maintool/` directory.
 Real Tushare ingestion is opt-in and reads the token only from `TUSHARE_API_KEY`.
 
 ```bash
-uv run python bin/fintool --repo-root .. maintain-run tushare_daily \
-  --provider tushare \
-  --enable-real-api \
+cd workspace && python -m maintool maintain-run tushare_daily \
   --trade-date 20240510 \
   --symbols 000001.SZ \
   --rate-limit-seconds 0.25 \
@@ -49,7 +53,7 @@ For `tushare_daily`, request scheduling defaults to `--daily-request-strategy au
 Mock provider:
 
 ```bash
-uv run python bin/fintool --repo-root .. maintain-run trade_calendar \
+cd workspace && python -m maintool maintain-run trade_calendar \
   --provider mock \
   --exchange SSE \
   --start-date 20240501 \
@@ -60,9 +64,7 @@ uv run python bin/fintool --repo-root .. maintain-run trade_calendar \
 Real Tushare provider:
 
 ```bash
-uv run python bin/fintool --repo-root .. maintain-run trade_calendar \
-  --provider tushare \
-  --enable-real-api \
+cd workspace && python -m maintool maintain-run trade_calendar \
   --exchange SSE \
   --start-date 20240501 \
   --end-date 20240531 \

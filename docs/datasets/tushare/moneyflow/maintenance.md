@@ -17,7 +17,7 @@ Data begins 2010 per provider docs.
 ### Fake Provider
 
 ```bash
-python -m maintool --repo-root . maintain-run tushare_moneyflow \
+python -m maintool maintain-run tushare_moneyflow \
   --fake \
   --symbols 000001.SZ \
   --trade-date 20240506 \
@@ -27,20 +27,20 @@ python -m maintool --repo-root . maintain-run tushare_moneyflow \
 ### Real Provider
 
 ```bash
-python -m maintool --repo-root . maintain-plan tushare_moneyflow \
+python -m maintool maintain-plan tushare_moneyflow \
   --symbols 000001.SZ \
   --trade-date 20240506 \
   --run-id moneyflow-smoke-real
 
-python -m maintool --repo-root . prepare tushare_moneyflow --run-id <run_id>
-python -m maintool --repo-root . ingest tushare_moneyflow --run-id <run_id>
-python -m maintool --repo-root . qa tushare_moneyflow --run-id <run_id>
+python -m maintool prepare tushare_moneyflow --run-id <run_id>
+python -m maintool ingest tushare_moneyflow --run-id <run_id>
+python -m maintool qa tushare_moneyflow --run-id <run_id>
 ```
 
 ## Historical Backfill
 
 ```bash
-python -m maintool --repo-root . maintain-plan tushare_moneyflow \
+python -m maintool maintain-plan tushare_moneyflow \
   --symbols '@universe:index:CSI300' \
   --start-date 20160527 --end-date 20260522 \
   --daily-request-strategy auto \

@@ -27,18 +27,18 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 class PipelineTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
-        self.repo_root = Path(self.temp_dir.name)
-        dataset_source = REPO_ROOT / "published" / "datasets" / "tushare" / "daily"
-        dataset_target = self.repo_root / "published" / "datasets" / "tushare" / "daily"
+        self.workspace_root = Path(self.temp_dir.name)
+        dataset_source = REPO_ROOT / "workspace" / "published" / "datasets" / "tushare" / "daily"
+        dataset_target = self.workspace_root / "published" / "datasets" / "tushare" / "daily"
         shutil.copytree(dataset_source, dataset_target)
-        (self.repo_root / "sandboxes" / "runs").mkdir(parents=True)
+        (self.workspace_root / "sandboxes" / "runs").mkdir(parents=True)
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
 
     def test_full_fake_pipeline_publishes_current_and_archives_previous_current(self) -> None:
         context, result = run_full_pipeline(
-            repo_root=self.repo_root,
+            workspace_root=self.workspace_root,
             dataset_name="tushare_daily",
             symbols=["000001.SZ", "600000.SH"],
             trade_dates=["20240506"],
@@ -49,7 +49,7 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(result["prepare"]["prepared"], 1)
         self.assertTrue((context.sandbox_root / "run_manifest.json").is_file())
         self.assertTrue((context.dataset_root / "current" / "daily.csv").is_file())
-        backup_dir = context.repo_root / "backups" / "tushare" / "daily"
+        backup_dir = context.workspace_root / "backups" / "tushare" / "daily"
         self.assertTrue(backup_dir.is_dir())
         backups = [path for path in backup_dir.iterdir() if path.is_dir()]
         self.assertTrue(backups)
@@ -64,7 +64,7 @@ class PipelineTests(unittest.TestCase):
 
     def test_prepare_is_restartable_and_skips_successful_requests(self) -> None:
         context = create_run_sandbox(
-            repo_root=self.repo_root,
+            workspace_root=self.workspace_root,
             dataset_name="tushare_daily",
             symbols=["000001.SZ"],
             trade_dates=["20240506"],
@@ -81,11 +81,11 @@ class PipelineTests(unittest.TestCase):
         ledger = read_json(context.prepare_ledger_path)
         request = next(iter(ledger["requests"].values()))
         self.assertIsNotNone(request["cache_path"])
-        self.assertTrue((context.repo_root / request["cache_path"]).is_file())
+        self.assertTrue((context.workspace_root / request["cache_path"]).is_file())
 
     def test_prepare_can_restore_sandbox_raw_from_cache(self) -> None:
         context = create_run_sandbox(
-            repo_root=self.repo_root,
+            workspace_root=self.workspace_root,
             dataset_name="tushare_daily",
             symbols=["000001.SZ"],
             trade_dates=["20240506"],
@@ -107,7 +107,7 @@ class PipelineTests(unittest.TestCase):
         symbols = [f"{index:06d}.SZ" for index in range(300)]
         expected_trade_dates = [f"2024{index:04d}" for index in range(1, 2428)]
         context = create_run_sandbox(
-            repo_root=self.repo_root,
+            workspace_root=self.workspace_root,
             dataset_name="tushare_daily",
             symbols=symbols,
             trade_dates=[],
@@ -130,7 +130,7 @@ class PipelineTests(unittest.TestCase):
 
     def test_trade_date_all_ingest_filters_to_requested_symbols(self) -> None:
         context = create_run_sandbox(
-            repo_root=self.repo_root,
+            workspace_root=self.workspace_root,
             dataset_name="tushare_daily",
             symbols=["000001.SZ"],
             trade_dates=["20240506"],
@@ -187,7 +187,7 @@ class PipelineTests(unittest.TestCase):
 
     def test_unknown_missingness_blocks_until_accepted(self) -> None:
         context = create_run_sandbox(
-            repo_root=self.repo_root,
+            workspace_root=self.workspace_root,
             dataset_name="tushare_daily",
             symbols=["000001.SZ", "600001.SH"],
             trade_dates=["20240506"],
@@ -223,7 +223,7 @@ class PipelineTests(unittest.TestCase):
 
     def test_wildcard_missingness_acceptance_can_clear_unknowns(self) -> None:
         context = create_run_sandbox(
-            repo_root=self.repo_root,
+            workspace_root=self.workspace_root,
             dataset_name="tushare_daily",
             symbols=["000001.SZ", "600001.SH"],
             trade_dates=["20240506"],
@@ -258,7 +258,7 @@ class PipelineTests(unittest.TestCase):
     def test_trade_calendar_closed_day_accepts_missing_daily_row(self) -> None:
         self.write_trade_calendar("SSE", [("20240506", "0")])
         context = create_run_sandbox(
-            repo_root=self.repo_root,
+            workspace_root=self.workspace_root,
             dataset_name="tushare_daily",
             symbols=["600001.SH"],
             trade_dates=["20240506"],
@@ -283,7 +283,7 @@ class PipelineTests(unittest.TestCase):
     def test_trade_calendar_open_day_missing_daily_row_blocks(self) -> None:
         self.write_trade_calendar("SSE", [("20240506", "1")])
         context = create_run_sandbox(
-            repo_root=self.repo_root,
+            workspace_root=self.workspace_root,
             dataset_name="tushare_daily",
             symbols=["600001.SH"],
             trade_dates=["20240506"],
@@ -306,7 +306,7 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(missingness["missing"][0]["reason"], "unknown")
 
     def test_daily_coverage_renders_symbol_ranges(self) -> None:
-        coverage = published_coverage("tushare_daily", self.repo_root / "published" / "datasets" / "tushare" / "daily" / "current")
+        coverage = published_coverage("tushare_daily", self.workspace_root / "published" / "datasets" / "tushare" / "daily" / "current")
         rendered = render_coverage_block("tushare_daily", coverage)
 
         self.assertIn("  symbol_ranges:", rendered)
@@ -315,7 +315,7 @@ class PipelineTests(unittest.TestCase):
 
     def test_failed_publish_before_final_rename_leaves_current_unchanged(self) -> None:
         context, _ = run_full_pipeline(
-            repo_root=self.repo_root,
+            workspace_root=self.workspace_root,
             dataset_name="tushare_daily",
             symbols=["000001.SZ"],
             trade_dates=["20240506"],
@@ -337,7 +337,7 @@ class PipelineTests(unittest.TestCase):
 
     def create_prepared_context(self, run_id: str, trade_date: str = "20240506"):
         context = create_run_sandbox(
-            repo_root=self.repo_root,
+            workspace_root=self.workspace_root,
             dataset_name="tushare_daily",
             symbols=["000001.SZ"],
             trade_dates=[trade_date],
@@ -348,7 +348,7 @@ class PipelineTests(unittest.TestCase):
         return context
 
     def write_trade_calendar(self, exchange: str, rows: list[tuple[str, str]]) -> None:
-        current_dir = self.repo_root / "published" / "datasets" / "tushare" / "trade_cal" / "current" / f"exchange={exchange}"
+        current_dir = self.workspace_root / "published" / "datasets" / "tushare" / "trade_cal" / "current" / f"exchange={exchange}"
         current_dir.mkdir(parents=True, exist_ok=True)
         with (current_dir / "trade_calendar.csv").open("w", newline="", encoding="utf-8") as output:
             writer = csv.DictWriter(output, fieldnames=["exchange", "cal_date", "is_open", "pretrade_date"])

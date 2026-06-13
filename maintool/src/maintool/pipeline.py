@@ -11,7 +11,7 @@ from .run_sandbox import RunContext, create_run_sandbox
 
 
 def run_full_pipeline(
-    repo_root: Path,
+    workspace_root: Path,
     dataset_name: str,
     use_fake: bool = False,
     symbols: list[str] | None = None,
@@ -25,7 +25,7 @@ def run_full_pipeline(
     extras: dict[str, Any] | None = None,
 ) -> tuple[RunContext, dict[str, Any]]:
     context = create_run_sandbox(
-        repo_root=repo_root,
+        workspace_root=workspace_root,
         dataset_name=dataset_name,
         use_fake=use_fake,
         symbols=symbols,

@@ -21,9 +21,7 @@ When used with `tushare_daily --symbols`, the maintool resolves the selector fro
 Example command:
 
 ```bash
-uv run python bin/fintool --repo-root .. maintain-plan tushare_daily \
-  --provider tushare \
-  --enable-real-api \
+cd workspace && python -m maintool maintain-plan tushare_daily \
   --trade-date 20260522 \
   --symbols '@universe:index:SSE50'
 ```

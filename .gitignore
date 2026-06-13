@@ -9,11 +9,8 @@ maintool/bin/__pycache__/
 
 *.log
 
-sandboxes/runs/
-cache/
+# Workspace directory (data outputs, caches, backups, per-dataset docs)
+workspace/
 
-published/datasets/
-backups/
-
-# Local workspace customization
-workspace.yaml
+# MkDocs build output
+site/

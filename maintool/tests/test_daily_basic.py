@@ -24,19 +24,19 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 class DailyBasicTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
-        self.repo_root = Path(self.temp_dir.name)
+        self.workspace_root = Path(self.temp_dir.name)
         for dataset_name, api_name in (("tushare_daily_basic", "daily_basic"), ("trade_calendar", "trade_cal")):
-            source = REPO_ROOT / "published" / "datasets" / "tushare" / api_name
-            target = self.repo_root / "published" / "datasets" / "tushare" / api_name
+            source = REPO_ROOT / "workspace" / "published" / "datasets" / "tushare" / api_name
+            target = self.workspace_root / "published" / "datasets" / "tushare" / api_name
             shutil.copytree(source, target)
-        (self.repo_root / "sandboxes" / "runs").mkdir(parents=True)
+        (self.workspace_root / "sandboxes" / "runs").mkdir(parents=True)
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
 
     def test_full_fake_pipeline_publishes_daily_basic(self) -> None:
         context, result = run_full_pipeline(
-            repo_root=self.repo_root,
+            workspace_root=self.workspace_root,
             dataset_name="tushare_daily_basic",
             symbols=["000001.SZ", "600000.SH"],
             trade_dates=["20240506"],
@@ -53,7 +53,7 @@ class DailyBasicTests(unittest.TestCase):
         symbols = [f"{index:06d}.SZ" for index in range(300)]
         expected_trade_dates = [f"2024{index:04d}" for index in range(1, 2428)]
         context = create_run_sandbox(
-            repo_root=self.repo_root,
+            workspace_root=self.workspace_root,
             dataset_name="tushare_daily_basic",
             symbols=symbols,
             trade_dates=[],
@@ -77,7 +77,7 @@ class DailyBasicTests(unittest.TestCase):
 
     def test_total_share_contradiction_blocks_qa(self) -> None:
         context = create_run_sandbox(
-            repo_root=self.repo_root,
+            workspace_root=self.workspace_root,
             dataset_name="tushare_daily_basic",
             symbols=["000001.SZ"],
             trade_dates=["20240506"],
@@ -99,7 +99,7 @@ class DailyBasicTests(unittest.TestCase):
 
     def test_daily_basic_missingness_uses_prepared_raw_keys(self) -> None:
         context = create_run_sandbox(
-            repo_root=self.repo_root,
+            workspace_root=self.workspace_root,
             dataset_name="tushare_daily_basic",
             symbols=["000001.SZ", "600000.SH"],
             trade_dates=["20240506"],
