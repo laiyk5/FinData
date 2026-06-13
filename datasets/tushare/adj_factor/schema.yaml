@@ -1,0 +1,13 @@
+dataset: tushare_adj_factor
+primary_key: [ts_code, trade_date]
+fields:
+  - name: ts_code
+    type: string
+    description: Tushare security code (e.g. 000001.SZ)
+  - name: trade_date
+    type: string
+    format: YYYYMMDD
+    description: Trading date
+  - name: adj_factor
+    type: decimal
+    description: Forward adjustment factor for corporate actions

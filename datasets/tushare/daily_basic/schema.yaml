@@ -1,0 +1,78 @@
+dataset: tushare_daily_basic
+version: 0.1.0
+primary_key:
+  - ts_code
+  - trade_date
+fields:
+  - name: ts_code
+    type: string
+    required: true
+    description: Tushare security code, such as 000001.SZ.
+  - name: trade_date
+    type: string
+    required: true
+    description: Trading date in YYYYMMDD format.
+  - name: close
+    type: decimal
+    required: true
+    description: Closing price.
+  - name: turnover_rate
+    type: decimal
+    required: true
+    description: Turnover rate in percent.
+  - name: turnover_rate_f
+    type: decimal
+    required: true
+    description: Free-float turnover rate in percent.
+  - name: volume_ratio
+    type: decimal
+    required: false
+    description: Volume ratio; may be empty when the source does not publish the metric.
+  - name: pe
+    type: decimal
+    required: false
+    description: Price-to-earnings ratio; may be empty for loss-making companies.
+  - name: pe_ttm
+    type: decimal
+    required: false
+    description: Trailing twelve month price-to-earnings ratio; may be empty.
+  - name: pb
+    type: decimal
+    required: false
+    description: Price-to-book ratio; may be empty when the source does not publish the metric.
+  - name: ps
+    type: decimal
+    required: true
+    description: Price-to-sales ratio.
+  - name: ps_ttm
+    type: decimal
+    required: false
+    description: Trailing twelve month price-to-sales ratio; may be empty.
+  - name: dv_ratio
+    type: decimal
+    required: false
+    description: Dividend yield in percent; may be empty.
+  - name: dv_ttm
+    type: decimal
+    required: false
+    description: Trailing twelve month dividend yield in percent; may be empty.
+  - name: total_share
+    type: decimal
+    required: true
+    description: Total shares in ten thousand shares.
+  - name: float_share
+    type: decimal
+    required: true
+    description: Floating shares in ten thousand shares.
+  - name: free_share
+    type: decimal
+    required: false
+    description: Free-floating shares in ten thousand shares; may be empty.
+  - name: total_mv
+    type: decimal
+    required: true
+    description: Total market value in ten thousand yuan.
+  - name: circ_mv
+    type: decimal
+    required: true
+    description: Circulating market value in ten thousand yuan.

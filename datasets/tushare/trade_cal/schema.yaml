@@ -1,0 +1,22 @@
+dataset: trade_calendar
+version: 0.1.0
+primary_key:
+  - exchange
+  - cal_date
+fields:
+  - name: exchange
+    type: string
+    required: true
+    description: Exchange code such as SSE or SZSE.
+  - name: cal_date
+    type: string
+    required: true
+    description: Calendar date in YYYYMMDD format.
+  - name: is_open
+    type: integer
+    required: true
+    description: Whether the exchange is open on this date. Expected values are 0 or 1.
+  - name: pretrade_date
+    type: string
+    required: false
+    description: Previous trading date in YYYYMMDD format.

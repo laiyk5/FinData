@@ -1,0 +1,238 @@
+dataset: tushare_stk_factor_pro
+version: 0.1.0
+primary_key:
+  - ts_code
+  - trade_date
+fields:
+  - name: ts_code
+    type: string
+    required: true
+    description: Tushare security code, such as 000001.SZ.
+  - name: trade_date
+    type: string
+    required: true
+    description: Trading date in YYYYMMDD format.
+  - name: open
+    type: decimal
+    required: true
+    description: Opening price.
+  - name: open_hfq
+    type: decimal
+    required: false
+    description: Opening price after forward adjustment.
+  - name: open_qfq
+    type: decimal
+    required: false
+    description: Opening price after backward adjustment.
+  - name: high
+    type: decimal
+    required: true
+    description: Highest traded price.
+  - name: high_hfq
+    type: decimal
+    required: false
+    description: Highest price after forward adjustment.
+  - name: high_qfq
+    type: decimal
+    required: false
+    description: Highest price after backward adjustment.
+  - name: low
+    type: decimal
+    required: true
+    description: Lowest traded price.
+  - name: low_hfq
+    type: decimal
+    required: false
+    description: Lowest price after forward adjustment.
+  - name: low_qfq
+    type: decimal
+    required: false
+    description: Lowest price after backward adjustment.
+  - name: close
+    type: decimal
+    required: true
+    description: Closing price.
+  - name: close_hfq
+    type: decimal
+    required: false
+    description: Closing price after forward adjustment.
+  - name: close_qfq
+    type: decimal
+    required: false
+    description: Closing price after backward adjustment.
+  - name: pre_close
+    type: decimal
+    required: true
+    description: Previous close.
+  - name: change
+    type: decimal
+    required: true
+    description: Price change from previous close.
+  - name: pct_chg
+    type: decimal
+    required: true
+    description: Percentage change from previous close.
+  - name: vol
+    type: decimal
+    required: true
+    description: Trading volume in hands.
+  - name: amount
+    type: decimal
+    required: true
+    description: Trading amount in thousand yuan.
+  - name: turnover_rate
+    type: decimal
+    required: true
+    description: Turnover rate in percent.
+  - name: turnover_rate_f
+    type: decimal
+    required: true
+    description: Free-float turnover rate in percent.
+  - name: volume_ratio
+    type: decimal
+    required: false
+    description: Volume ratio; may be empty when unavailable.
+  - name: pe
+    type: decimal
+    required: false
+    description: Price-to-earnings ratio; may be empty for loss-making companies.
+  - name: pe_ttm
+    type: decimal
+    required: false
+    description: Trailing twelve month price-to-earnings ratio.
+  - name: pb
+    type: decimal
+    required: false
+    description: Price-to-book ratio.
+  - name: ps
+    type: decimal
+    required: true
+    description: Price-to-sales ratio.
+  - name: ps_ttm
+    type: decimal
+    required: false
+    description: Trailing twelve month price-to-sales ratio.
+  - name: dv_ratio
+    type: decimal
+    required: false
+    description: Dividend yield in percent.
+  - name: dv_ttm
+    type: decimal
+    required: false
+    description: Trailing twelve month dividend yield in percent.
+  - name: total_share
+    type: decimal
+    required: true
+    description: Total shares in ten thousand shares.
+  - name: float_share
+    type: decimal
+    required: true
+    description: Floating shares in ten thousand shares.
+  - name: free_share
+    type: decimal
+    required: false
+    description: Free-floating shares in ten thousand shares.
+  - name: total_mv
+    type: decimal
+    required: true
+    description: Total market value in ten thousand yuan.
+  - name: circ_mv
+    type: decimal
+    required: true
+    description: Circulating market value in ten thousand yuan.
+  - name: adj_factor
+    type: decimal
+    required: false
+    description: Adjustment factor used for adjusted-price series.
+  - name: ma_bfq_5
+    type: decimal
+    required: false
+    description: Five-day moving average on the unadjusted price series.
+  - name: ma_bfq_10
+    type: decimal
+    required: false
+    description: Ten-day moving average on the unadjusted price series.
+  - name: ma_bfq_20
+    type: decimal
+    required: false
+    description: Twenty-day moving average on the unadjusted price series.
+  - name: ema_bfq_5
+    type: decimal
+    required: false
+    description: Five-day exponential moving average on the unadjusted series.
+  - name: ema_bfq_10
+    type: decimal
+    required: false
+    description: Ten-day exponential moving average on the unadjusted series.
+  - name: ema_bfq_20
+    type: decimal
+    required: false
+    description: Twenty-day exponential moving average on the unadjusted series.
+  - name: macd_bfq
+    type: decimal
+    required: false
+    description: MACD indicator on the unadjusted price series.
+  - name: macd_dea_bfq
+    type: decimal
+    required: false
+    description: MACD DEA signal line on the unadjusted price series.
+  - name: macd_dif_bfq
+    type: decimal
+    required: false
+    description: MACD DIF line on the unadjusted price series.
+  - name: boll_lower_bfq
+    type: decimal
+    required: false
+    description: Lower Bollinger band on the unadjusted series.
+  - name: boll_mid_bfq
+    type: decimal
+    required: false
+    description: Middle Bollinger band on the unadjusted series.
+  - name: boll_upper_bfq
+    type: decimal
+    required: false
+    description: Upper Bollinger band on the unadjusted series.
+  - name: dmi_adx_bfq
+    type: decimal
+    required: false
+    description: Average directional index on the unadjusted series.
+  - name: dmi_adxr_bfq
+    type: decimal
+    required: false
+    description: ADXR on the unadjusted series.
+  - name: dmi_mdi_bfq
+    type: decimal
+    required: false
+    description: Minus directional indicator on the unadjusted series.
+  - name: dmi_pdi_bfq
+    type: decimal
+    required: false
+    description: Plus directional indicator on the unadjusted series.
+  - name: kdj_bfq
+    type: decimal
+    required: false
+    description: KDJ composite indicator on the unadjusted series.
+  - name: kdj_d_bfq
+    type: decimal
+    required: false
+    description: KDJ D line on the unadjusted series.
+  - name: kdj_k_bfq
+    type: decimal
+    required: false
+    description: KDJ K line on the unadjusted series.
+  - name: bias1_bfq
+    type: decimal
+    required: false
+    description: First BIAS indicator on the unadjusted series.
+  - name: bias2_bfq
+    type: decimal
+    required: false
+    description: Second BIAS indicator on the unadjusted series.
+  - name: bias3_bfq
+    type: decimal
+    required: false
+    description: Third BIAS indicator on the unadjusted series.
+  - name: atr_bfq
+    type: decimal
+    required: false
+    description: Average true range on the unadjusted series.
