@@ -1,4 +1,5 @@
 site_name: FinData
+site_url: https://laiyk5.github.io/FinData/
 docs_dir: docs
 site_dir: site
 use_directory_urls: true
@@ -71,4 +72,5 @@ nav:
               - Maintenance: datasets/cninfo/report_catalog/maintenance.md
   - Development:
       - Guidelines: dev/README.md
+      - Testing: dev/testing.md
       - Pre-push Checklist: dev/push.md
