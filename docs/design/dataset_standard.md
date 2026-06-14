@@ -34,7 +34,7 @@ Maintenance SOPs live in `docs/maintenance/<name>.md`.
 ```text
 datasets/   Published data (output only).
 sandboxes/  Run-local raw, staged, QA, and logs.
-backups/    Rolling backup copies of previous published versions.
+backups/    Reserved for optional backup copies; publishing currently does not write backups.
 cache/      Provider/API response cache for reuse and recovery.
 ```
 
@@ -70,6 +70,8 @@ sandboxes/runs/{dataset_name}/{run_id}/qa/
 
 A dataset version can be published only when validation passes or all exceptions are explicitly documented and accepted.
 
+Datasets may choose their canonical file format in `DatasetSpec`. Backtest-facing Tushare market datasets (`daily`, `adj_factor`, and `index_weight`) use Apache Parquet under month partitions such as `current/trade_month=202606/`.
+
 ## Maintenance Runs
 
 Dataset updates run through a sandbox:
@@ -82,4 +84,4 @@ The sandbox contains a dataset copy, prepared raw files, a request ledger, QA re
 
 ## Backup
 
-On publish, the previous `published/current/` is copied to `backups/<provider>/<api_name>/<timestamp>/`. The last 3 backups are kept; older ones are pruned automatically.
+Publishing currently does not create rolling backups. Previous `published/current/` is replaced only during the final publish step after QA passes; run sandboxes, provider cache, stage logs, checksums, and git-tracked contracts remain the operational audit trail.

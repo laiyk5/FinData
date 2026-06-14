@@ -64,7 +64,7 @@ Reuses the daily request scheduler from `tushare_daily`, but with a **10000-row*
 
 **Warnings** (do not block):
 - `free_share > float_share` (provider occasionally emits this)
-- Usual tushare_daily warnings: pct_chg > 20%, zero volume, large close/pre_close moves, 10× volume spikes
+- Usual tushare_daily warnings: pct_chg > 20%, zero volume, large close/pre_close moves
 
 **Nullable fields**: same valuation nullables as daily_basic, plus all adjusted-price variants, adj_factor, and technical factor fields — blank is valid when the provider doesn't return that factor.
 

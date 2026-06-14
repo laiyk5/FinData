@@ -18,6 +18,7 @@ from .adj_factor import FIELDS as ADJ_FACTOR_FIELDS
 from .moneyflow import FIELDS as MONEYFLOW_FIELDS
 from .run_sandbox import RunContext, load_run_manifest, mark_step, utc_stamp
 from .stage_logs import append_stage_event, write_stage_summary
+from .storage import data_files, read_table
 from .tushare_daily import FIELDS
 from .tushare_daily_basic import FIELDS as DAILY_BASIC_FIELDS
 from .stk_factor_pro import FIELDS as STK_FACTOR_PRO_FIELDS
@@ -131,25 +132,25 @@ def build_validation_report(context: RunContext) -> dict[str, Any]:
 
     for root in (dataset_root / "staged", dataset_root / "current"):
         seen_keys: dict[tuple[str, ...], Path] = {}
-        for csv_path in sorted(root.rglob("*.csv")):
-            checked_files.append(str(csv_path.relative_to(context.sandbox_root)))
+        for data_path in data_files(root, spec):
+            checked_files.append(str(data_path.relative_to(context.sandbox_root)))
             if context.dataset_name == "trade_calendar":
-                errors.extend(validate_trade_calendar_csv(csv_path))
+                errors.extend(validate_trade_calendar_csv(data_path))
             elif context.dataset_name == "tushare_index_weight":
-                errors.extend(validate_index_weight_csv(csv_path))
+                errors.extend(validate_index_weight_csv(data_path))
             elif context.dataset_name == "report_catalog":
-                errors.extend(validate_report_catalog_csv(csv_path))
+                errors.extend(validate_report_catalog_csv(data_path))
             elif context.dataset_name == "tushare_daily_basic":
-                errors.extend(validate_daily_basic_csv(csv_path))
+                errors.extend(validate_daily_basic_csv(data_path))
             elif context.dataset_name == "tushare_stk_factor_pro":
-                errors.extend(validate_stk_factor_pro_csv(csv_path))
+                errors.extend(validate_stk_factor_pro_csv(data_path))
             elif context.dataset_name == "tushare_adj_factor":
-                errors.extend(validate_adj_factor_csv(csv_path))
+                errors.extend(validate_adj_factor_csv(data_path))
             elif context.dataset_name == "tushare_moneyflow":
-                errors.extend(validate_moneyflow_csv(csv_path))
+                errors.extend(validate_moneyflow_csv(data_path))
             else:
-                errors.extend(validate_daily_csv(csv_path))
-            errors.extend(validate_unique_keys_across_files(root, csv_path, spec, seen_keys))
+                errors.extend(validate_daily_csv(data_path))
+            errors.extend(validate_unique_keys_across_files(root, data_path, spec, seen_keys))
 
     if context.dataset_name in {"tushare_index_weight"}:
         current_keys = read_actual_keys(dataset_root / "current", spec)
@@ -169,43 +170,41 @@ def build_validation_report(context: RunContext) -> dict[str, Any]:
 def validate_daily_csv(path: Path) -> list[str]:
     errors: list[str] = []
     seen_keys: set[tuple[str, str]] = set()
+    rows = read_table(path, get_spec("tushare_daily"))
 
-    with path.open(newline="", encoding="utf-8") as input_file:
-        reader = csv.DictReader(input_file)
-        fieldnames = reader.fieldnames or []
-        for field in FIELDS:
-            if field not in fieldnames:
-                errors.append(f"{path.name}: missing column {field}")
-        if errors:
-            return errors
+    for field in FIELDS:
+        if rows and field not in rows[0]:
+            errors.append(f"{path.name}: missing column {field}")
+    if errors:
+        return errors
 
-        for row_number, row in enumerate(reader, start=2):
-            key = (row["ts_code"], row["trade_date"])
-            if key in seen_keys:
-                errors.append(f"{path.name}:{row_number}: duplicate primary key {key}")
-            seen_keys.add(key)
+    for row_number, row in enumerate(rows, start=2):
+        key = (row["ts_code"], row["trade_date"])
+        if key in seen_keys:
+            errors.append(f"{path.name}:{row_number}: duplicate primary key {key}")
+        seen_keys.add(key)
 
-            if not valid_trade_date(row["trade_date"]):
-                errors.append(f"{path.name}:{row_number}: invalid trade_date {row['trade_date']}")
+        if not valid_trade_date(row["trade_date"]):
+            errors.append(f"{path.name}:{row_number}: invalid trade_date {row['trade_date']}")
 
-            decimals: dict[str, Decimal] = {}
-            for field in ("open", "high", "low", "close", "pre_close", "change", "pct_chg", "vol", "amount"):
-                try:
-                    decimals[field] = Decimal(row[field])
-                except (InvalidOperation, KeyError):
-                    errors.append(f"{path.name}:{row_number}: invalid decimal in {field}")
+        decimals: dict[str, Decimal] = {}
+        for field in ("open", "high", "low", "close", "vol", "amount"):
+            try:
+                decimals[field] = Decimal(row[field])
+            except (InvalidOperation, KeyError):
+                errors.append(f"{path.name}:{row_number}: invalid decimal in {field}")
 
-            if not {"open", "high", "low", "close"}.issubset(decimals):
-                continue
+        if not {"open", "high", "low", "close"}.issubset(decimals):
+            continue
 
-            if decimals["high"] < max(decimals["open"], decimals["close"], decimals["low"]):
-                errors.append(f"{path.name}:{row_number}: high is lower than another OHLC price")
-            if decimals["low"] > min(decimals["open"], decimals["close"], decimals["high"]):
-                errors.append(f"{path.name}:{row_number}: low is higher than another OHLC price")
-            if decimals.get("vol", Decimal("0")) < 0:
-                errors.append(f"{path.name}:{row_number}: vol is negative")
-            if decimals.get("amount", Decimal("0")) < 0:
-                errors.append(f"{path.name}:{row_number}: amount is negative")
+        if decimals["high"] < max(decimals["open"], decimals["close"], decimals["low"]):
+            errors.append(f"{path.name}:{row_number}: high is lower than another OHLC price")
+        if decimals["low"] > min(decimals["open"], decimals["close"], decimals["high"]):
+            errors.append(f"{path.name}:{row_number}: low is higher than another OHLC price")
+        if decimals.get("vol", Decimal("0")) < 0:
+            errors.append(f"{path.name}:{row_number}: vol is negative")
+        if decimals.get("amount", Decimal("0")) < 0:
+            errors.append(f"{path.name}:{row_number}: amount is negative")
 
     return errors
 
@@ -397,11 +396,11 @@ def build_missingness_report(context: RunContext, manifest: dict[str, Any]) -> d
     else:
         expected = expected_keys(context.dataset_name, manifest)
     actual_keys = read_actual_keys(context.sandbox_dataset_root / "current", spec)
-    actual_history = build_actual_history_bounds(actual_keys) if context.dataset_name in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_moneyflow"} else {}
+    actual_history = build_actual_history_bounds(actual_keys) if context.dataset_name in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_adj_factor", "tushare_moneyflow"} else {}
     accepted = read_accepted_missingness(context)
     trading_calendar = (
         load_trade_calendar(context.workspace_root, context.layout)
-        if context.dataset_name in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_moneyflow"}
+        if context.dataset_name in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_adj_factor", "tushare_moneyflow"}
         else {}
     )
 
@@ -415,15 +414,15 @@ def build_missingness_report(context: RunContext, manifest: dict[str, Any]) -> d
             record = {
                 "key": first,
                 "date": date_value,
-                "ts_code": first if context.dataset_name in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_moneyflow"} else None,
-                "trade_date": date_value if context.dataset_name in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_moneyflow"} else None,
+                "ts_code": first if context.dataset_name in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_adj_factor", "tushare_moneyflow"} else None,
+                "trade_date": date_value if context.dataset_name in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_adj_factor", "tushare_moneyflow"} else None,
                 "exchange": first if context.dataset_name == "trade_calendar" else None,
                 "cal_date": date_value if context.dataset_name == "trade_calendar" else None,
                 "reason": accepted_record["reason"],
                 "status": "accepted",
                 "blocks_publish": "false",
             }
-        elif context.dataset_name in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_moneyflow"} and calendar_missing_reason:
+        elif context.dataset_name in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_adj_factor", "tushare_moneyflow"} and calendar_missing_reason:
             record = {
                 "key": first,
                 "date": date_value,
@@ -435,7 +434,7 @@ def build_missingness_report(context: RunContext, manifest: dict[str, Any]) -> d
                 "status": "accepted",
                 "blocks_publish": "false",
             }
-        elif context.dataset_name in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_moneyflow"} and history_missing_reason:
+        elif context.dataset_name in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_adj_factor", "tushare_moneyflow"} and history_missing_reason:
             record = {
                 "key": first,
                 "date": date_value,
@@ -451,8 +450,8 @@ def build_missingness_report(context: RunContext, manifest: dict[str, Any]) -> d
             record = {
                 "key": first,
                 "date": date_value,
-                "ts_code": first if context.dataset_name in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_moneyflow"} else None,
-                "trade_date": date_value if context.dataset_name in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_moneyflow"} else None,
+                "ts_code": first if context.dataset_name in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_adj_factor", "tushare_moneyflow"} else None,
+                "trade_date": date_value if context.dataset_name in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_adj_factor", "tushare_moneyflow"} else None,
                 "exchange": first if context.dataset_name == "trade_calendar" else None,
                 "cal_date": date_value if context.dataset_name == "trade_calendar" else None,
                 "reason": "unknown",
@@ -528,15 +527,14 @@ def read_raw_primary_keys(context: RunContext, spec: DatasetSpec) -> set[tuple[s
     return keys
 
 
-def read_actual_keys(current_dir: Path, spec: DatasetSpec | None = None) -> set[tuple[str, str]]:
+def read_actual_keys(current_dir: Path, spec: DatasetSpec | None = None) -> set[tuple[str, ...]]:
     spec = spec or get_spec("tushare_daily")
-    keys: set[tuple[str, str]] = set()
+    keys: set[tuple[str, ...]] = set()
     if not current_dir.exists():
         return keys
-    for csv_path in sorted(current_dir.rglob("*.csv")):
-        with csv_path.open(newline="", encoding="utf-8") as input_file:
-            for row in csv.DictReader(input_file):
-                keys.add(tuple(row[field] for field in spec.primary_key))
+    for data_path in data_files(current_dir, spec):
+        for row in read_table(data_path, spec):
+            keys.add(tuple(row[field] for field in spec.primary_key))
     return keys
 
 
@@ -634,7 +632,6 @@ def build_unusual_values_report(context: RunContext) -> dict[str, Any]:
 
     rows = read_daily_rows(context.sandbox_dataset_root / "current")
     warnings: list[str] = []
-    previous_by_symbol: dict[str, dict[str, str]] = {}
 
     for row in sorted(rows, key=lambda item: (item["ts_code"], item["trade_date"])):
         location = f"{row['ts_code']}:{row['trade_date']}"
@@ -658,15 +655,6 @@ def build_unusual_values_report(context: RunContext) -> dict[str, Any]:
             if float_share is not None and free_share is not None and free_share > float_share:
                 warnings.append(f"{location}: free_share exceeds float_share")
 
-        previous = previous_by_symbol.get(row["ts_code"])
-        if previous:
-            previous_vol = parse_decimals(previous).get("vol")
-            if vol is not None and previous_vol not in (None, Decimal("0")):
-                ratio = vol / previous_vol
-                if ratio > Decimal("10") or ratio < Decimal("0.1"):
-                    warnings.append(f"{location}: volume changed by more than 10x versus prior row")
-        previous_by_symbol[row["ts_code"]] = row
-
     return {
         "run_id": context.run_id,
         "warning_count": len(warnings),
@@ -679,30 +667,29 @@ def read_daily_rows(current_dir: Path) -> list[dict[str, str]]:
     rows: list[dict[str, str]] = []
     if not current_dir.exists():
         return rows
-    for csv_path in sorted(current_dir.rglob("*.csv")):
-        with csv_path.open(newline="", encoding="utf-8") as input_file:
-            rows.extend({field: str(row.get(field, "")) for field in FIELDS} for row in csv.DictReader(input_file))
+    spec = get_spec("tushare_daily")
+    for data_path in data_files(current_dir, spec):
+        rows.extend(read_table(data_path, spec))
     return rows
 
 
 def validate_unique_keys_across_files(
-    root: Path, csv_path: Path, spec: DatasetSpec, seen_keys: dict[tuple[str, ...], Path]
+    root: Path, data_path: Path, spec: DatasetSpec, seen_keys: dict[tuple[str, ...], Path]
 ) -> list[str]:
     errors: list[str] = []
-    with csv_path.open(newline="", encoding="utf-8") as input_file:
-        reader = csv.DictReader(input_file)
-        if not reader.fieldnames or any(field not in reader.fieldnames for field in spec.primary_key):
-            return errors
-        for row_number, row in enumerate(reader, start=2):
-            key = tuple(row[field] for field in spec.primary_key)
-            previous_path = seen_keys.get(key)
-            if previous_path and previous_path != csv_path:
-                errors.append(
-                    f"{csv_path.relative_to(root)}:{row_number}: duplicate primary key {key} "
-                    f"also appears in {previous_path.relative_to(root)}"
-                )
-            else:
-                seen_keys[key] = csv_path
+    rows = read_table(data_path, spec)
+    if rows and any(field not in rows[0] for field in spec.primary_key):
+        return errors
+    for row_number, row in enumerate(rows, start=2):
+        key = tuple(row[field] for field in spec.primary_key)
+        previous_path = seen_keys.get(key)
+        if previous_path and previous_path != data_path:
+            errors.append(
+                f"{data_path.relative_to(root)}:{row_number}: duplicate primary key {key} "
+                f"also appears in {previous_path.relative_to(root)}"
+            )
+        else:
+            seen_keys[key] = data_path
     return errors
 
 
@@ -777,39 +764,37 @@ def validate_index_weight_csv(path: Path) -> list[str]:
     errors: list[str] = []
     seen_keys: set[tuple[str, str, str]] = set()
     row_count = 0
+    rows = read_table(path, get_spec("tushare_index_weight"))
 
-    with path.open(newline="", encoding="utf-8") as input_file:
-        reader = csv.DictReader(input_file)
-        fieldnames = reader.fieldnames or []
-        for field in TUSHARE_INDEX_WEIGHT_FIELDS:
-            if field not in fieldnames:
-                errors.append(f"{path.name}: missing column {field}")
-        if errors:
-            return errors
+    for field in TUSHARE_INDEX_WEIGHT_FIELDS:
+        if rows and field not in rows[0]:
+            errors.append(f"{path.name}: missing column {field}")
+    if errors:
+        return errors
 
-        for row_number, row in enumerate(reader, start=2):
-            row_count += 1
-            key = (row["index_code"], row["con_code"], row["trade_date"])
-            if key in seen_keys:
-                errors.append(f"{path.name}:{row_number}: duplicate primary key {key}")
-            seen_keys.add(key)
+    for row_number, row in enumerate(rows, start=2):
+        row_count += 1
+        key = (row["index_code"], row["con_code"], row["trade_date"])
+        if key in seen_keys:
+            errors.append(f"{path.name}:{row_number}: duplicate primary key {key}")
+        seen_keys.add(key)
 
-            for field in ("index_code", "con_code", "trade_date", "weight"):
-                if not row.get(field):
-                    errors.append(f"{path.name}:{row_number}: missing required field {field}")
-            if not valid_index_code(row.get("index_code", "")):
-                errors.append(f"{path.name}:{row_number}: invalid index_code {row.get('index_code', '')}")
-            if not valid_member_code(row.get("con_code", "")):
-                errors.append(f"{path.name}:{row_number}: invalid con_code {row.get('con_code', '')}")
-            if not valid_trade_date(row.get("trade_date", "")):
-                errors.append(f"{path.name}:{row_number}: invalid trade_date {row.get('trade_date', '')}")
-            try:
-                weight = Decimal(row["weight"])
-            except (InvalidOperation, KeyError):
-                errors.append(f"{path.name}:{row_number}: invalid decimal in weight")
-            else:
-                if weight < 0:
-                    errors.append(f"{path.name}:{row_number}: weight is negative")
+        for field in ("index_code", "con_code", "trade_date", "weight"):
+            if not row.get(field):
+                errors.append(f"{path.name}:{row_number}: missing required field {field}")
+        if not valid_index_code(row.get("index_code", "")):
+            errors.append(f"{path.name}:{row_number}: invalid index_code {row.get('index_code', '')}")
+        if not valid_member_code(row.get("con_code", "")):
+            errors.append(f"{path.name}:{row_number}: invalid con_code {row.get('con_code', '')}")
+        if not valid_trade_date(row.get("trade_date", "")):
+            errors.append(f"{path.name}:{row_number}: invalid trade_date {row.get('trade_date', '')}")
+        try:
+            weight = Decimal(row["weight"])
+        except (InvalidOperation, KeyError):
+            errors.append(f"{path.name}:{row_number}: invalid decimal in weight")
+        else:
+            if weight < 0:
+                errors.append(f"{path.name}:{row_number}: weight is negative")
 
     if row_count == 0:
         errors.append(f"{path.name}: empty index weight file")
@@ -894,31 +879,29 @@ def valid_index_code(value: str) -> bool:
 def validate_adj_factor_csv(path: Path) -> list[str]:
     errors: list[str] = []
     seen_keys: set[tuple[str, str]] = set()
+    rows = read_table(path, get_spec("tushare_adj_factor"))
 
-    with path.open(newline="", encoding="utf-8") as input_file:
-        reader = csv.DictReader(input_file)
-        fieldnames = reader.fieldnames or []
-        for field in ADJ_FACTOR_FIELDS:
-            if field not in fieldnames:
-                errors.append(f"{path.name}: missing column {field}")
-        if errors:
-            return errors
+    for field in ADJ_FACTOR_FIELDS:
+        if rows and field not in rows[0]:
+            errors.append(f"{path.name}: missing column {field}")
+    if errors:
+        return errors
 
-        for row_number, row in enumerate(reader, start=2):
-            key = (row["ts_code"], row["trade_date"])
-            if key in seen_keys:
-                errors.append(f"{path.name}:{row_number}: duplicate primary key {key}")
-            seen_keys.add(key)
+    for row_number, row in enumerate(rows, start=2):
+        key = (row["ts_code"], row["trade_date"])
+        if key in seen_keys:
+            errors.append(f"{path.name}:{row_number}: duplicate primary key {key}")
+        seen_keys.add(key)
 
-            if not valid_trade_date(row["trade_date"]):
-                errors.append(f"{path.name}:{row_number}: invalid trade_date {row['trade_date']}")
+        if not valid_trade_date(row["trade_date"]):
+            errors.append(f"{path.name}:{row_number}: invalid trade_date {row['trade_date']}")
 
-            try:
-                value = Decimal(row["adj_factor"])
-            except (InvalidOperation, KeyError):
-                errors.append(f"{path.name}:{row_number}: invalid decimal in adj_factor")
-                continue
-            if value <= 0:
-                errors.append(f"{path.name}:{row_number}: adj_factor must be positive")
+        try:
+            value = Decimal(row["adj_factor"])
+        except (InvalidOperation, KeyError):
+            errors.append(f"{path.name}:{row_number}: invalid decimal in adj_factor")
+            continue
+        if value <= 0:
+            errors.append(f"{path.name}:{row_number}: adj_factor must be positive")
 
     return errors

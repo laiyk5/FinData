@@ -11,7 +11,8 @@ Unadjusted daily OHLCV market bars for A-share securities.
 - **Primary key**: `ts_code`, `trade_date`
 - **Date field**: `trade_date`
 - **Calendar**: CN_A_SHARE
+- **Storage**: Apache Parquet, partitioned by `trade_month=YYYYMM`
 
 ## Notes
 
-Daily data is generally available around 15:00-16:00 CST. Suspended securities are not returned by the API. Prices are unadjusted — use `stk_factor_pro` for forward/backward-adjusted prices.
+Daily data is generally available around 15:00-16:00 CST. Suspended securities are not returned by the API. Prices are unadjusted — combine with `adj_factor` for adjusted prices. The canonical stored fields are `ts_code`, `open`, `high`, `low`, `close`, `vol`, `amount`, and `trade_date`.

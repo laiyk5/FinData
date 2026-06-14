@@ -130,7 +130,7 @@ Before `publish`:
 
 - no unrelated files are staged in git
 - generated dataset artifacts are not committed
-- backup behavior is understood
+- backup behavior is understood (publishing currently does not create rolling backups)
 
 ## Generated Outputs
 
@@ -141,7 +141,7 @@ otherwise.
 Common generated outputs:
 
 - `datasets/{provider}/{api_name}/published/current/`
-- `backups/{provider}/{api_name}/`
+- `backups/{provider}/{api_name}/` (reserved; publish is currently configured not to write backups)
 - `sandboxes/runs/{dataset}/{run_id}/raw/`
 - `sandboxes/runs/{dataset}/{run_id}/staged/`
 - `sandboxes/runs/{dataset}/{run_id}/qa/`

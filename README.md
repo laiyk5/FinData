@@ -22,14 +22,13 @@ Planned families: fundamentals, macro data, news and event data.
 ## Data Lifecycle
 
 ```text
-raw → staged → validated → published → archived/backed up
+raw → staged → validated → published
 ```
 
 - **Raw** — provider responses preserved verbatim
 - **Staged** — normalized but not yet trusted
 - **Validated** — schema checks, duplicate detection, missingness, unusual values
-- **Published** — consumer-facing, atomic swap with previous version archived
-- **Archived** — previous accepted versions packaged for reproducibility
+- **Published** — consumer-facing, atomic replacement after QA passes
 
 ## Quality Policy
 
@@ -41,11 +40,11 @@ raw → staged → validated → published → archived/backed up
 ## Layout
 
 ```text
-datasets/      Dataset storage, metadata, and published data.
-maintool/      Zero-dependency Python 3.11+ CLI (stdlib only).
+datasets/      Dataset contracts, metadata, and documentation.
+maintool/      Python CLI for planning, preparing, ingesting, QA, review, and publish.
 docs/          Repository standards, dataset cards, maintenance SOPs.
 sandboxes/     Isolated run sandboxes for maintenance operations.
-backups/       Disaster recovery snapshots.
+backups/       Reserved; publishing is currently configured not to write backups.
 ```
 
 ## Quick Start
@@ -70,4 +69,4 @@ cd maintool && python -m unittest discover tests -v
 
 ## Maintenance Principle
 
-Publish for consumers, archive for reproducibility, back up for survival.
+Publish for consumers after QA; keep reproducibility evidence in run sandboxes, provider cache, logs, checksums, and dataset contracts.

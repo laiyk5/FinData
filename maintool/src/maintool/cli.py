@@ -28,6 +28,7 @@ from .run_sandbox import create_run_sandbox, get_run_context
 from .tushare_daily import validate_staged_csv
 from .workspace import dataset_current_root, published_datasets_root
 from .workspace_config import load_layout
+from .storage import data_files, read_table
 
 
 UNIVERSE_TO_INDEX_CODE = {
@@ -201,7 +202,8 @@ def validate_dataset(workspace_root: Path, dataset_name: str) -> int:
 
         current_dir = paths.root / "current"
         if dataset_name in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_adj_factor", "tushare_moneyflow", "tushare_index_weight", "trade_calendar", "report_catalog"}:
-            published_files = sorted(current_dir.rglob("*.csv"))
+            spec = get_spec(dataset_name)
+            published_files = data_files(current_dir, spec)
             for published_file in published_files:
                 if dataset_name == "tushare_daily_basic":
                     errors.extend(validate_daily_basic_csv(published_file))
@@ -509,6 +511,11 @@ def add_pipeline_arguments(parser: argparse.ArgumentParser, include_run_id: bool
         default="000001.SZ,600000.SH",
         help="Comma-separated Tushare security codes.",
     )
+    parser.add_argument(
+        "--all-market",
+        action="store_true",
+        help="Pull all securities for each trade_date. Supported for tushare_daily and tushare_adj_factor with trade_date_all.",
+    )
     parser.add_argument("--rate-limit-seconds", type=float, default=None)
     parser.add_argument("--jitter-seconds", default=None, help="Random delay range as min,max seconds for cninfo.")
     parser.add_argument("--request-budget", type=int, default=None, help="Maximum non-skipped provider requests in this run.")
@@ -557,7 +564,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "maintain-plan":
         trade_dates = parse_csv_arg(args.trade_dates) if args.trade_dates else [args.trade_date]
         dataset_extras = build_dataset_extras(args, workspace_root)
-        symbols = resolve_symbols_arg(workspace_root, args.dataset, args.symbols, dataset_extras)
+        symbols = resolve_symbols_arg(workspace_root, args.dataset, args.symbols, dataset_extras, all_market=args.all_market)
         if args.dataset in {"trade_calendar", "tushare_index_weight", "report_catalog"}:
             trade_dates = []
         if args.dataset in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_adj_factor", "tushare_moneyflow"} and dataset_extras and dataset_extras.get("start_date"):
@@ -587,7 +594,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "maintain-run":
         trade_dates = parse_csv_arg(args.trade_dates) if args.trade_dates else [args.trade_date]
         dataset_extras = build_dataset_extras(args, workspace_root)
-        symbols = resolve_symbols_arg(workspace_root, args.dataset, args.symbols, dataset_extras)
+        symbols = resolve_symbols_arg(workspace_root, args.dataset, args.symbols, dataset_extras, all_market=args.all_market)
         if args.dataset in {"trade_calendar", "tushare_index_weight", "report_catalog"}:
             trade_dates = []
         if args.dataset in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_adj_factor", "tushare_moneyflow"} and dataset_extras and dataset_extras.get("start_date"):
@@ -651,7 +658,7 @@ def build_dataset_extras(args, workspace_root: Path) -> dict[str, str | None] | 
         end_date = args.end_date or args.start_date or args.trade_date
 
         # Auto-shorten start_date from published coverage for incremental runs
-        coverage = read_published_coverage(workspace_root, args.dataset)
+        coverage = None if args.all_market else read_published_coverage(workspace_root, args.dataset)
         if coverage:
             effective_start, _ = compute_incremental_gap([], start_date, end_date, coverage)
             if effective_start != start_date:
@@ -664,10 +671,12 @@ def build_dataset_extras(args, workspace_root: Path) -> dict[str, str | None] | 
             "end_date": end_date,
             "expected_trade_dates": open_trade_dates(workspace_root, start_date, end_date),
             "daily_request_strategy": args.daily_request_strategy,
+            "all_market": args.all_market,
         }
     if args.dataset in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_adj_factor", "tushare_moneyflow"}:
         return {
             "daily_request_strategy": args.daily_request_strategy,
+            "all_market": args.all_market,
         }
     return {}
 
@@ -683,8 +692,15 @@ def resolve_symbols_arg(
     dataset_name: str,
     symbols_value: str,
     dataset_extras: dict[str, str | None] | None,
+    all_market: bool = False,
 ) -> list[str]:
     if dataset_name in {"trade_calendar", "tushare_index_weight"}:
+        return []
+    if all_market:
+        if dataset_name not in {"tushare_daily", "tushare_adj_factor"}:
+            raise ValueError("--all-market is only supported for tushare_daily and tushare_adj_factor.")
+        if dataset_extras is not None and dataset_extras.get("daily_request_strategy") != "trade_date_all":
+            raise ValueError("--all-market requires --daily-request-strategy trade_date_all.")
         return []
     if not symbols_value.startswith("@universe:"):
         return parse_csv_arg(symbols_value)
@@ -718,12 +734,12 @@ def latest_universe_date(workspace_root: Path, universe_id: str) -> str | None:
 
 def read_index_weight_rows(workspace_root: Path, index_code: str) -> list[dict[str, str]]:
     current_dir = dataset_current_root(workspace_root, "tushare_index_weight", load_layout(workspace_root))
+    spec = get_spec("tushare_index_weight")
     rows: list[dict[str, str]] = []
-    for csv_path in sorted(current_dir.rglob("*.csv")):
-        with csv_path.open(newline="", encoding="utf-8") as input_file:
-            for row in csv.DictReader(input_file):
-                if row.get("index_code") == index_code:
-                    rows.append({key: str(value or "") for key, value in row.items()})
+    for data_path in data_files(current_dir, spec):
+        for row in read_table(data_path, spec):
+            if row.get("index_code") == index_code:
+                rows.append(row)
     return rows
 
 

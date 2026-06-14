@@ -10,16 +10,13 @@ from pathlib import Path
 
 FIELDS = (
     "ts_code",
-    "trade_date",
     "open",
     "high",
     "low",
     "close",
-    "pre_close",
-    "change",
-    "pct_chg",
     "vol",
     "amount",
+    "trade_date",
 )
 
 
@@ -31,9 +28,6 @@ class DailyRow:
     high: str
     low: str
     close: str
-    pre_close: str
-    change: str
-    pct_chg: str
     vol: str
     amount: str
 
@@ -45,11 +39,9 @@ class DailyRow:
             "high": self.high,
             "low": self.low,
             "close": self.close,
-            "pre_close": self.pre_close,
-            "change": self.change,
-            "pct_chg": self.pct_chg,
             "vol": self.vol,
             "amount": self.amount,
+            "trade_date": self.trade_date,
         }
 
 
@@ -61,9 +53,6 @@ def fake_daily_rows(symbols: list[str], trade_date: str) -> list[DailyRow]:
         close_price = base + Decimal("0.20")
         high_price = close_price + Decimal("0.10")
         low_price = open_price - Decimal("0.10")
-        pre_close = base - Decimal("0.05")
-        change = close_price - pre_close
-        pct_chg = (change / pre_close * Decimal("100")).quantize(Decimal("0.0001"))
         vol = Decimal("100000") + Decimal(index * 1000)
         amount = (vol * close_price / Decimal("10")).quantize(Decimal("0.001"))
         rows.append(
@@ -74,9 +63,6 @@ def fake_daily_rows(symbols: list[str], trade_date: str) -> list[DailyRow]:
                 high=str(high_price),
                 low=str(low_price),
                 close=str(close_price),
-                pre_close=str(pre_close),
-                change=str(change),
-                pct_chg=str(pct_chg),
                 vol=str(vol),
                 amount=str(amount),
             )
@@ -144,7 +130,7 @@ def validate_staged_csv(path: Path) -> list[str]:
                 errors.append(f"{path.name}:{row_number}: invalid trade_date {row['trade_date']}")
 
             prices = {}
-            for field in ("open", "high", "low", "close", "pre_close", "change", "pct_chg", "vol", "amount"):
+            for field in ("open", "high", "low", "close", "vol", "amount"):
                 try:
                     prices[field] = Decimal(row[field])
                 except InvalidOperation:

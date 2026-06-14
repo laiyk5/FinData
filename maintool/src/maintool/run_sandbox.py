@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .workspace_config import WorkspaceLayout
 
-from .dataset_specs import plan_requests, request_key, summarize_request_plan
+from .dataset_specs import get_spec, plan_requests, request_key, summarize_request_plan
 from .jsonio import read_json, write_json
 from .workspace import (
     cache_root as workspace_cache_root,
@@ -161,12 +161,13 @@ def inspect_current_state(workspace_root: Path, dataset_name: str, layout: Works
     current_dir = dataset_current_root(workspace_root, dataset_name, layout)
     backup_dir = dataset_backup_root(workspace_root, dataset_name, layout)
 
+    spec = get_spec(dataset_name)
     return {
         "dataset_root": str(workspace_dataset_root(workspace_root, dataset_name, layout)),
         "raw_file_count": 0,
         "staged_file_count": 0,
         "published_file_count": count_files(current_dir),
-        "published_row_count": count_csv_rows(current_dir),
+        "published_row_count": count_rows(current_dir, spec),
         "backup_file_count": count_files(backup_dir),
         "backup_version_count": count_directories(backup_dir),
     }
@@ -185,6 +186,15 @@ def count_csv_rows(root: Path) -> int:
     for csv_path in root.rglob("*.csv"):
         with csv_path.open(newline="", encoding="utf-8") as input_file:
             row_count += sum(1 for _ in csv.DictReader(input_file))
+    return row_count
+
+
+def count_rows(root: Path, spec) -> int:
+    from .storage import data_files, read_table
+
+    row_count = 0
+    for path in data_files(root, spec):
+        row_count += len(read_table(path, spec))
     return row_count
 
 
@@ -228,9 +238,10 @@ def create_run_sandbox(
     symbols = symbols or []
     trade_dates = trade_dates or []
     extras = extras or {}
-    if dataset_name in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_adj_factor", "tushare_moneyflow"} and not symbols:
+    all_market = bool(extras.get("all_market"))
+    if dataset_name in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_adj_factor", "tushare_moneyflow"} and not symbols and not all_market:
         raise ValueError("At least one symbol is required.")
-    if dataset_name in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_moneyflow"} and not trade_dates and not extras.get("start_date"):
+    if dataset_name in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_adj_factor", "tushare_moneyflow"} and not trade_dates and not extras.get("start_date"):
         raise ValueError("At least one trade date is required.")
     if dataset_name == "trade_calendar":
         for key in ("exchange", "start_date", "end_date"):
@@ -292,19 +303,19 @@ def create_run_sandbox(
         "sandbox_dataset_path": str(context.sandbox_dataset_root),
         "symbols": symbols,
         "trade_dates": trade_dates,
-        "daily_request": extras if dataset_name in {"tushare_daily", "tushare_daily_basic", "tushare_moneyflow"} and extras.get("start_date") else None,
+        "daily_request": extras if dataset_name in {"tushare_daily", "tushare_daily_basic", "tushare_adj_factor", "tushare_moneyflow"} and extras.get("start_date") else None,
         "factor_request": extras if dataset_name == "tushare_stk_factor_pro" and extras.get("start_date") else None,
         "calendar_request": extras if dataset_name == "trade_calendar" else None,
         "index_weight_request": extras if dataset_name == "tushare_index_weight" else None,
         "report_catalog_request": extras if dataset_name == "report_catalog" else None,
         "symbol_selector": extras.get("symbol_selector")
-        if dataset_name in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_moneyflow", "report_catalog"}
+        if dataset_name in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_adj_factor", "tushare_moneyflow", "report_catalog"}
         else None,
         "symbol_selector_resolved_at": extras.get("symbol_selector_resolved_at")
-        if dataset_name in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_moneyflow", "report_catalog"}
+        if dataset_name in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_adj_factor", "tushare_moneyflow", "report_catalog"}
         else None,
         "resolved_symbols": symbols
-        if dataset_name in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_moneyflow", "report_catalog"} and extras.get("symbol_selector")
+        if dataset_name in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_adj_factor", "tushare_moneyflow", "report_catalog"} and extras.get("symbol_selector")
         else None,
         "request_settings": {
             "rate_limit_seconds": rate_limit_seconds,

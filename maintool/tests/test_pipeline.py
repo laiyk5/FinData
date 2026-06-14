@@ -31,12 +31,13 @@ class PipelineTests(unittest.TestCase):
         dataset_source = REPO_ROOT / "workspace" / "published" / "datasets" / "tushare" / "daily"
         dataset_target = self.workspace_root / "published" / "datasets" / "tushare" / "daily"
         shutil.copytree(dataset_source, dataset_target)
+        write_minimal_daily_current(dataset_target / "current")
         (self.workspace_root / "sandboxes" / "runs").mkdir(parents=True)
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
 
-    def test_full_fake_pipeline_publishes_current_and_archives_previous_current(self) -> None:
+    def test_full_fake_pipeline_publishes_current_without_backup(self) -> None:
         context, result = run_full_pipeline(
             workspace_root=self.workspace_root,
             dataset_name="tushare_daily",
@@ -48,15 +49,10 @@ class PipelineTests(unittest.TestCase):
 
         self.assertEqual(result["prepare"]["prepared"], 1)
         self.assertTrue((context.sandbox_root / "run_manifest.json").is_file())
-        self.assertTrue((context.dataset_root / "current" / "daily.csv").is_file())
+        self.assertTrue((context.dataset_root / "current" / "trade_month=202405" / "daily.parquet").is_file())
         backup_dir = context.workspace_root / "backups" / "tushare" / "daily"
-        self.assertTrue(backup_dir.is_dir())
-        backups = [path for path in backup_dir.iterdir() if path.is_dir()]
-        self.assertTrue(backups)
-        backup_package = backups[0]
-        self.assertTrue((backup_package / "current" / "daily.csv").is_file())
-        self.assertTrue((backup_package / "dataset_card.md").is_file())
-        self.assertTrue((backup_package / "schema.yaml").is_file())
+        self.assertFalse(backup_dir.exists())
+        self.assertIsNone(result["publish"]["backup_path"])
         self.assertTrue((context.qa_root / "checksum_manifest.json").is_file())
         for stage in ("prepare", "ingest", "qa", "publish"):
             self.assertTrue((context.sandbox_root / "logs" / f"{stage}_summary.json").is_file())
@@ -322,8 +318,8 @@ class PipelineTests(unittest.TestCase):
             run_id="run-first",
             use_fake=True,
         )
-        current_file = context.dataset_root / "current" / "daily.csv"
-        before = current_file.read_text(encoding="utf-8")
+        current_file = context.dataset_root / "current" / "trade_month=202405" / "daily.parquet"
+        before = current_file.read_bytes()
 
         second = self.create_prepared_context("run-failed-publish", trade_date="20240507")
         ingest_prepared_raw(second)
@@ -332,7 +328,7 @@ class PipelineTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             publish_sandbox(second, fail_before_final_rename=True)
 
-        after = current_file.read_text(encoding="utf-8")
+        after = current_file.read_bytes()
         self.assertEqual(before, after)
 
     def create_prepared_context(self, run_id: str, trade_date: str = "20240506"):
@@ -355,3 +351,23 @@ class PipelineTests(unittest.TestCase):
             writer.writeheader()
             for cal_date, is_open in rows:
                 writer.writerow({"exchange": exchange, "cal_date": cal_date, "is_open": is_open, "pretrade_date": ""})
+
+
+def write_minimal_daily_current(current_dir: Path) -> None:
+    shutil.rmtree(current_dir)
+    current_dir.mkdir(parents=True)
+    with (current_dir / "daily.csv").open("w", newline="", encoding="utf-8") as output:
+        writer = csv.DictWriter(output, fieldnames=["ts_code", "open", "high", "low", "close", "vol", "amount", "trade_date"])
+        writer.writeheader()
+        writer.writerow(
+            {
+                "ts_code": "000001.SZ",
+                "open": "10.00",
+                "high": "10.30",
+                "low": "9.90",
+                "close": "10.20",
+                "vol": "100000",
+                "amount": "102000.000",
+                "trade_date": "20240503",
+            }
+        )

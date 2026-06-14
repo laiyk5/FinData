@@ -10,6 +10,7 @@ Monthly index constituent weights for A-share market indices (SSE 50, CSI 300, C
 - **Grain**: one index code × one constituent × one trade date
 - **Primary key**: `index_code`, `con_code`, `trade_date`
 - **Date field**: `trade_date`
+- **Storage**: Apache Parquet, partitioned by `trade_month=YYYYMM`
 
 ## Usage
 

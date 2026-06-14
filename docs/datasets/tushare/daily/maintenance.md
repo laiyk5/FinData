@@ -9,6 +9,7 @@ Prerequisite: [`../../__shared__/_general_maintenance_sop.md`](../../__shared__/
 - **Grain**: one security × one trading date
 - **Primary key**: `ts_code, trade_date`
 - **Data**: unadjusted daily OHLCV bars
+- **Storage**: full published dataset in Apache Parquet files under `current/trade_month=YYYYMM/`
 
 ## Smoke Test
 
@@ -37,7 +38,17 @@ python -m maintool review tushare_daily --run-id <run_id>
 
 ## Historical Backfill
 
-Use universe selectors to avoid hand-coding symbol lists:
+For all-market daily bars, request one full-market slice per trading day:
+
+```bash
+python -m maintool maintain-plan tushare_daily \
+  --all-market \
+  --daily-request-strategy trade_date_all \
+  --start-date 20250614 --end-date 20260614 \
+  --run-id tushare-daily-all-market-YYYYMMDD
+```
+
+Use universe selectors when a constituent universe, rather than all market symbols, is desired:
 
 ```bash
 python -m maintool maintain-plan tushare_daily \
@@ -51,7 +62,7 @@ Then run `prepare`, `ingest`, `qa`, `review`, `publish` with the same `run_id`.
 
 ## Request Strategy
 
-The `auto` strategy (default) chooses between `symbol_range` (batch symbols/date-chunks) and `trade_date_all` (all symbols for each date) based on which produces fewer requests while respecting the 6000-row limit per request. Override with `--daily-request-strategy symbol_range` or `--daily-request-strategy trade_date_all`.
+The `auto` strategy (default) chooses between `symbol_range` (batch symbols/date-chunks) and `trade_date_all` (all symbols for each date) based on which produces fewer requests while respecting the 6000-row limit per request. Override with `--daily-request-strategy symbol_range` or `--daily-request-strategy trade_date_all`. For `--all-market`, use `trade_date_all`; the planner emits one request per open trading date.
 
 ## QA Expectations
 
@@ -64,10 +75,7 @@ The `auto` strategy (default) chooses between `symbol_range` (batch symbols/date
 - Missing rows are classified (`market_holiday`, `suspension`, `outside_scope`) or explicitly accepted
 
 **Warnings** (do not block):
-- `pct_chg` exceeds ±20%
 - Zero volume on a claimed trading day
-- Close/pre_close move exceeds 20%
-- Volume changed by >10× versus prior row
 
 ## Missingness
 

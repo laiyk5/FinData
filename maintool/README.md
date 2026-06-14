@@ -2,7 +2,7 @@
 
 `maintool` is the maintenance command-line tool for FinData.
 
-The first version is intentionally small and dependency-free. Its job is to inspect dataset metadata and validate the repository scaffold before ingestion, publishing, backup, and provider integrations are added.
+It plans provider requests, prepares raw responses, ingests normalized tables into run sandboxes, runs QA, reviews run evidence, and publishes QA-passed datasets. Backtest-facing Tushare market datasets use pandas/pyarrow for Apache Parquet output.
 
 ## Usage
 
@@ -44,9 +44,9 @@ cd workspace && python -m maintool maintain-run tushare_daily \
   --run-id real-smoke-20240510
 ```
 
-Do not use broad symbol/date ranges until trade calendar and suspension classification are implemented.
+Use small smoke runs before broad ranges. Broad all-market Tushare pulls should use explicit `--all-market` and a date-based request strategy.
 
-For `tushare_daily`, request scheduling defaults to `--daily-request-strategy auto`. The planner batches comma-separated symbols and date ranges while keeping estimated rows per request within the documented 6000-row limit, then records the selected plan in `run_manifest.json`. Use `--daily-request-strategy trade_date_all` only when an all-market daily pull is intentional.
+For `tushare_daily`, request scheduling defaults to `--daily-request-strategy auto`. The planner batches comma-separated symbols and date ranges while keeping estimated rows per request within the documented 6000-row limit, then records the selected plan in `run_manifest.json`. Use `--all-market --daily-request-strategy trade_date_all` when an all-market daily pull is intentional.
 
 ## Trade Calendar
 

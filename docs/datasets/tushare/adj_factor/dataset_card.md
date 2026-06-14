@@ -11,6 +11,7 @@ Daily adjustment factor (复权因子) for A-share securities. Returns the forwa
 - **Primary key**: `ts_code`, `trade_date`
 - **Date field**: `trade_date`
 - **Calendar**: CN_A_SHARE
+- **Storage**: Apache Parquet, partitioned by `trade_month=YYYYMM`
 
 ## Notes
 

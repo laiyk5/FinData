@@ -99,8 +99,8 @@ class TushareIndexWeightTests(unittest.TestCase):
         current_file = (
             context.sandbox_dataset_root
             / "current"
-            / "index_code=000300.SH"
-            / "index_weight.csv"
+            / "trade_month=202604"
+            / "index_weight.parquet"
         )
         self.assertTrue(current_file.is_file())
         coverage = published_coverage("tushare_index_weight", context.dataset_root / "current")

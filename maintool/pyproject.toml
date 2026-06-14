@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Maintenance tooling for the FinData repository."
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = ["pyyaml"]
+dependencies = ["pandas", "pyarrow", "pyyaml"]
 
 [dependency-groups]
 dev = []

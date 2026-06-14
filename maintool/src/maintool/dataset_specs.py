@@ -66,6 +66,9 @@ class DatasetSpec:
     partition_field: str
     published_filename: str
     staged_prefix: str
+    storage_format: str = "csv"
+    partition_granularity: str | None = None
+    output_partition_field: str | None = None
     publish_partition_field: str | None = None
     dir_name: str | None = None
 
@@ -80,7 +83,8 @@ class DatasetSpec:
         return tuple(row.get(field, "") for field in (*self.primary_key,))
 
     def staged_filename(self, partition_value: str) -> str:
-        return f"{self.staged_prefix}_{partition_value}.csv"
+        suffix = "parquet" if self.storage_format == "parquet" else "csv"
+        return f"{self.staged_prefix}_{partition_value}.{suffix}"
 
 
 SPECS = {
@@ -92,8 +96,11 @@ SPECS = {
         primary_key=("ts_code", "trade_date"),
         date_field="trade_date",
         partition_field="trade_date",
-        published_filename="daily.csv",
+        published_filename="daily.parquet",
         staged_prefix="daily",
+        storage_format="parquet",
+        partition_granularity="month",
+        output_partition_field="trade_month",
     ),
     "tushare_stk_factor_pro": DatasetSpec(
         name="tushare_stk_factor_pro",
@@ -149,8 +156,11 @@ SPECS = {
         primary_key=("ts_code", "trade_date"),
         date_field="trade_date",
         partition_field="trade_date",
-        published_filename="adj_factor.csv",
+        published_filename="adj_factor.parquet",
         staged_prefix="adj_factor",
+        storage_format="parquet",
+        partition_granularity="month",
+        output_partition_field="trade_month",
     ),
     "tushare_index_weight": DatasetSpec(
         name="tushare_index_weight",
@@ -159,10 +169,12 @@ SPECS = {
         fields=TUSHARE_INDEX_WEIGHT_FIELDS,
         primary_key=("index_code", "con_code", "trade_date"),
         date_field="trade_date",
-        partition_field="index_code",
-        published_filename="index_weight.csv",
+        partition_field="trade_date",
+        published_filename="index_weight.parquet",
         staged_prefix="index_weight",
-        publish_partition_field="index_code",
+        storage_format="parquet",
+        partition_granularity="month",
+        output_partition_field="trade_month",
     ),
     "report_catalog": DatasetSpec(
         name="report_catalog",
@@ -247,7 +259,7 @@ def plan_requests(dataset_name: str, symbols: list[str], trade_dates: list[str],
     if dataset_name == "tushare_stk_factor_pro":
         return plan_stk_factor_pro_requests(symbols, trade_dates, extras)
     if dataset_name == "tushare_adj_factor":
-        return plan_stk_factor_pro_requests(symbols, trade_dates, extras)
+        return plan_adj_factor_requests(symbols, trade_dates, extras)
     if dataset_name == "tushare_moneyflow":
         return plan_moneyflow_requests(symbols, trade_dates, extras)
     if dataset_name == "trade_calendar":
@@ -321,6 +333,21 @@ def plan_stk_factor_pro_requests(symbols: list[str], trade_dates: list[str], ext
         return plan_trade_date_all_requests("stk_factor_pro", symbols, expected_trade_dates, STK_FACTOR_MAX_ROWS_PER_REQUEST)
 
     return plan_single_symbol_range_requests("stk_factor_pro", symbols, expected_trade_dates, STK_FACTOR_MAX_ROWS_PER_REQUEST)
+
+
+def plan_adj_factor_requests(symbols: list[str], trade_dates: list[str], extras: dict[str, Any]) -> list[dict[str, Any]]:
+    expected_trade_dates = list(extras.get("expected_trade_dates") or trade_dates)
+    if not expected_trade_dates:
+        return []
+    if extras.get("all_market") and extras.get("daily_request_strategy") == DAILY_REQUEST_STRATEGY_TRADE_DATE_ALL:
+        return plan_trade_date_all_requests("adj_factor", [], expected_trade_dates, STK_FACTOR_MAX_ROWS_PER_REQUEST)
+    if not symbols:
+        return []
+
+    if extras.get("daily_request_strategy") == DAILY_REQUEST_STRATEGY_TRADE_DATE_ALL:
+        return plan_trade_date_all_requests("adj_factor", symbols, expected_trade_dates, STK_FACTOR_MAX_ROWS_PER_REQUEST)
+
+    return plan_single_symbol_range_requests("adj_factor", symbols, expected_trade_dates, STK_FACTOR_MAX_ROWS_PER_REQUEST)
 
 
 def plan_moneyflow_requests(symbols: list[str], trade_dates: list[str], extras: dict[str, Any]) -> list[dict[str, Any]]:
@@ -542,7 +569,7 @@ def summarize_request_plan(dataset_name: str, requests: list[dict[str, Any]]) ->
 
 
 def request_row_limit(dataset_name: str) -> int:
-    if dataset_name == "tushare_stk_factor_pro":
+    if dataset_name in {"tushare_stk_factor_pro", "tushare_adj_factor"}:
         return STK_FACTOR_MAX_ROWS_PER_REQUEST
     return DAILY_MAX_ROWS_PER_REQUEST
 
@@ -616,19 +643,25 @@ def expected_keys(dataset_name: str, manifest: dict[str, Any]) -> set[tuple[str,
 
 def coverage_from_rows(dataset_name: str, rows: list[dict[str, str]]) -> dict[str, Any]:
     if dataset_name in {"tushare_daily", "tushare_daily_basic", "tushare_stk_factor_pro", "tushare_adj_factor", "tushare_moneyflow"}:
-        symbols = sorted({row["ts_code"] for row in rows if row.get("ts_code")})
-        dates = sorted({row["trade_date"] for row in rows if row.get("trade_date")})
-        symbol_ranges = {}
-        for symbol in symbols:
-            symbol_dates = sorted(row["trade_date"] for row in rows if row.get("ts_code") == symbol and row.get("trade_date"))
-            symbol_ranges[symbol] = {
-                "start_date": symbol_dates[0] if symbol_dates else None,
-                "end_date": symbol_dates[-1] if symbol_dates else None,
-            }
+        dates: set[str] = set()
+        symbol_ranges: dict[str, dict[str, str | None]] = {}
+        for row in rows:
+            symbol = row.get("ts_code")
+            trade_date = row.get("trade_date")
+            if not symbol or not trade_date:
+                continue
+            dates.add(trade_date)
+            bounds = symbol_ranges.setdefault(symbol, {"start_date": trade_date, "end_date": trade_date})
+            if bounds["start_date"] is None or trade_date < bounds["start_date"]:
+                bounds["start_date"] = trade_date
+            if bounds["end_date"] is None or trade_date > bounds["end_date"]:
+                bounds["end_date"] = trade_date
+        symbols = sorted(symbol_ranges)
+        sorted_dates = sorted(dates)
         return {
             "symbols": symbols,
-            "start_date": dates[0] if dates else None,
-            "end_date": dates[-1] if dates else None,
+            "start_date": sorted_dates[0] if sorted_dates else None,
+            "end_date": sorted_dates[-1] if sorted_dates else None,
             "calendar": "CN_A_SHARE",
             "symbol_ranges": symbol_ranges,
         }
@@ -649,30 +682,37 @@ def coverage_from_rows(dataset_name: str, rows: list[dict[str, str]]) -> dict[st
             "exchange_ranges": exchange_ranges,
         }
     if dataset_name == "tushare_index_weight":
-        index_codes = sorted({row["index_code"] for row in rows if row.get("index_code")})
-        dates = sorted({row["trade_date"] for row in rows if row.get("trade_date")})
-        index_ranges = {}
-        latest_snapshot_dates = {}
-        latest_constituent_counts = {}
-        for index_code in index_codes:
-            index_rows = [row for row in rows if row.get("index_code") == index_code]
-            index_dates = sorted({row["trade_date"] for row in index_rows if row.get("trade_date")})
-            latest_date = index_dates[-1] if index_dates else None
-            latest_members = {
-                row["con_code"]
-                for row in index_rows
-                if row.get("con_code") and row.get("trade_date") == latest_date
-            }
-            index_ranges[index_code] = {
-                "start_date": index_dates[0] if index_dates else None,
-                "end_date": index_dates[-1] if index_dates else None,
-            }
-            latest_snapshot_dates[index_code] = latest_date
-            latest_constituent_counts[index_code] = len(latest_members)
+        dates: set[str] = set()
+        index_ranges: dict[str, dict[str, str | None]] = {}
+        members_by_index_date: dict[tuple[str, str], set[str]] = {}
+        for row in rows:
+            index_code = row.get("index_code")
+            trade_date = row.get("trade_date")
+            con_code = row.get("con_code")
+            if not index_code or not trade_date:
+                continue
+            dates.add(trade_date)
+            bounds = index_ranges.setdefault(index_code, {"start_date": trade_date, "end_date": trade_date})
+            if bounds["start_date"] is None or trade_date < bounds["start_date"]:
+                bounds["start_date"] = trade_date
+            if bounds["end_date"] is None or trade_date > bounds["end_date"]:
+                bounds["end_date"] = trade_date
+            if con_code:
+                members_by_index_date.setdefault((index_code, trade_date), set()).add(con_code)
+        index_codes = sorted(index_ranges)
+        sorted_dates = sorted(dates)
+        latest_snapshot_dates = {
+            index_code: index_ranges[index_code]["end_date"]
+            for index_code in index_codes
+        }
+        latest_constituent_counts = {
+            index_code: len(members_by_index_date.get((index_code, latest_snapshot_dates[index_code] or ""), set()))
+            for index_code in index_codes
+        }
         return {
             "index_codes": index_codes,
-            "start_date": dates[0] if dates else None,
-            "end_date": dates[-1] if dates else None,
+            "start_date": sorted_dates[0] if sorted_dates else None,
+            "end_date": sorted_dates[-1] if sorted_dates else None,
             "index_ranges": index_ranges,
             "latest_snapshot_dates": latest_snapshot_dates,
             "latest_constituent_counts": latest_constituent_counts,

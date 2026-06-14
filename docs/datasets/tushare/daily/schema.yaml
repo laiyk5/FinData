@@ -8,10 +8,6 @@ fields:
     type: string
     required: true
     description: Tushare security code, such as 000001.SZ.
-  - name: trade_date
-    type: string
-    required: true
-    description: Trading date in YYYYMMDD format.
   - name: open
     type: decimal
     required: true
@@ -28,18 +24,6 @@ fields:
     type: decimal
     required: true
     description: Closing price.
-  - name: pre_close
-    type: decimal
-    required: true
-    description: Previous close.
-  - name: change
-    type: decimal
-    required: true
-    description: Price change from previous close.
-  - name: pct_chg
-    type: decimal
-    required: true
-    description: Percentage change from previous close.
   - name: vol
     type: decimal
     required: true
@@ -48,3 +32,7 @@ fields:
     type: decimal
     required: true
     description: Trading amount in thousand yuan.
+  - name: trade_date
+    type: string
+    required: true
+    description: Trading date in YYYYMMDD format.

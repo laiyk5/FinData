@@ -78,6 +78,9 @@ def fake_stk_factor_pro_rows(symbols: list[str], trade_date: str) -> list[dict[s
         base_open = Decimal(daily_row.open)
         base_high = Decimal(daily_row.high)
         base_low = Decimal(daily_row.low)
+        pre_close = (base_open - Decimal("0.05")).quantize(Decimal("0.001"))
+        change = (base_close - pre_close).quantize(Decimal("0.001"))
+        pct_chg = (change / pre_close * Decimal("100")).quantize(Decimal("0.0001"))
         adj_factor = (Decimal("1.000") + Decimal(index) / Decimal("1000")).quantize(Decimal("0.001"))
 
         open_hfq = quantize_price(base_open * (Decimal("1.05") + Decimal(index) / Decimal("10000")))
@@ -101,6 +104,9 @@ def fake_stk_factor_pro_rows(symbols: list[str], trade_date: str) -> list[dict[s
                 "low_qfq": low_qfq,
                 "close_hfq": close_hfq,
                 "close_qfq": close_qfq,
+                "pre_close": str(pre_close),
+                "change": str(change),
+                "pct_chg": str(pct_chg),
                 "adj_factor": str(adj_factor),
                 "ma_bfq_5": quantize_signed(base_close - Decimal("0.20")),
                 "ma_bfq_10": quantize_signed(base_close - Decimal("0.10")),

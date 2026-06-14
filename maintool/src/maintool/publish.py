@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import csv
 import hashlib
 import shutil
 import time
@@ -11,7 +10,8 @@ from .dataset_specs import coverage_from_rows, get_spec
 from .jsonio import read_json, write_json
 from .run_sandbox import RunContext, mark_step, utc_stamp
 from .stage_logs import append_stage_event, write_stage_summary
-from .workspace import dataset_backup_root, dataset_docs_dir
+from .storage import data_files, read_table
+from .workspace import dataset_docs_dir
 
 
 def publish_sandbox(context: RunContext, fail_before_final_rename: bool = False) -> dict[str, Any]:
@@ -77,20 +77,14 @@ def publish_sandbox(context: RunContext, fail_before_final_rename: bool = False)
 
     backup_path = None
     if current_dir.exists():
-        spec = get_spec(context.dataset_name)
-        backup_root = context.backup_root
-        backup_root.mkdir(parents=True, exist_ok=True)
-        backup_path = backup_root / utc_stamp()
-        shutil.copytree(dataset_root, backup_path, ignore=shutil.ignore_patterns(f"next-*"))
-        prune_backups(backup_root, keep=3)
         shutil.rmtree(current_dir)
         append_stage_event(
             context,
             "publish",
             {
-                "event": "backup_current",
+                "event": "remove_previous_current",
                 "created_at": utc_stamp(),
-                "backup_path": str(backup_path.relative_to(context.workspace_root)),
+                "backup_path": None,
             },
         )
 
@@ -159,15 +153,6 @@ def checksum_tree(root: Path) -> list[dict[str, str]]:
     return checksums
 
 
-def prune_backups(backup_root: Path, keep: int) -> None:
-    backups = sorted(
-        [p for p in backup_root.iterdir() if p.is_dir()],
-        reverse=True,
-    )
-    for old in backups[keep:]:
-        shutil.rmtree(old)
-
-
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as input_file:
@@ -206,10 +191,8 @@ def update_manifest_after_publish(dataset_root: Path, context: RunContext, publi
 def published_coverage(dataset_name: str, current_dir: Path) -> dict[str, Any]:
     spec = get_spec(dataset_name)
     rows: list[dict[str, str]] = []
-    for csv_path in sorted(current_dir.rglob("*.csv")):
-        with csv_path.open(newline="", encoding="utf-8") as input_file:
-            for row in csv.DictReader(input_file):
-                rows.append({field: str(row.get(field, "")) for field in spec.fields})
+    for data_path in data_files(current_dir, spec):
+        rows.extend(read_table(data_path, spec))
     return coverage_from_rows(dataset_name, rows)
 
 
@@ -288,9 +271,11 @@ def render_storage_block(dataset_name: str) -> list[str]:
     spec = get_spec(dataset_name)
     return [
         "storage:",
+        f"  format: {spec.storage_format}",
+        f"  partitioning: {spec.output_partition_field or spec.publish_partition_field or 'none'}",
         "  published_current: current",
         "  published_current_purpose: consumer-facing latest published version",
-        f"  backup_root: ../../backups/{spec.provider}/{spec.api_name}",
+        "  backups: disabled",
         "  run_sandbox_root: ../../sandboxes/runs",
         "  provider_cache_root: ../../cache",
     ]

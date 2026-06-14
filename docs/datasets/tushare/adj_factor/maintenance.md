@@ -9,6 +9,7 @@ Prerequisite: [`../../__shared__/_general_maintenance_sop.md`](../../__shared__/
 - **Grain**: one security × one trading date
 - **Primary key**: `ts_code`, `trade_date`
 - **Data**: daily adjustment factor (复权因子) — uses the dedicated `adj_factor` endpoint, storing `ts_code`, `trade_date`, `adj_factor`
+- **Storage**: full published dataset in Apache Parquet files under `current/trade_month=YYYYMM/`
 
 ## Smoke Test
 
@@ -36,7 +37,17 @@ python -m maintool qa tushare_adj_factor --run-id <run_id>
 
 ## Historical Backfill
 
-Use `@universe:` selectors to cover all historical index constituents:
+For all-market adjustment factors, request one full-market slice per trading day:
+
+```bash
+python -m maintool maintain-plan tushare_adj_factor \
+  --all-market \
+  --daily-request-strategy trade_date_all \
+  --start-date 20250614 --end-date 20260614 \
+  --run-id tushare-adj-factor-all-market-YYYYMMDD
+```
+
+Use `@universe:` selectors to cover historical index constituents:
 
 ```bash
 python -m maintool maintain-run tushare_adj_factor \
@@ -49,7 +60,7 @@ The `symbol_range` strategy sends one request per symbol over the full date rang
 
 ## Request Strategy
 
-Uses the same request scheduler as `stk_factor_pro` with a 10000-row per-request limit. The API call goes through the dedicated `adj_factor` endpoint. For `symbol_range`, each symbol gets one request covering the full date window. For `auto`, the scheduler may batch symbols into date chunks.
+Uses the same request scheduler as `stk_factor_pro` with a 10000-row per-request limit. The API call goes through the dedicated `adj_factor` endpoint. For `symbol_range`, each symbol gets one request covering the full date window. For `auto`, the scheduler may batch symbols into date chunks. For `--all-market`, use `trade_date_all`; the planner emits one request per open trading date.
 
 ## QA Expectations
 

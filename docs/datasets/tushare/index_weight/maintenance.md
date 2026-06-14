@@ -9,6 +9,7 @@ Prerequisite: [`../../__shared__/_general_maintenance_sop.md`](../../__shared__/
 - **Grain**: one constituent × one index × one snapshot date
 - **Primary key**: `index_code, con_code, trade_date`
 - **Data**: raw provider index constituent weights (point-in-time monthly snapshots)
+- **Storage**: full published dataset in Apache Parquet files under `current/trade_month=YYYYMM/`
 
 This dataset is the source for `@universe:` symbol resolution. Use `@universe:index:CSI300` etc. as the `--symbols` argument for downstream datasets; the CLI resolves members from this dataset's published data.
 

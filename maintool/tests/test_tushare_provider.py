@@ -192,6 +192,43 @@ class TushareProviderTests(unittest.TestCase):
         self.assertNotIn("secret-token", raw_path.read_text(encoding="utf-8"))
         self.assertEqual(captured_body["token"], "secret-token")
 
+    def test_all_market_daily_plan_uses_trade_date_all_without_symbols(self) -> None:
+        buffer = StringIO()
+        with redirect_stdout(buffer):
+            exit_code = maintain_plan(
+                workspace_root=self.workspace_root,
+                dataset_name="tushare_daily",
+                use_fake=True,
+                symbols=[],
+                trade_dates=[],
+                run_id="all-market-daily-plan",
+                rate_limit_seconds=None,
+                max_retries=3,
+                retry_backoff_seconds=None,
+                dataset_extras={
+                    "start_date": "20240506",
+                    "end_date": "20240507",
+                    "expected_trade_dates": ["20240506", "20240507"],
+                    "daily_request_strategy": "trade_date_all",
+                    "all_market": True,
+                },
+            )
+
+        self.assertEqual(exit_code, 0)
+        ledger = read_json(
+            self.workspace_root
+            / "sandboxes"
+            / "runs"
+            / "tushare_daily"
+            / "all-market-daily-plan"
+            / "prepare_ledger.json"
+        )
+        requests = list(ledger["requests"].values())
+        self.assertEqual(len(requests), 2)
+        self.assertTrue(all(request["request_mode"] == "trade_date_all" for request in requests))
+        self.assertTrue(all(request["ts_code"] == "" for request in requests))
+        self.assertTrue(all(request["symbols"] == [] for request in requests))
+
     def test_daily_basic_response_uses_daily_basic_api(self) -> None:
         context = self.create_tushare_context("real-daily-basic-success", dataset_name="tushare_daily_basic")
         captured_body: dict[str, object] = {}
