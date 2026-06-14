@@ -78,7 +78,7 @@ def read_parquet(path: Path, spec: DatasetSpec) -> list[dict[str, str]]:
     frame = pd.read_parquet(path)
     rows: list[dict[str, str]] = []
     for record in frame.to_dict(orient="records"):
-        rows.append({field: normalize_cell(record.get(field, "")) for field in spec.fields})
+        rows.append({field: normalize_cell(record.get(field, ""), pd) for field in spec.fields})
     return rows
 
 
@@ -89,16 +89,15 @@ def write_parquet(path: Path, rows: list[dict[str, str]], spec: DatasetSpec) -> 
     frame.to_parquet(path, engine="pyarrow", index=False)
 
 
-def normalize_cell(value: object) -> str:
+def normalize_cell(value: object, pd=None) -> str:
     if value is None:
         return ""
-    try:
-        import pandas as pd
-
-        if pd.isna(value):
-            return ""
-    except Exception:
-        pass
+    if pd is not None:
+        try:
+            if pd.isna(value):
+                return ""
+        except Exception:
+            pass
     return str(value)
 
 

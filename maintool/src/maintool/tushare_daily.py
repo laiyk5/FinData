@@ -34,7 +34,6 @@ class DailyRow:
     def as_dict(self) -> dict[str, str]:
         return {
             "ts_code": self.ts_code,
-            "trade_date": self.trade_date,
             "open": self.open,
             "high": self.high,
             "low": self.low,

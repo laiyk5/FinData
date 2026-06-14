@@ -678,8 +678,13 @@ def validate_unique_keys_across_files(
 ) -> list[str]:
     errors: list[str] = []
     rows = read_table(data_path, spec)
-    if rows and any(field not in rows[0] for field in spec.primary_key):
-        return errors
+    if rows:
+        missing_pk_fields = [field for field in spec.primary_key if field not in rows[0]]
+        if missing_pk_fields:
+            errors.append(
+                f"{data_path.relative_to(root)}: missing primary key column(s) {missing_pk_fields}"
+            )
+            return errors
     for row_number, row in enumerate(rows, start=2):
         key = tuple(row[field] for field in spec.primary_key)
         previous_path = seen_keys.get(key)
