@@ -54,13 +54,50 @@ If no workspace is found, the client exits with an error suggesting `findata-ser
 
 Operational commands support `--format human|json|jsonl`; `--json` is shorthand for `--format json`, and `jsonl` is used for streams. Stdout contains command results and stderr contains diagnostics.
 
+Human output is the default. Collection commands use compact tables, detail commands use labeled
+fields, and an empty result says what was not found rather than printing an empty JSON value. Human
+errors state what failed, include relevant context, and suggest a recovery or inspection command
+when one exists. Tracebacks are reserved for an explicit debug mode.
+
+`--color auto|always|never` controls human styling and defaults to `auto`. Automatic styling is used
+only when the destination stream is an interactive terminal and is disabled when `NO_COLOR` is set
+or `TERM=dumb`. Status always has a textual or symbolic indicator, so color is never its only
+meaning. Structured formats never contain color or other terminal control sequences, including
+when `--color always` is also supplied.
+
+JSON emits exactly one JSON document. JSONL emits one complete object per event or record with a
+stable `type` field. Neither format includes spinners, readiness banners, explanatory prose, or
+other human decoration. On failure, the selected structured format is also used for the diagnostic
+written to stderr, and the documented nonzero exit code remains authoritative.
+
 Exit codes are:
 
 - `0` — success;
 - `1` — operational failure or a failed or canceled task when waiting;
 - `2` — invalid CLI usage.
 
-Task submission is asynchronous by default. `--wait` waits for the terminal result; `--follow` streams logs and implies `--wait`. Without waiting, success means that the task was accepted. A log follow prints existing logs, continues with new entries, and exits when the task reaches a terminal state.
+Task submission is asynchronous by default. The CLI reports acceptance and the task ID as soon as
+the server accepts it. `--wait` waits for the terminal result; `--follow` streams logs and implies
+`--wait`. Without waiting, success means that the task was accepted. A log follow prints existing
+logs, continues with new entries, and exits when the task reaches a terminal state.
+
+While waiting in human mode, the CLI renders the server's semantic stage and progress on stderr.
+For work lasting longer than approximately 250 milliseconds, an interactive terminal may use a
+spinner or replace a progress line in place. Redirected diagnostics use ordinary newline-delimited
+updates. A terminal summary removes any transient animation and reports status, elapsed time, task
+ID, and available result identifiers. Waiting states name their reported reason, such as a rate
+permit, dependency, or write gate; the CLI does not invent progress the server did not report.
+
+Pressing Ctrl-C while waiting or following detaches the client and leaves the accepted server task
+running. Use `findata task cancel <id>` when cancellation is intended. A temporary connection loss
+is reported clearly, and an error includes the task-status or log command needed to inspect work
+that may still be running.
+
+When `findata-server start` runs in the foreground, it prints a concise readiness report containing
+the version, resolved workspace, listening address, and a credential-free provider summary. It
+prints readiness only after startup recovery and initialization have succeeded. Redirected or
+service-managed output uses one plain log record rather than an interactive banner, and server
+output never reveals API credentials or provider secrets.
 
 Help, version, and shell-completion generation are not subject to structured output and do not require a workspace. Dynamic completion is best-effort and falls back to static command completion if a workspace or server is unavailable.
 

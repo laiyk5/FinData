@@ -214,6 +214,23 @@ Workspace configuration is the single source of truth for:
 
 Secret values are stored only from stdin or as environment-variable references, are redacted from every read command, and never enter URLs or logs. Configuration mutations occur through the authenticated server API and are written atomically.
 
+## CLI principles
+
+The server owns task state, progress meaning, warnings, and failure reasons. The CLI is a thin
+HTTP client that renders those semantics; it does not infer task policy or redefine lifecycle
+states. The server reports readiness only after workspace validation, recovery, plugin
+registration, and socket binding succeed.
+
+Human output is the default and favors concise tables, labeled detail views, explicit status
+words, and actionable errors. Stable command results go to stdout; transient progress and
+diagnostics go to stderr. Interactive decoration may improve presentation but must not carry
+meaning by itself or alter execution, task persistence, or cancellation behavior.
+
+JSON and JSONL are stable, undecorated interfaces for scripts and tests. Structured output never
+contains terminal control sequences, progress animation, readiness banners, or explanatory prose.
+Detailed terminal behavior and examples are defined once in [USER.md](USER.md#cli-behavior), and
+their verification belongs in [TEST.md](TEST.md#cli-presentation-matrix).
+
 ## v1 commitments and non-goals
 
 The architecture contract is closed for v1 around atomic publication snapshots, subscriber-aware task coalescing, centralized DataLoader query semantics, and the dataset contracts in [DATASETS.md](DATASETS.md).
