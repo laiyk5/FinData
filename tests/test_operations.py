@@ -125,6 +125,42 @@ class DatasetOperationTests(unittest.TestCase):
             {"000001.SZ", "600000.SH", "600519.SH"},
         )
 
+    def test_past_daily_empty_is_resolved_but_current_inside_window_empty_is_not(self) -> None:
+        self.transport.empty_next("daily_basic")
+        past = self.service.run(
+            "tushare_daily_basic",
+            "complete",
+            {"symbols": ["000001.SZ"], "timerange": "2026-07-18:2026-07-20"},
+        )
+        self.assertTrue(past.publication_id)
+        self.assertEqual(
+            DataLoader(self.root).dataset("tushare_daily_basic").query().num_rows,
+            0,
+        )
+
+        self.transport.empty_next("daily_basic")
+        with self.assertRaisesRegex(RuntimeError, "inside publication window"):
+            self.service.run(
+                "tushare_daily_basic",
+                "complete",
+                {"symbols": ["600000.SH"], "timerange": "2026-07-20:2026-07-21"},
+            )
+
+    def test_latest_constituents_never_fall_back_to_older_covered_month(self) -> None:
+        self.service.run(
+            "tushare_index_weight",
+            "complete",
+            {"indexes": ["CSI300"], "timerange": "2026-06-01:2026-07-01"},
+        )
+        self.transport.empty_next("index_weight")
+
+        with self.assertRaisesRegex(RuntimeError, "empty historical month"):
+            self.service.run(
+                "tushare_daily_basic",
+                "complete",
+                {"symbols": ["CSI300@latest"], "timerange": "2026-07-20:2026-07-21"},
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -40,6 +40,13 @@ class OperationNormalizationTests(unittest.TestCase):
                 {"exchanges": ["SSE"], "timerange": "2026-07-01:2026-07-02", "extra": 1},
                 today=date(2026, 7, 20),
             )
+        with self.assertRaisesRegex(OperandError, "future trade-calendar"):
+            normalize_operation(
+                "tushare_trade_cal",
+                "complete",
+                {"exchanges": ["SSE"], "timerange": "2026-07-20:2026-07-22"},
+                today=date(2026, 7, 20),
+            )
 
 
 class WorkspaceResolutionTests(unittest.TestCase):

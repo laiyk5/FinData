@@ -17,7 +17,7 @@ from findata.loader import (
     IncompatibleDatasetError,
     UnsupportedCoverageError,
 )
-from findata.storage import Coverage, Workspace
+from findata.storage import Coverage, DatasetGate, Workspace
 from findata.testing.tushare import MockTushareTransport
 from findata.providers.tushare import TushareClient
 
@@ -152,6 +152,42 @@ class StorageLoaderTests(unittest.TestCase):
         self.assertEqual(dataset.publication_id, first_id)
         self.assertEqual(dataset.query().column("exchange").to_pylist(), ["SSE"])
 
+    def test_all_publication_fault_boundaries_preserve_one_complete_snapshot(self) -> None:
+        for point in (
+            "after_staging_created",
+            "after_snapshot_flush",
+            "before_manifest_commit",
+            "after_manifest_commit",
+        ):
+            with self.subTest(point=point), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                workspace = Workspace.init(root)
+                workspace.register_dataset("tushare_stock_basic", strategy="single-file-csv")
+                first = self.client.query(
+                    "tushare_stock_basic", list_status="L", exchange="SSE"
+                )
+                old_id = workspace.publisher("tushare_stock_basic").publish(first)
+                second = self.client.query(
+                    "tushare_stock_basic", list_status="L", exchange="SZSE"
+                )
+
+                def fail(actual: str) -> None:
+                    if actual == point:
+                        raise RuntimeError(point)
+
+                with self.assertRaisesRegex(RuntimeError, point):
+                    workspace.publisher(
+                        "tushare_stock_basic", fault_injector=fail
+                    ).publish(second)
+
+                reader = DataLoader(root).dataset("tushare_stock_basic")
+                if point == "after_manifest_commit":
+                    self.assertNotEqual(reader.publication_id, old_id)
+                    self.assertEqual(reader.query().column("exchange").to_pylist(), ["SZSE"])
+                else:
+                    self.assertEqual(reader.publication_id, old_id)
+                    self.assertEqual(reader.query().column("exchange").to_pylist(), ["SSE"])
+
     def test_batch_reader_holds_snapshot_while_writer_waits(self) -> None:
         self.workspace.register_dataset("tushare_stock_basic", strategy="single-file-csv")
         first = self.client.query("tushare_stock_basic", list_status="L", exchange="SSE")
@@ -227,6 +263,31 @@ class StorageLoaderTests(unittest.TestCase):
         self.assertFalse(unreachable.exists())
         self.assertTrue((dataset_root / "snapshots" / publication).is_dir())
         self.assertEqual(DataLoader(self.root).dataset("tushare_stock_basic").query().num_rows, table.num_rows)
+
+    def test_write_gate_wait_is_cancelable_before_commit(self) -> None:
+        self.workspace.register_dataset("tushare_stock_basic", strategy="single-file-csv")
+        first = self.client.query("tushare_stock_basic", list_status="L", exchange="SSE")
+        publisher = self.workspace.publisher("tushare_stock_basic")
+        publication = publisher.publish(first)
+        second = self.client.query("tushare_stock_basic", list_status="L", exchange="SZSE")
+        waiting: list[str] = []
+
+        class Canceled(Exception):
+            pass
+
+        with DatasetGate(
+            self.root / "datasets" / "tushare_stock_basic" / "gate.lock", exclusive=False
+        ):
+            cancelable = self.workspace.publisher(
+                "tushare_stock_basic",
+                checkpoint=lambda: (_ for _ in ()).throw(Canceled()),
+                waiting=lambda reason: waiting.append(reason),
+            )
+            with self.assertRaises(Canceled):
+                cancelable.publish(second)
+
+        self.assertEqual(waiting, ["write_gate"])
+        self.assertEqual(DataLoader(self.root).dataset("tushare_stock_basic").publication_id, publication)
 
     def test_incompatible_manifest_is_read_only_failure(self) -> None:
         self.workspace.register_dataset("tushare_stock_basic", strategy="single-file-csv")

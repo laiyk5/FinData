@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 import re
 from typing import Protocol
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pyarrow as pa
 
@@ -13,6 +14,7 @@ from findata.contracts import DateRange, DatasetSpec, OperandError
 from findata.datasets.tushare import TUSHARE_DATASETS
 from findata.loader import DataLoader, DatasetNotReadyError, UnsupportedCoverageError
 from findata.providers.tushare import TushareClient, TushareHTTPTransport
+from findata.publication import PublicationWindow, daily_window, monthly_window
 from findata.rate_limit import FileRateLimiter
 from findata.storage import Coverage, Workspace
 from findata.testing.tushare import MockTushareTransport
@@ -37,6 +39,10 @@ class OperationReporter(Protocol):
 
     def end_subtask(self) -> None: ...
 
+    def waiting(self, reason: str) -> None: ...
+
+    def running(self) -> None: ...
+
 
 @dataclass(frozen=True, slots=True)
 class OperationWorker:
@@ -46,9 +52,15 @@ class OperationWorker:
     provider: str
     token: str
     today: str
+    now: str | None = None
 
     def __call__(self, request: dict[str, object], context: OperationReporter) -> dict[str, Any]:
         current_date = date.fromisoformat(self.today)
+        current_time = (
+            datetime.fromisoformat(self.now)
+            if self.now
+            else datetime.combine(current_date, time(16), ZoneInfo("Asia/Shanghai"))
+        )
         workspace = Workspace(Path(self.workspace))
         if self.provider == "mock":
             transport = MockTushareTransport(today=current_date)
@@ -79,6 +91,7 @@ class OperationWorker:
             workspace,
             TushareClient(token=token, transport=transport, permit=permit),
             today=current_date,
+            now=current_time,
             reporter=context,
         )
         context.log(f"starting {request['dataset']} {request['operation']}")
@@ -124,10 +137,12 @@ class DatasetService:
         *,
         today: date,
         reporter: OperationReporter | None = None,
+        now: datetime | None = None,
     ) -> None:
         self.workspace = workspace
         self.client = client
         self.today = today
+        self.now = now or datetime.combine(today, time(16), ZoneInfo("Asia/Shanghai"))
         self.loader = DataLoader(workspace.root)
         self._request_count = 0
         self._reporter = reporter
@@ -223,7 +238,7 @@ class DatasetService:
         combined = pa.concat_tables(tables)
         if combined.num_rows == 0:
             raise RuntimeError("stock_basic merged snapshot is unexpectedly empty")
-        return self.workspace.publisher("tushare_stock_basic").publish(
+        return self._publisher("tushare_stock_basic").publish(
             _merge_tables(TUSHARE_DATASETS["tushare_stock_basic"], None, combined)
         )
 
@@ -259,6 +274,8 @@ class DatasetService:
                     )
                     if table.num_rows == 0:
                         raise RuntimeError(f"index_weight returned empty historical month for {index}")
+                    if monthly_window(month, self.now) == PublicationWindow.BEFORE:
+                        raise RuntimeError(f"index_weight month is before publication window for {index}")
                     next_coverage[index] = _merge_interval(
                         next_coverage.get(index), month_interval
                     )
@@ -309,6 +326,14 @@ class DatasetService:
                     start_date=start,
                     end_date=end,
                 )
+                if table.num_rows == 0:
+                    latest_target = interval.end - timedelta(days=1)
+                    window = daily_window(latest_target, self.now)
+                    if window != PublicationWindow.AFTER:
+                        raise RuntimeError(
+                            f"daily_basic empty result remains unresolved in {window.value}; "
+                            f"target is {window.value.split('-', 1)[0]} publication window"
+                        )
                 next_coverage[symbol] = _merge_interval(next_coverage.get(symbol), interval)
                 publication = self._publish(spec, [table], next_coverage)
         return publication or self._publish(spec, [], next_coverage)
@@ -375,9 +400,19 @@ class DatasetService:
             self._reporter.checkpoint()
         incoming = pa.concat_tables(new_tables) if len(new_tables) > 1 else new_tables[0]
         merged = _merge_tables(spec, self._existing_table(spec), incoming)
-        return self.workspace.publisher(spec.name).publish(
+        return self._publisher(spec.name).publish(
             merged,
             coverage=[Coverage(key, value.start, value.end) for key, value in sorted(coverage.items())],
+        )
+
+    def _publisher(self, dataset: str):
+        if self._reporter is None:
+            return self.workspace.publisher(dataset)
+        return self.workspace.publisher(
+            dataset,
+            checkpoint=self._reporter.checkpoint,
+            waiting=self._reporter.waiting,
+            acquired=self._reporter.running,
         )
 
 
@@ -398,6 +433,8 @@ def normalize_operation(
         return {}
     timerange = _timerange(values, today=today)
     if dataset == "tushare_trade_cal":
+        if timerange.end > today + timedelta(days=1):
+            raise OperandError("future trade-calendar intervals cannot be completed")
         arrays = sorted(_string_array(values, "exchanges"))
         if set(arrays) - {"SSE", "SZSE"}:
             raise OperandError("trade calendar supports only SSE and SZSE")

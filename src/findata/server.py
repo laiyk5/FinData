@@ -7,12 +7,13 @@ import os
 import secrets
 import threading
 from dataclasses import asdict
-from datetime import date
+from datetime import date, datetime, time
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
+from zoneinfo import ZoneInfo
 
 from findata.cron import CronManager
 from findata.events import EventStore
@@ -66,6 +67,11 @@ class FindataServer:
         self.port = port
         self.provider_mode = provider_mode
         self.today = today or date.today()
+        operation_now = (
+            datetime.combine(today, time(18), ZoneInfo("Asia/Shanghai"))
+            if today is not None
+            else datetime.now(ZoneInfo("Asia/Shanghai"))
+        )
         self.token = (self.root / "token").read_text(encoding="utf-8").strip()
         self._lock_file: Any = None
         self._httpd: ThreadingHTTPServer | None = None
@@ -80,6 +86,7 @@ class FindataServer:
                 provider=provider_mode,
                 token="mock-token" if provider_mode == "mock" else "",
                 today=self.today.isoformat(),
+                now=operation_now.isoformat(),
             ),
             global_concurrency=global_concurrency,
             event_sink=self.events.record,
