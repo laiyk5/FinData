@@ -7,7 +7,7 @@ import stat
 import tempfile
 import time
 import unittest
-from datetime import UTC, date, datetime
+from datetime import date, datetime
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
@@ -161,6 +161,8 @@ class ServerCLITests(unittest.TestCase):
         self.assertEqual(operation["required"], ["symbols", "timerange"])
         providers = json.loads(self.run_cli("--json", "provider", "ls")[1])
         self.assertEqual(providers["items"][0]["name"], "tushare")
+        statuses = json.loads(self.run_cli("--json", "dataset", "status", "--all")[1])
+        self.assertEqual(len(statuses["items"]), 4)
 
     def test_invalid_operation_is_rejected_without_creating_a_handle(self) -> None:
         with self.assertRaises(HTTPError) as caught:
@@ -175,6 +177,10 @@ class ServerCLITests(unittest.TestCase):
 
     def test_structured_params_and_universe_clear_cli_forms(self) -> None:
         self.run_cli("dataset", "universe", "set", "tushare_daily_basic", "CSI300@latest")
+        direct = json.loads(
+            self.run_cli("--json", "dataset", "universe", "tushare_daily_basic")[1]
+        )
+        self.assertEqual(direct["selectors"], ["CSI300@latest"])
         cleared = json.loads(
             self.run_cli("--json", "dataset", "universe", "clear", "tushare_daily_basic")[1]
         )
@@ -191,6 +197,51 @@ class ServerCLITests(unittest.TestCase):
         )
         self.assertEqual(code, 0)
         self.assertEqual(json.loads(output)["status"], "succeeded")
+
+    def test_unready_real_provider_is_rejected_before_queueing(self) -> None:
+        self.server.shutdown()
+        real_server = FindataServer(
+            self.root, port=0, provider_mode="real", today=date(2026, 7, 20)
+        )
+        self.server = real_server
+        real_server.start_background()
+        with self.assertRaises(HTTPError) as caught:
+            self.request(
+                "POST",
+                "/v1/tasks",
+                {
+                    "dataset": "tushare_trade_cal",
+                    "operation": "complete",
+                    "operands": {
+                        "exchanges": ["SSE"],
+                        "timerange": "2026-07-17:2026-07-20",
+                    },
+                },
+            )
+        self.assertEqual(caught.exception.code, 400)
+        caught.exception.close()
+        self.assertEqual(self.request("GET", "/v1/tasks")["items"], [])
+
+    def test_universe_validation_and_system_queue_status(self) -> None:
+        with self.assertRaises(HTTPError) as caught:
+            self.request(
+                "PUT",
+                "/v1/datasets/tushare_stock_basic/universe",
+                {"selectors": ["600000.SH"]},
+            )
+        self.assertEqual(caught.exception.code, 400)
+        caught.exception.close()
+        with self.assertRaises(HTTPError) as caught:
+            self.request(
+                "PUT",
+                "/v1/datasets/tushare_daily_basic/universe",
+                {"selectors": ["NOT-A-SYMBOL"]},
+            )
+        self.assertEqual(caught.exception.code, 400)
+        caught.exception.close()
+        status = self.request("GET", "/v1/system/status")
+        self.assertEqual(status["running_tasks"], 0)
+        self.assertEqual(status["queue_lengths"], {})
 
     def run_cli(self, *arguments: str) -> tuple[int, str]:
         stdout = io.StringIO()

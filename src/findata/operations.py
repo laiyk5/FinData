@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from datetime import date, timedelta
 from pathlib import Path
+import re
 from typing import Protocol
 from typing import Any
 
@@ -31,6 +32,10 @@ class OperationReporter(Protocol):
     def log(self, message: str) -> None: ...
 
     def fulfill(self, dataset: str, requirement: dict[str, Any]) -> Any: ...
+
+    def begin_subtask(self, *, timeout: float) -> None: ...
+
+    def end_subtask(self) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,14 +94,9 @@ class OperationWorker:
 
 
 def register_v1_datasets(workspace: Workspace) -> None:
-    strategies = {
-        "tushare_trade_cal": "single-file-csv",
-        "tushare_stock_basic": "single-file-csv",
-        "tushare_index_weight": "partitioned-parquet",
-        "tushare_daily_basic": "partitioned-parquet",
-    }
-    for dataset, strategy in strategies.items():
-        workspace.register_dataset(dataset, strategy=strategy)
+    from findata.plugins import discover_dataset_plugins, register_plugins
+
+    register_plugins(workspace, discover_dataset_plugins())
 
 
 def resolve_v1_dependency(
@@ -160,11 +160,17 @@ class DatasetService:
         if self._reporter is not None:
             self._reporter.checkpoint()
             self._reporter.log(f"fetch {dataset}")
+            if hasattr(self._reporter, "begin_subtask"):
+                self._reporter.begin_subtask(timeout=180)
         self._request_count += 1
-        table = self.client.query(dataset, **params)
-        if self._reporter is not None:
-            self._reporter.checkpoint()
-        return table
+        try:
+            table = self.client.query(dataset, **params)
+            if self._reporter is not None:
+                self._reporter.checkpoint()
+            return table
+        finally:
+            if self._reporter is not None and hasattr(self._reporter, "end_subtask"):
+                self._reporter.end_subtask()
 
     def _trade_cal(self, operation: str, operands: dict[str, Any]) -> str:
         if operation == "update":
@@ -404,6 +410,26 @@ def normalize_operation(
         key = "symbols"
     _require_keys(values, {key, "timerange"})
     return {key: arrays, "timerange": _format_range(timerange)}
+
+
+def normalize_universe(dataset: str, selectors: list[str]) -> list[str]:
+    if dataset == "tushare_index_weight":
+        return sorted({_canonical_index(value) for value in _string_array({"value": selectors}, "value")})
+    if dataset != "tushare_daily_basic":
+        raise OperandError(f"dataset {dataset!r} has an intrinsic universe")
+    values = _string_array({"value": selectors}, "value")
+    symbol = re.compile(r"^[0-9]{6}\.(?:SH|SZ|BJ)$")
+    for value in values:
+        if value == "CSI300" or value == "CSI300@latest":
+            continue
+        if value.startswith("CSI300@"):
+            suffix = value.split("@", 1)[1]
+            if len(suffix) == 6 and suffix.isdigit() and 1 <= int(suffix[4:]) <= 12:
+                continue
+        if symbol.fullmatch(value):
+            continue
+        raise OperandError(f"invalid maintenance selector {value!r}")
+    return sorted(set(values))
 
 
 def dataset_description(workspace: Workspace, dataset: str, *, provider_ready: bool) -> dict[str, Any]:

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "findata"
-version = "0.1.0.dev0"
+version = "0.1.0"
 description = "Local, plugin-oriented financial dataset maintenance and querying"
 requires-python = ">=3.11"
 dependencies = [
@@ -14,6 +14,12 @@ dependencies = [
 [project.scripts]
 findata = "findata.cli:main"
 findata-server = "findata.server_cli:main"
+
+[project.entry-points."findata.datasets"]
+tushare_trade_cal = "findata.datasets.tushare:trade_cal_plugin"
+tushare_stock_basic = "findata.datasets.tushare:stock_basic_plugin"
+tushare_index_weight = "findata.datasets.tushare:index_weight_plugin"
+tushare_daily_basic = "findata.datasets.tushare:daily_basic_plugin"
 
 [project.optional-dependencies]
 dev = [

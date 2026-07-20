@@ -43,10 +43,14 @@ class FileRateLimiterTests(unittest.TestCase):
             path = Path(directory) / "rate.json"
             first = FileRateLimiter(path, limit=2, period=60)
             second = FileRateLimiter(path, limit=2, period=60)
-            self.assertTrue(first.try_acquire(now=100))
-            self.assertTrue(second.try_acquire(now=101))
-            self.assertFalse(first.try_acquire(now=102))
-            self.assertTrue(second.try_acquire(now=161))
+            self.assertFalse(first.try_acquire(now=100))  # buckets start empty
+            self.assertTrue(second.try_acquire(now=130))
+            self.assertFalse(first.try_acquire(now=131))
+            self.assertTrue(second.try_acquire(now=160))
+            # Idle time refills only to the bounded capacity.
+            self.assertTrue(first.try_acquire(now=220))
+            self.assertTrue(second.try_acquire(now=220))
+            self.assertFalse(first.try_acquire(now=220))
 
     def test_invalid_limits_are_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

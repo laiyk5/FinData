@@ -44,6 +44,13 @@ def dependency_resolver(
     return "complete", requirement
 
 
+def liveness_worker(request: dict[str, object], context: TaskContext) -> dict[str, object]:
+    context.begin_subtask(timeout=0.05)
+    time.sleep(0.15)
+    context.end_subtask()
+    return {"completed": True}
+
+
 class TaskRunnerTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tempdir = tempfile.TemporaryDirectory()
@@ -216,6 +223,20 @@ class TaskRunnerTests(unittest.TestCase):
             self.assertEqual(result.status, "failed")
             self.assertIn("dependency depth exceeds", result.error)
             self.assertEqual(len(runner.list_handles()), 1)
+
+    def test_liveness_timeout_records_event_without_killing_process(self) -> None:
+        events: list[tuple[str, str, str, dict[str, object]]] = []
+
+        def sink(kind: str, severity: str, message: str, **context: object) -> None:
+            events.append((kind, severity, message, context))
+
+        with TaskRunner(self.root, liveness_worker, event_sink=sink) as runner:
+            handle = runner.submit("tushare_stock_basic", "update", {})
+            result = runner.wait(handle, timeout=3)
+
+        self.assertEqual(result.status, "succeeded")
+        liveness = next(item for item in events if item[0] == "liveness_timeout")
+        self.assertEqual(liveness[1], "warning")
 
     def test_terminal_history_prunes_old_handles_and_unreferenced_executions(self) -> None:
         with TaskRunner(self.root, successful_worker, terminal_history=2) as runner:

@@ -113,6 +113,14 @@ class TaskContext:
         self._send({"type": "state", "state": "running"})
         self.checkpoint()
 
+    def begin_subtask(self, *, timeout: float) -> None:
+        if timeout <= 0:
+            raise ValueError("subtask timeout must be positive")
+        self._send({"type": "subtask", "timeout": float(timeout)})
+
+    def end_subtask(self) -> None:
+        self._send({"type": "subtask_complete"})
+
     def fulfill(self, dataset: str, requirement: Mapping[str, Any]) -> Any:
         request_id = uuid.uuid4().hex
         self._send(
@@ -155,6 +163,8 @@ class _Runtime:
     process: mp.Process
     listener: Listener
     connection: Connection | None = None
+    liveness_deadline: float | None = None
+    liveness_warned: bool = False
 
 
 class TaskRunner:
@@ -201,6 +211,7 @@ class TaskRunner:
         self._started = False
         self._crashed = False
         self._dispatcher: threading.Thread | None = None
+        self._liveness_monitor: threading.Thread | None = None
         self._mp_context = mp.get_context("spawn")
 
     def __enter__(self) -> TaskRunner:
@@ -226,6 +237,12 @@ class TaskRunner:
                 daemon=True,
             )
             self._dispatcher.start()
+            self._liveness_monitor = threading.Thread(
+                target=self._liveness_loop,
+                name="findata-liveness-monitor",
+                daemon=True,
+            )
+            self._liveness_monitor.start()
 
     def submit(
         self,
@@ -327,6 +344,30 @@ class TaskRunner:
                 and (status is None or handle.status == status)
             ]
         return sorted(values, key=lambda item: item.created_at, reverse=True)
+
+    def subscriber_count(self, handle_id: str) -> int:
+        with self._condition:
+            handle = self._handles.get(handle_id)
+            if handle is None:
+                raise TaskNotFoundError(handle_id)
+            execution = self._executions[handle.execution_id]
+            return sum(
+                self._handles[item].status not in TERMINAL_STATES
+                for item in execution.handle_ids
+                if item in self._handles
+            )
+
+    def runtime_status(self) -> dict[str, Any]:
+        with self._condition:
+            queue_lengths: dict[str, int] = {}
+            for execution in self._executions.values():
+                if execution.status == "queued":
+                    queue_lengths[execution.dataset] = queue_lengths.get(execution.dataset, 0) + 1
+            running = sum(
+                execution.status in {"running", "waiting", "canceling"}
+                for execution in self._executions.values()
+            )
+            return {"running_tasks": running, "queue_lengths": queue_lengths}
 
     def wait(self, handle_id: str, *, timeout: float | None = None) -> HandleRecord:
         deadline = None if timeout is None else time.monotonic() + timeout
@@ -467,6 +508,9 @@ class TaskRunner:
             self._condition.notify_all()
         if self._dispatcher is not None:
             self._dispatcher.join(timeout=1)
+        if self._liveness_monitor is not None:
+            self._liveness_monitor.join(timeout=1)
+            self._liveness_monitor = None
         for thread in list(self._monitor_threads):
             thread.join(timeout=1)
         self._started = False
@@ -505,6 +549,33 @@ class TaskRunner:
                 )
                 self._monitor_threads.add(thread)
                 thread.start()
+
+    def _liveness_loop(self) -> None:
+        while not self._stop.wait(0.02):
+            expired: list[tuple[str, str, str]] = []
+            now = time.monotonic()
+            with self._condition:
+                for execution_id, runtime in self._runtime.items():
+                    if (
+                        runtime.liveness_deadline is not None
+                        and now >= runtime.liveness_deadline
+                        and not runtime.liveness_warned
+                    ):
+                        runtime.liveness_warned = True
+                        execution = self._executions.get(execution_id)
+                        if execution is not None:
+                            expired.append(
+                                (execution_id, execution.dataset, execution.operation)
+                            )
+            for execution_id, dataset, operation in expired:
+                self._event(
+                    "liveness_timeout",
+                    "warning",
+                    f"task {execution_id} exceeded its negotiated subtask timeout",
+                    execution_id=execution_id,
+                    dataset=dataset,
+                    operation=operation,
+                )
 
     def _next_execution(self) -> ExecutionRecord | None:
         running_count = len(self._launching) + sum(
@@ -630,6 +701,19 @@ class TaskRunner:
                     "total": message.get("total", 0),
                 }
                 self._update_active_handles(execution, progress=execution.progress)
+            elif kind == "subtask":
+                timeout = float(message.get("timeout", 0))
+                if timeout <= 0:
+                    return
+                runtime = self._runtime.get(execution_id)
+                if runtime is not None:
+                    runtime.liveness_deadline = time.monotonic() + timeout
+                    runtime.liveness_warned = False
+            elif kind == "subtask_complete":
+                runtime = self._runtime.get(execution_id)
+                if runtime is not None:
+                    runtime.liveness_deadline = None
+                    runtime.liveness_warned = False
             elif kind == "state" and message.get("state") in {"running", "waiting"}:
                 execution.status = str(message["state"])
                 self._update_active_handles(execution, status=execution.status)

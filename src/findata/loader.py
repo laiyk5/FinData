@@ -119,6 +119,11 @@ class DatasetReader:
             raise IncompatibleDatasetError(
                 f"dataset {self.name!r} uses manifest version {manifest.get('manifest_version')!r}"
             )
+        if manifest.get("data_layout_version") != 1:
+            raise IncompatibleDatasetError(
+                f"dataset {self.name!r} uses data layout version "
+                f"{manifest.get('data_layout_version')!r}"
+            )
         if manifest.get("state") != "ready" or not manifest.get("publication_id"):
             raise DatasetNotReadyError(f"dataset {self.name!r} has no published snapshot")
         return manifest

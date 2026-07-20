@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import signal
+import threading
 from pathlib import Path
 
 from findata.server import FindataServer, initialize_workspace
@@ -26,10 +28,20 @@ def main(argv: list[str] | None = None) -> int:
         port=args.port,
         provider_mode=args.provider_mode,
     )
-    server.serve_forever()
+    stopped = threading.Event()
+
+    def stop(_signum: int, _frame: object) -> None:
+        stopped.set()
+
+    signal.signal(signal.SIGINT, stop)
+    signal.signal(signal.SIGTERM, stop)
+    server.start_background()
+    try:
+        stopped.wait()
+    finally:
+        server.shutdown()
     return 0
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

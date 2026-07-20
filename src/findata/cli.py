@@ -11,6 +11,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+from findata import __version__
+
 
 def main(
     argv: list[str] | None = None,
@@ -20,9 +22,14 @@ def main(
 ) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
     output_format = _extract_format(arguments)
+    _normalize_aliases(arguments)
     parser = _parser()
     try:
         args = parser.parse_args(arguments)
+        if args.group == "completion":
+            stdout.write(_completion_script(args.shell))
+            return 0
+        _validate_cli_args(args)
         client = _Client(resolve_workspace(args.workspace))
         result = _execute(client, args, output_format=output_format, stdout=stdout)
         _print_result(result, output_format, stdout)
@@ -63,6 +70,8 @@ def _execute(
     if args.group == "dataset" and args.action == "ls":
         return client.request("GET", "/v1/datasets")
     if args.group == "dataset" and args.action in {"describe", "status"}:
+        if args.action == "status" and args.all:
+            return client.request("GET", "/v1/datasets")
         suffix = "status" if args.action == "status" else ""
         return client.request("GET", f"/v1/datasets/{args.dataset}{('/' + suffix) if suffix else ''}")
     if args.group == "dataset" and args.action == "operations":
@@ -108,6 +117,8 @@ def _execute(
             time.sleep(0.02)
     if args.group == "task" and args.action == "ls":
         query = {key: value for key, value in {"dataset": args.dataset, "status": args.status}.items() if value}
+        if args.all:
+            query["all"] = "true"
         suffix = f"?{urlencode(query)}" if query else ""
         return client.request("GET", f"/v1/tasks{suffix}")
     if args.group == "task" and args.action == "status":
@@ -251,6 +262,7 @@ def _print_result(value: object, output_format: str, stdout: TextIO) -> None:
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="findata")
+    parser.add_argument("--version", action="version", version=f"findata {__version__}")
     parser.add_argument("--workspace", type=Path)
     groups = parser.add_subparsers(dest="group", required=True)
 
@@ -275,9 +287,12 @@ def _parser() -> argparse.ArgumentParser:
 
     dataset = groups.add_parser("dataset").add_subparsers(dest="action", required=True)
     dataset.add_parser("ls")
-    for action in ("describe", "operations", "status"):
+    for action in ("describe", "operations"):
         command = dataset.add_parser(action)
         command.add_argument("dataset")
+    dataset_status = dataset.add_parser("status")
+    dataset_status.add_argument("dataset", nargs="?")
+    dataset_status.add_argument("--all", action="store_true")
     dataset_operation = dataset.add_parser("operation")
     dataset_operation.add_argument("dataset")
     dataset_operation.add_argument("operation")
@@ -302,6 +317,7 @@ def _parser() -> argparse.ArgumentParser:
     listing = task.add_parser("ls")
     listing.add_argument("--dataset")
     listing.add_argument("--status")
+    listing.add_argument("--all", action="store_true")
     for action in ("status", "cancel"):
         command = task.add_parser(action)
         command.add_argument("handle")
@@ -330,6 +346,9 @@ def _parser() -> argparse.ArgumentParser:
 
     system = groups.add_parser("system").add_subparsers(dest="action", required=True)
     system.add_parser("status")
+
+    completion = groups.add_parser("completion")
+    completion.add_argument("shell", choices=("bash", "zsh", "fish"))
     return parser
 
 
@@ -365,6 +384,43 @@ def resolve_workspace(
         if (resolved / "workspace.json").is_file():
             return resolved
     raise RuntimeError("no findata workspace found; run findata-server init <path>")
+
+
+def _completion_script(shell: str) -> str:
+    commands = "task dataset provider cron events config system completion"
+    if shell == "bash":
+        return f"complete -W '{commands}' findata\n"
+    if shell == "zsh":
+        return f"#compdef findata\n_arguments '1:command:({commands})'\n"
+    return f"complete -c findata -f -a '{commands}'\n"
+
+
+def _normalize_aliases(arguments: list[str]) -> None:
+    for index in range(len(arguments) - 2):
+        if arguments[index : index + 2] != ["dataset", "universe"]:
+            continue
+        if arguments[index + 2] not in {"get", "set", "clear"}:
+            arguments.insert(index + 2, "get")
+        return
+
+
+def _validate_cli_args(args: argparse.Namespace) -> None:
+    if args.group == "events" and args.action == "ack":
+        if bool(args.event_id) == bool(args.all):
+            raise ValueError("events ack requires an event ID or --all")
+    if args.group == "dataset" and args.action == "status":
+        if bool(args.dataset) == bool(args.all):
+            raise ValueError("dataset status requires a dataset or --all")
+    if args.group == "task" and args.action == "run" and args.param and args.params:
+        raise ValueError("--param and --params are mutually exclusive")
+    if args.group == "config" and args.action == "set":
+        sources = sum((args.value is not None, bool(args.env), bool(args.stdin)))
+        if sources != 1:
+            raise ValueError("config set requires exactly one value source")
+        lowered = args.key.lower()
+        secret = any(word in lowered for word in ("token", "secret", "password", "credential"))
+        if secret and args.value is not None:
+            raise ValueError("secret configuration must use --stdin or --env")
 
 
 if __name__ == "__main__":

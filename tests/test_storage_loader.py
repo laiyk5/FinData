@@ -242,6 +242,19 @@ class StorageLoaderTests(unittest.TestCase):
 
         self.assertEqual(manifest_path.read_bytes(), incompatible)
 
+    def test_incompatible_data_layout_is_read_only_failure(self) -> None:
+        self.workspace.register_dataset("tushare_stock_basic", strategy="single-file-csv")
+        manifest_path = self.root / "datasets" / "tushare_stock_basic" / "manifest.json"
+        manifest = json.loads(manifest_path.read_bytes())
+        manifest["data_layout_version"] = 999
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        incompatible = manifest_path.read_bytes()
+
+        with self.assertRaises(IncompatibleDatasetError):
+            DataLoader(self.root).dataset("tushare_stock_basic").query()
+
+        self.assertEqual(manifest_path.read_bytes(), incompatible)
+
 
 if __name__ == "__main__":
     unittest.main()
