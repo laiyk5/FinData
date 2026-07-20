@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import tempfile
+import time
 import uuid
 from collections.abc import Callable, Iterable, Mapping
 from contextlib import AbstractContextManager
@@ -55,16 +56,49 @@ COVERAGE_SCHEMA = pa.schema(
 
 
 class DatasetGate(AbstractContextManager["DatasetGate"]):
-    def __init__(self, path: Path, *, exclusive: bool) -> None:
+    def __init__(
+        self,
+        path: Path,
+        *,
+        exclusive: bool,
+        checkpoint: Callable[[], None] | None = None,
+        waiting: Callable[[str], None] | None = None,
+        acquired: Callable[[], None] | None = None,
+    ) -> None:
         self.path = path
         self.exclusive = exclusive
+        self.checkpoint = checkpoint
+        self.waiting = waiting
+        self.acquired = acquired
         self._file: Any = None
 
     def __enter__(self) -> DatasetGate:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._file = self.path.open("a+b")
-        fcntl.flock(self._file.fileno(), fcntl.LOCK_EX if self.exclusive else fcntl.LOCK_SH)
-        return self
+        try:
+            if not self.exclusive or self.checkpoint is None:
+                fcntl.flock(
+                    self._file.fileno(), fcntl.LOCK_EX if self.exclusive else fcntl.LOCK_SH
+                )
+            else:
+                announced = False
+                while True:
+                    try:
+                        fcntl.flock(self._file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        break
+                    except BlockingIOError:
+                        if self.waiting is not None and not announced:
+                            self.waiting("write_gate")
+                            announced = True
+                        self.checkpoint()
+                        time.sleep(0.05)
+            if self.acquired is not None:
+                self.acquired()
+            return self
+        except BaseException:
+            self._file.close()
+            self._file = None
+            raise
 
     def __exit__(self, exc_type: Any, exc: Any, traceback: Any) -> None:
         if self._file is not None:
@@ -149,8 +183,17 @@ class Workspace:
         name: str,
         *,
         fault_injector: FaultInjector | None = None,
+        checkpoint: Callable[[], None] | None = None,
+        waiting: Callable[[str], None] | None = None,
+        acquired: Callable[[], None] | None = None,
     ) -> Publisher:
-        return Publisher(self.datasets_root / name, fault_injector=fault_injector)
+        return Publisher(
+            self.datasets_root / name,
+            fault_injector=fault_injector,
+            checkpoint=checkpoint,
+            waiting=waiting,
+            acquired=acquired,
+        )
 
     def set_universe(self, dataset: str, selectors: Iterable[str]) -> None:
         values = list(dict.fromkeys(selectors))
@@ -234,9 +277,20 @@ class Workspace:
 
 
 class Publisher:
-    def __init__(self, dataset_root: Path, *, fault_injector: FaultInjector | None = None) -> None:
+    def __init__(
+        self,
+        dataset_root: Path,
+        *,
+        fault_injector: FaultInjector | None = None,
+        checkpoint: Callable[[], None] | None = None,
+        waiting: Callable[[str], None] | None = None,
+        acquired: Callable[[], None] | None = None,
+    ) -> None:
         self.dataset_root = dataset_root
         self._fault = fault_injector or (lambda _point: None)
+        self._checkpoint = checkpoint
+        self._waiting = waiting
+        self._acquired = acquired
 
     def publish(self, table: pa.Table, *, coverage: Iterable[Coverage] | None = None) -> str:
         manifest_path = self.dataset_root / "manifest.json"
@@ -275,7 +329,13 @@ class Publisher:
             _fsync_tree(staging)
             self._fault("after_snapshot_flush")
 
-            with DatasetGate(self.dataset_root / "gate.lock", exclusive=True):
+            with DatasetGate(
+                self.dataset_root / "gate.lock",
+                exclusive=True,
+                checkpoint=self._checkpoint,
+                waiting=self._waiting,
+                acquired=self._acquired,
+            ):
                 destination = self.dataset_root / "snapshots" / publication_id
                 os.replace(staging, destination)
                 installed = True

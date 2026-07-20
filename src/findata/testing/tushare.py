@@ -18,6 +18,7 @@ class MockTushareTransport:
         self._next_error: tuple[int, str] | None = None
         self._next_drop_field: str | None = None
         self._call_errors: dict[int, tuple[int, str]] = {}
+        self._empty_apis: set[str] = set()
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}(today={self.today.isoformat()!r})"
@@ -32,6 +33,9 @@ class MockTushareTransport:
         if number <= 0:
             raise ValueError("call number must be positive")
         self._call_errors[number] = (code, message)
+
+    def empty_next(self, api_name: str) -> None:
+        self._empty_apis.add(api_name)
 
     def __call__(self, payload: Mapping[str, Any]) -> Mapping[str, Any]:
         request = deepcopy(dict(payload))
@@ -50,6 +54,9 @@ class MockTushareTransport:
         params = request.get("params")
         if not isinstance(params, Mapping):
             return {"code": -1, "msg": "params must be an object", "data": None}
+        if api_name in self._empty_apis:
+            self._empty_apis.remove(str(api_name))
+            return {"code": 0, "msg": None, "data": {"fields": fields, "items": []}}
         rows = self._rows(str(api_name), params)
 
         if self._next_drop_field is not None and self._next_drop_field in fields:

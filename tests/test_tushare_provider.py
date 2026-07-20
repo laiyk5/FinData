@@ -64,6 +64,18 @@ class TushareClientTests(unittest.TestCase):
         self.assertEqual(table.num_rows, 1)
         self.assertEqual((attempts, permits), (2, 2))
 
+    def test_mock_can_inject_legitimate_empty_response_for_one_api(self) -> None:
+        transport = MockTushareTransport(today=date(2026, 7, 20))
+        transport.empty_next("daily_basic")
+        client = TushareClient(token="secret", transport=transport)
+        table = client.query(
+            "tushare_daily_basic",
+            ts_code="000001.SZ",
+            start_date="20260717",
+            end_date="20260717",
+        )
+        self.assertEqual(table.num_rows, 0)
+
     def setUp(self) -> None:
         self.transport = MockTushareTransport(today=date(2026, 7, 20))
         self.client = TushareClient(token="test-token", transport=self.transport)

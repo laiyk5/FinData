@@ -8,6 +8,7 @@ from pathlib import Path
 
 from findata import DataLoader
 from findata.operations import OperationWorker, register_v1_datasets, resolve_v1_dependency
+from findata.rate_limit import FileRateLimiter
 from findata.storage import Workspace
 from findata.taskrunner import QueueFullError, TaskContext, TaskNotFoundError, TaskRunner
 
@@ -49,6 +50,13 @@ def liveness_worker(request: dict[str, object], context: TaskContext) -> dict[st
     time.sleep(0.15)
     context.end_subtask()
     return {"completed": True}
+
+
+def rate_wait_worker(request: dict[str, object], context: TaskContext) -> dict[str, object]:
+    path = Path(str(dict(request["operands"])["path"]))
+    limiter = FileRateLimiter(path, limit=1, period=100)
+    limiter.acquire(checkpoint=context.checkpoint, waiting=context.waiting)
+    return {"permit": True}
 
 
 class TaskRunnerTests(unittest.TestCase):
@@ -237,6 +245,23 @@ class TaskRunnerTests(unittest.TestCase):
         self.assertEqual(result.status, "succeeded")
         liveness = next(item for item in events if item[0] == "liveness_timeout")
         self.assertEqual(liveness[1], "warning")
+
+    def test_rate_limit_wait_is_cancelable_and_releases_global_slot(self) -> None:
+        with TaskRunner(self.root, rate_wait_worker, global_concurrency=1) as runner:
+            waiting = runner.submit(
+                "tushare_trade_cal",
+                "complete",
+                {"path": str(self.root / "provider-rate.json")},
+            )
+            runner.wait_for_status(waiting, {"waiting"}, timeout=3)
+            quick = runner.submit("tushare_stock_basic", "update", {"path": str(self.root / "fast-rate.json")})
+            # The second task also waits for its own empty bucket, proving it was dispatched
+            # while the first waiting task no longer occupied global capacity.
+            runner.wait_for_status(quick, {"waiting"}, timeout=3)
+            runner.cancel(waiting)
+            runner.cancel(quick)
+            self.assertEqual(runner.wait(waiting, timeout=3).status, "canceled")
+            self.assertEqual(runner.wait(quick, timeout=3).status, "canceled")
 
     def test_terminal_history_prunes_old_handles_and_unreferenced_executions(self) -> None:
         with TaskRunner(self.root, successful_worker, terminal_history=2) as runner:
