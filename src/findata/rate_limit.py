@@ -10,7 +10,7 @@ from pathlib import Path
 
 
 class FileRateLimiter:
-    """A fixed-window permit ledger shared safely by local task processes."""
+    """A continuously refilling token bucket shared by local task processes."""
 
     def __init__(self, path: Path, *, limit: int, period: float) -> None:
         if limit <= 0 or period <= 0:
@@ -26,13 +26,13 @@ class FileRateLimiter:
         current = time.time() if now is None else float(now)
         with self.lock_path.open("a+b") as lock:
             fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
-            timestamps = self._read()
-            cutoff = current - self.period
-            timestamps = [value for value in timestamps if value > cutoff]
-            granted = len(timestamps) < self.limit
+            tokens, updated = self._read(current)
+            elapsed = max(0.0, current - updated)
+            tokens = min(float(self.limit), tokens + elapsed * self.limit / self.period)
+            granted = tokens >= 1.0
             if granted:
-                timestamps.append(current)
-            self._write(timestamps)
+                tokens -= 1.0
+            self._write(tokens, current)
             fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
         return granted
 
@@ -51,18 +51,22 @@ class FileRateLimiter:
                 checkpoint()
             time.sleep(min(0.1, self.period / 10))
 
-    def _read(self) -> list[float]:
+    def _read(self, now: float) -> tuple[float, float]:
         try:
             value = json.loads(self.path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
-            return []
-        return [float(item) for item in value.get("timestamps", [])] if isinstance(value, dict) else []
+            return 0.0, now
+        if not isinstance(value, dict) or "tokens" not in value or "updated" not in value:
+            return 0.0, now
+        return float(value["tokens"]), float(value["updated"])
 
-    def _write(self, timestamps: list[float]) -> None:
+    def _write(self, tokens: float, updated: float) -> None:
         descriptor, temporary = tempfile.mkstemp(prefix=".rate-", dir=self.path.parent)
         try:
             with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-                json.dump({"timestamps": timestamps}, stream, separators=(",", ":"))
+                json.dump(
+                    {"tokens": tokens, "updated": updated}, stream, separators=(",", ":")
+                )
                 stream.flush()
                 os.fsync(stream.fileno())
             os.chmod(temporary, 0o600)

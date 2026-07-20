@@ -2,11 +2,14 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import date
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
 from findata.contracts import DatasetSpec, provider_date
+
+if TYPE_CHECKING:
+    from findata.plugins import DatasetPlugin
 
 
 def _normalize_trade_cal(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -198,3 +201,44 @@ TUSHARE_DATASETS: Mapping[str, DatasetSpec] = {
     ),
 }
 
+
+def builtin_plugins() -> list["DatasetPlugin"]:
+    from findata.plugins import DatasetPlugin
+
+    definitions = {
+        "tushare_trade_cal": ("single-file-csv", ("update", "complete"), ()),
+        "tushare_stock_basic": ("single-file-csv", ("update",), ()),
+        "tushare_index_weight": ("partitioned-parquet", ("update", "complete"), ()),
+        "tushare_daily_basic": (
+            "partitioned-parquet",
+            ("update", "complete", "refresh"),
+            ("tushare_trade_cal", "tushare_index_weight"),
+        ),
+    }
+    return [
+        DatasetPlugin(
+            name=name,
+            provider="tushare",
+            spec=TUSHARE_DATASETS[name],
+            storage_strategy=strategy,
+            operations=operations,
+            dependencies=dependencies,
+        )
+        for name, (strategy, operations, dependencies) in definitions.items()
+    ]
+
+
+def trade_cal_plugin() -> "DatasetPlugin":
+    return builtin_plugins()[0]
+
+
+def stock_basic_plugin() -> "DatasetPlugin":
+    return builtin_plugins()[1]
+
+
+def index_weight_plugin() -> "DatasetPlugin":
+    return builtin_plugins()[2]
+
+
+def daily_basic_plugin() -> "DatasetPlugin":
+    return builtin_plugins()[3]

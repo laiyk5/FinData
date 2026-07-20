@@ -2,6 +2,16 @@
 
 This file is the canonical user-facing guide for findata. Architecture and invariants live in [DESIGN.md](DESIGN.md); individual dataset contracts live in [DATASETS.md](DATASETS.md).
 
+## Installation
+
+findata v1 requires Python 3.11 or newer on Linux or macOS and a local POSIX filesystem. From a source checkout, install the package and its Arrow dependency with:
+
+```bash
+python -m pip install .
+```
+
+This installs the `findata` and `findata-server` commands. Use a virtual environment when isolation from other Python packages is desired.
+
 ## Quick start
 
 The representative workflow below configures Tushare, backfills CSI 300 daily valuation data, and enables recurring updates.

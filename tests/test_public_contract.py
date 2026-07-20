@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import os
+import io
 import tempfile
 import unittest
 from datetime import date
 from pathlib import Path
 
-from findata.cli import resolve_workspace
+from findata.cli import main as cli_main, resolve_workspace
 from findata.contracts import OperandError
 from findata.operations import normalize_operation
 from findata.storage import Workspace
@@ -68,6 +68,29 @@ class WorkspaceResolutionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaisesRegex(RuntimeError, "findata-server init"):
                 resolve_workspace(None, environ={}, cwd=Path(directory))
+
+    def test_completion_generation_does_not_require_workspace(self) -> None:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        code = cli_main(["completion", "bash"], stdout=stdout, stderr=stderr)
+        self.assertEqual(code, 0)
+        self.assertIn("complete", stdout.getvalue())
+        self.assertEqual(stderr.getvalue(), "")
+
+    def test_event_ack_requires_an_id_or_all(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Workspace.init(Path(directory))
+            # A marker alone is enough to reach client discovery; no server should be contacted
+            # because syntax validation happens first.
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            code = cli_main(
+                ["--workspace", str(workspace.root), "events", "ack"],
+                stdout=stdout,
+                stderr=stderr,
+            )
+            self.assertEqual(code, 1)
+            self.assertIn("requires an event ID or --all", stderr.getvalue())
 
 
 if __name__ == "__main__":

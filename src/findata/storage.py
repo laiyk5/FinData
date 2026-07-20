@@ -19,6 +19,7 @@ import pyarrow as pa
 import pyarrow.csv as pacsv
 import pyarrow.parquet as pq
 
+from findata.contracts import DatasetSpec
 from findata.datasets.tushare import TUSHARE_DATASETS
 
 
@@ -97,10 +98,16 @@ class Workspace:
         (root / "config.lock").touch(mode=0o600, exist_ok=True)
         return workspace
 
-    def register_dataset(self, name: str, *, strategy: str) -> None:
+    def register_dataset(
+        self,
+        name: str,
+        *,
+        strategy: str,
+        spec: DatasetSpec | None = None,
+    ) -> None:
         if strategy not in {"single-file-csv", "partitioned-parquet"}:
             raise ValueError(f"unsupported storage strategy: {strategy}")
-        spec = TUSHARE_DATASETS[name]
+        spec = spec or TUSHARE_DATASETS[name]
         dataset_root = self.datasets_root / name
         dataset_root.mkdir(parents=True, exist_ok=True)
         (dataset_root / "snapshots").mkdir(exist_ok=True)
@@ -123,7 +130,15 @@ class Workspace:
         }
         if manifest_path.exists():
             existing = _read_json(manifest_path)
-            immutable = ("dataset", "schema", "primary_key", "partition_key", "time_field", "strategy")
+            immutable = (
+                "dataset",
+                "schema",
+                "primary_key",
+                "partition_key",
+                "time_field",
+                "strategy",
+                "data_layout_version",
+            )
             if any(existing.get(key) != manifest.get(key) for key in immutable):
                 raise StorageError(f"dataset {name!r} is already registered incompatibly")
             return

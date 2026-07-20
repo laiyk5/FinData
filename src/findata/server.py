@@ -6,9 +6,8 @@ import json
 import os
 import secrets
 import threading
-import time
 from dataclasses import asdict
-from datetime import UTC, date, datetime
+from datetime import date
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -17,11 +16,14 @@ from urllib.parse import parse_qs, urlparse
 
 from findata.cron import CronManager
 from findata.events import EventStore
+from findata.providers.tushare import TushareClient, TushareHTTPTransport
+from findata.rate_limit import FileRateLimiter
 from findata.datasets.tushare import TUSHARE_DATASETS
 from findata.operations import (
     OperationWorker,
     dataset_description,
     normalize_operation,
+    normalize_universe,
     operation_description,
     register_v1_datasets,
     resolve_v1_dependency,
@@ -163,6 +165,30 @@ class FindataServer:
             self.workspace.get_universe(dataset)
         )
 
+    def _probe_tushare(self) -> None:
+        configured = self.workspace.get_config("provider.tushare.token")
+        if isinstance(configured, dict) and isinstance(configured.get("env"), str):
+            token = os.environ.get(configured["env"], "")
+        else:
+            token = str(configured or "")
+        limiter = FileRateLimiter(
+            self.root / "providers" / "tushare-rate.json",
+            limit=int(self.workspace.get_config("provider.tushare.rate_limit", 500)),
+            period=60,
+        )
+        client = TushareClient(
+            token=token,
+            transport=TushareHTTPTransport(),
+            permit=limiter.acquire,
+        )
+        day = self.today.strftime("%Y%m%d")
+        client.query(
+            "tushare_trade_cal",
+            exchange="SSE",
+            start_date=day,
+            end_date=day,
+        )
+
     def _acquire_lock(self) -> None:
         lock_path = self.root / "server.lock"
         self._lock_file = lock_path.open("a+b")
@@ -208,17 +234,21 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
             query = parse_qs(parsed.query)
             try:
                 if method == "GET" and parts == ["v1", "system", "status"]:
+                    runtime = app.taskrunner.runtime_status()
                     self._send(
                         HTTPStatus.OK,
                         {
                             "status": "running",
                             "pid": os.getpid(),
                             "tasks": len(app.taskrunner.list_handles()),
+                            **runtime,
                         },
                     )
                     return
                 if method == "POST" and parts == ["v1", "tasks"]:
                     body = self._body()
+                    if not app._provider_ready():
+                        raise ValueError("provider tushare is not ready")
                     dataset = str(body["dataset"])
                     operation = str(body.get("operation") or "update")
                     operands = normalize_operation(
@@ -240,12 +270,18 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                         dataset=_query_one(query, "dataset"),
                         status=_query_one(query, "status"),
                     )
+                    if _query_one(query, "all") != "true":
+                        active = [item for item in items if item.status not in {"succeeded", "failed", "canceled"}]
+                        terminal = [item for item in items if item.status in {"succeeded", "failed", "canceled"}][:50]
+                        items = active + terminal
                     self._send(HTTPStatus.OK, {"items": [asdict(item) for item in items]})
                     return
                 if len(parts) >= 3 and parts[:2] == ["v1", "tasks"]:
                     handle_id = parts[2]
                     if method == "GET" and len(parts) == 3:
-                        self._send(HTTPStatus.OK, asdict(app.taskrunner.status(handle_id)))
+                        value = asdict(app.taskrunner.status(handle_id))
+                        value["subscriber_count"] = app.taskrunner.subscriber_count(handle_id)
+                        self._send(HTTPStatus.OK, value)
                         return
                     if method == "GET" and parts[3:] == ["logs"]:
                         self._send(HTTPStatus.OK, {"items": app.taskrunner.logs(handle_id)})
@@ -283,7 +319,12 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                 if method == "GET" and parts == ["v1", "providers", "tushare", "check"]:
                     configured = app.workspace.get_config("provider.tushare.token")
                     ready = app._provider_ready()
-                    self._send(HTTPStatus.OK, {"provider": "tushare", "ready": ready})
+                    if ready and app.provider_mode == "real":
+                        app._probe_tushare()
+                    self._send(
+                        HTTPStatus.OK,
+                        {"provider": "tushare", "ready": ready, "authenticated": ready},
+                    )
                     return
                 if method == "GET" and parts == ["v1", "providers"]:
                     self._send(
@@ -348,7 +389,8 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                         self._send(HTTPStatus.OK, {"selectors": app.workspace.get_universe(dataset)})
                     elif method == "PUT":
                         body = self._body()
-                        app.workspace.set_universe(dataset, list(body.get("selectors") or []))
+                        selectors = normalize_universe(dataset, list(body.get("selectors") or []))
+                        app.workspace.set_universe(dataset, selectors)
                         self._send(HTTPStatus.OK, {"selectors": app.workspace.get_universe(dataset)})
                     elif method == "DELETE":
                         app.workspace.clear_universe(dataset)
