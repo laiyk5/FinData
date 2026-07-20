@@ -30,6 +30,8 @@ class OperationReporter(Protocol):
 
     def log(self, message: str) -> None: ...
 
+    def fulfill(self, dataset: str, requirement: dict[str, Any]) -> Any: ...
+
 
 @dataclass(frozen=True, slots=True)
 class OperationWorker:
@@ -95,6 +97,21 @@ def register_v1_datasets(workspace: Workspace) -> None:
     }
     for dataset, strategy in strategies.items():
         workspace.register_dataset(dataset, strategy=strategy)
+
+
+def resolve_v1_dependency(
+    parent_dataset: str,
+    target_dataset: str,
+    requirement: dict[str, object],
+) -> tuple[str, dict[str, object]]:
+    if parent_dataset != "tushare_daily_basic" or target_dataset not in {
+        "tushare_trade_cal",
+        "tushare_index_weight",
+    }:
+        raise ValueError(
+            f"dataset {parent_dataset!r} has no declared dependency on {target_dataset!r}"
+        )
+    return "complete", dict(requirement)
 
 
 class DatasetService:
@@ -253,10 +270,14 @@ class DatasetService:
         else:
             raise OperandError(f"unsupported daily basic operation {operation!r}")
 
-        self._trade_cal(
-            "complete",
-            {"exchanges": ["SSE", "SZSE"], "timerange": _format_range(requested)},
-        )
+        trade_requirement = {
+            "exchanges": ["SSE", "SZSE"],
+            "timerange": _format_range(requested),
+        }
+        if self._reporter is not None and hasattr(self._reporter, "fulfill"):
+            self._reporter.fulfill("tushare_trade_cal", trade_requirement)
+        else:
+            self._trade_cal("complete", trade_requirement)
         symbols = self._resolve_symbols(selectors, requested)
         spec = TUSHARE_DATASETS["tushare_daily_basic"]
         existing_coverage = self._coverage_map(spec.name)
@@ -307,10 +328,11 @@ class DatasetService:
             else:
                 direct.append(selector)
         for index, interval in index_ranges.items():
-            self._index_weight(
-                "complete",
-                {"indexes": [index], "timerange": _format_range(interval)},
-            )
+            index_requirement = {"indexes": [index], "timerange": _format_range(interval)}
+            if self._reporter is not None and hasattr(self._reporter, "fulfill"):
+                self._reporter.fulfill("tushare_index_weight", index_requirement)
+            else:
+                self._index_weight("complete", index_requirement)
             rows = self.loader.dataset("tushare_index_weight").query(
                 keys=[index],
                 time_range=(interval.start, interval.end),
