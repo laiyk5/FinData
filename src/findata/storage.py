@@ -171,6 +171,22 @@ class Workspace:
             values = config.get("values") or {}
             return values.get(key, default) if isinstance(values, Mapping) else default
 
+    def list_config(self) -> dict[str, Any]:
+        with DatasetGate(self.root / "config.lock", exclusive=False):
+            config = _read_json(self.root / "config.json")
+            values = config.get("values") or {}
+            return dict(values) if isinstance(values, Mapping) else {}
+
+    def unset_config(self, key: str) -> bool:
+        with DatasetGate(self.root / "config.lock", exclusive=True):
+            config = _read_json(self.root / "config.json")
+            values = dict(config.get("values") or {})
+            existed = key in values
+            values.pop(key, None)
+            config["values"] = values
+            _atomic_json(self.root / "config.json", config, mode=0o600)
+            return existed
+
 
 class Publisher:
     def __init__(self, dataset_root: Path, *, fault_injector: FaultInjector | None = None) -> None:

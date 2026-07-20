@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import unittest
+from collections.abc import Mapping
 from datetime import date
+from typing import Any
 
 import pyarrow as pa
 
@@ -14,6 +16,25 @@ from findata.testing.tushare import MockTushareTransport
 
 
 class TushareClientTests(unittest.TestCase):
+    def test_rate_permit_is_acquired_before_transport(self) -> None:
+        calls: list[str] = []
+
+        def permit() -> None:
+            calls.append("permit")
+
+        def transport(payload: Mapping[str, Any]) -> Mapping[str, Any]:
+            calls.append("transport")
+            return MockTushareTransport(today=date(2026, 7, 20))(payload)
+
+        client = TushareClient(token="secret", transport=transport, permit=permit)
+        client.query(
+            "tushare_trade_cal",
+            exchange="SSE",
+            start_date="20260720",
+            end_date="20260720",
+        )
+        self.assertEqual(calls, ["permit", "transport"])
+
     def setUp(self) -> None:
         self.transport = MockTushareTransport(today=date(2026, 7, 20))
         self.client = TushareClient(token="test-token", transport=self.transport)
@@ -112,4 +133,3 @@ class TushareClientTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

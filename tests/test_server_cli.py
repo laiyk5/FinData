@@ -7,7 +7,7 @@ import stat
 import tempfile
 import time
 import unittest
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
@@ -114,6 +114,36 @@ class ServerCLITests(unittest.TestCase):
         canceled = self.request("POST", f"/v1/tasks/{handle}/cancel", {})
         self.assertEqual(canceled["status"], "succeeded")
 
+    def test_cron_events_and_redacted_config_are_available_through_cli(self) -> None:
+        os.environ["TUSHARE_API_TOKEN"] = "not-used-by-mock"
+        self.addCleanup(os.environ.pop, "TUSHARE_API_TOKEN", None)
+        self.run_cli("config", "set", "provider.tushare.token", "--env", "TUSHARE_API_TOKEN")
+        config = json.loads(
+            self.run_cli("--json", "config", "get", "provider.tushare.token")[1]
+        )
+        self.assertEqual(config["value"], "<redacted>")
+
+        self.run_cli(
+            "dataset", "universe", "set", "tushare_daily_basic", "CSI300@latest"
+        )
+        enabled = json.loads(
+            self.run_cli("--json", "cron", "enable", "tushare_daily_basic")[1]
+        )
+        self.assertTrue(enabled["enabled"])
+        self.server.cron.tick(datetime.fromisoformat(enabled["next_run"]))
+        tasks = self.request("GET", "/v1/tasks")["items"]
+        self.assertTrue(any(item["owner"] == "cron" for item in tasks))
+
+        failed = self.request(
+            "POST", "/v1/tasks", {"dataset": "not_registered", "operation": "update"}
+        )["handle_id"]
+        self.wait_http(failed)
+        events = json.loads(self.run_cli("--json", "events", "ls", "--unread")[1])
+        failure = next(item for item in events["items"] if item["kind"] == "task_failed")
+        self.run_cli("events", "ack", failure["event_id"])
+        unread = json.loads(self.run_cli("--json", "events", "ls", "--unread")[1])
+        self.assertNotIn(failure["event_id"], {item["event_id"] for item in unread["items"]})
+
     def run_cli(self, *arguments: str) -> tuple[int, str]:
         stdout = io.StringIO()
         stderr = io.StringIO()
@@ -147,4 +177,3 @@ class ServerCLITests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

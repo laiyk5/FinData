@@ -46,17 +46,26 @@ class TushareHTTPTransport:
 
 
 class TushareClient:
-    def __init__(self, *, token: str, transport: Transport) -> None:
+    def __init__(
+        self,
+        *,
+        token: str,
+        transport: Transport,
+        permit: Callable[[], None] | None = None,
+    ) -> None:
         if not token:
             raise ValueError("Tushare token is required")
         self._token = token
         self._transport = transport
+        self._permit = permit
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}(token=<redacted>, transport={self._transport!r})"
 
     def query(self, dataset: str, **params: Any) -> pa.Table:
         spec = TUSHARE_DATASETS[dataset]
+        if self._permit is not None:
+            self._permit()
         payload = {
             "api_name": spec.api_name,
             "token": self._token,
@@ -83,4 +92,3 @@ class TushareClient:
             return spec.table_from_response(fields, items)
         except DatasetDataError as exc:
             raise ProviderProtocolError(str(exc)) from exc
-
