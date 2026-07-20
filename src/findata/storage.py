@@ -91,6 +91,10 @@ class Workspace:
             data = _read_json(marker)
             if data.get("workspace_version") != WORKSPACE_VERSION:
                 raise StorageError("unsupported workspace version")
+        config = root / "config.json"
+        if not config.exists():
+            _atomic_json(config, {"universes": {}}, mode=0o600)
+        (root / "config.lock").touch(mode=0o600, exist_ok=True)
         return workspace
 
     def register_dataset(self, name: str, *, strategy: str) -> None:
@@ -132,6 +136,24 @@ class Workspace:
         fault_injector: FaultInjector | None = None,
     ) -> Publisher:
         return Publisher(self.datasets_root / name, fault_injector=fault_injector)
+
+    def set_universe(self, dataset: str, selectors: Iterable[str]) -> None:
+        values = list(dict.fromkeys(selectors))
+        if not values or any(not isinstance(value, str) or not value for value in values):
+            raise ValueError("maintenance universe must contain nonempty selectors")
+        with DatasetGate(self.root / "config.lock", exclusive=True):
+            config = _read_json(self.root / "config.json")
+            universes = dict(config.get("universes") or {})
+            universes[dataset] = values
+            config["universes"] = universes
+            _atomic_json(self.root / "config.json", config, mode=0o600)
+
+    def get_universe(self, dataset: str) -> list[str]:
+        with DatasetGate(self.root / "config.lock", exclusive=False):
+            config = _read_json(self.root / "config.json")
+            universes = config.get("universes") or {}
+            values = universes.get(dataset, []) if isinstance(universes, Mapping) else []
+            return list(values) if isinstance(values, list) else []
 
 
 class Publisher:
@@ -290,4 +312,3 @@ def _fsync_directory(path: Path) -> None:
         os.fsync(descriptor)
     finally:
         os.close(descriptor)
-
