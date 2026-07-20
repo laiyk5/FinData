@@ -41,15 +41,24 @@ class OperationWorker:
 
     def __call__(self, request: dict[str, object], context: OperationReporter) -> dict[str, Any]:
         current_date = date.fromisoformat(self.today)
+        workspace = Workspace(Path(self.workspace))
         if self.provider == "mock":
             transport = MockTushareTransport(today=current_date)
+            token = self.token or "mock-token"
         elif self.provider == "real":
             transport = TushareHTTPTransport()
+            configured = workspace.get_config("provider.tushare.token")
+            if isinstance(configured, dict) and isinstance(configured.get("env"), str):
+                import os
+
+                token = os.environ.get(configured["env"], "")
+            else:
+                token = str(configured or self.token)
         else:
             raise ValueError(f"unsupported provider mode {self.provider!r}")
         service = DatasetService(
-            Workspace(Path(self.workspace)),
-            TushareClient(token=self.token, transport=transport),
+            workspace,
+            TushareClient(token=token, transport=transport),
             today=current_date,
             reporter=context,
         )

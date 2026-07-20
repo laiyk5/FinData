@@ -155,6 +155,22 @@ class Workspace:
             values = universes.get(dataset, []) if isinstance(universes, Mapping) else []
             return list(values) if isinstance(values, list) else []
 
+    def set_config(self, key: str, value: Any) -> None:
+        if not key or key in {"universes", "workspace_version"}:
+            raise ValueError("invalid configuration key")
+        with DatasetGate(self.root / "config.lock", exclusive=True):
+            config = _read_json(self.root / "config.json")
+            values = dict(config.get("values") or {})
+            values[key] = value
+            config["values"] = values
+            _atomic_json(self.root / "config.json", config, mode=0o600)
+
+    def get_config(self, key: str, default: Any = None) -> Any:
+        with DatasetGate(self.root / "config.lock", exclusive=False):
+            config = _read_json(self.root / "config.json")
+            values = config.get("values") or {}
+            return values.get(key, default) if isinstance(values, Mapping) else default
+
 
 class Publisher:
     def __init__(self, dataset_root: Path, *, fault_injector: FaultInjector | None = None) -> None:
