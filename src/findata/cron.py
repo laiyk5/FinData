@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -68,6 +68,30 @@ class CronSchedule:
             and cron_weekday in self.weekdays
         )
 
+    def skipped_between(self, start: datetime, end: datetime) -> list[str]:
+        if start.tzinfo is None or end.tzinfo is None or start >= end:
+            raise ValueError("cron gap interval must be ordered and timezone-aware")
+        first_date = start.astimezone(self.zone).date()
+        last_date = end.astimezone(self.zone).date()
+        result: list[str] = []
+        day = first_date
+        while day <= last_date:
+            for hour in self.hours:
+                for minute in self.minutes:
+                    local = datetime.combine(day, time(hour, minute))
+                    if not self.matches(local):
+                        continue
+                    candidates = [local.replace(tzinfo=self.zone, fold=fold) for fold in (0, 1)]
+                    valid = any(
+                        candidate.astimezone(UTC).astimezone(self.zone).replace(tzinfo=None) == local
+                        for candidate in candidates
+                    )
+                    approximate = candidates[0].astimezone(UTC)
+                    if not valid and start < approximate <= end:
+                        result.append(local.isoformat())
+            day += timedelta(days=1)
+        return sorted(set(result))
+
 
 class CronManager:
     def __init__(
@@ -106,6 +130,7 @@ class CronManager:
         state = self._state()
         entry = dict(state.get(dataset) or {})
         entry["enabled"] = True
+        entry["last_checked"] = current.isoformat()
         job = self._job(dataset, entry, current)
         entry["next_run"] = job.next_run
         state[dataset] = entry
@@ -156,6 +181,23 @@ class CronManager:
             if not entry.get("enabled"):
                 continue
             job = self._job(dataset, entry, current)
+            last_checked_text = entry.get("last_checked")
+            if last_checked_text:
+                schedule = CronSchedule(job.expression, job.timezone)
+                for wall_time in schedule.skipped_between(
+                    datetime.fromisoformat(last_checked_text), current
+                ):
+                    self.events.record(
+                        "cron_dst_gap",
+                        "warning",
+                        f"scheduled wall time did not exist for {dataset}",
+                        dataset=dataset,
+                        wall_time=wall_time,
+                        timezone=job.timezone,
+                    )
+            entry["last_checked"] = current.isoformat()
+            state[dataset] = entry
+            changed = True
             due = datetime.fromisoformat(job.next_run) if job.next_run else None
             if due is None or due > current:
                 continue

@@ -6,6 +6,7 @@ from datetime import date
 from typing import Any
 
 import pyarrow as pa
+from urllib.error import URLError
 
 from findata.providers.tushare import (
     ProviderProtocolError,
@@ -34,6 +35,34 @@ class TushareClientTests(unittest.TestCase):
             end_date="20260720",
         )
         self.assertEqual(calls, ["permit", "transport"])
+
+    def test_transient_transport_failure_retries_with_a_new_rate_permit(self) -> None:
+        attempts = 0
+        permits = 0
+
+        def permit() -> None:
+            nonlocal permits
+            permits += 1
+
+        def transport(payload: Mapping[str, Any]) -> Mapping[str, Any]:
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise URLError("temporary")
+            return MockTushareTransport(today=date(2026, 7, 20))(payload)
+
+        client = TushareClient(
+            token="secret",
+            transport=transport,
+            permit=permit,
+            max_attempts=2,
+            retry_delay=0,
+        )
+        table = client.query(
+            "tushare_trade_cal", exchange="SSE", start_date="20260720", end_date="20260720"
+        )
+        self.assertEqual(table.num_rows, 1)
+        self.assertEqual((attempts, permits), (2, 2))
 
     def setUp(self) -> None:
         self.transport = MockTushareTransport(today=date(2026, 7, 20))

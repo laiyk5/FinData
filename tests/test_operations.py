@@ -105,7 +105,26 @@ class DatasetOperationTests(unittest.TestCase):
         coverage = DataLoader(self.root).dataset("tushare_daily_basic").coverage()
         self.assertEqual(set(coverage.column("key").to_pylist()), {"000001.SZ", "600000.SH", "600519.SH"})
 
+    def test_mid_backfill_failure_keeps_checkpoints_and_rerun_fetches_only_missing_work(self) -> None:
+        # calendar (2), two index months (2), first daily symbol (1), then fail.
+        self.transport.fail_on_call(6, code=-1, message="injected terminal failure")
+        operands = {"symbols": ["CSI300"], "timerange": "2026-06-29:2026-07-04"}
+
+        with self.assertRaisesRegex(RuntimeError, "injected terminal failure"):
+            self.service.run("tushare_daily_basic", "complete", operands)
+
+        coverage = DataLoader(self.root).dataset("tushare_daily_basic").coverage().to_pylist()
+        self.assertEqual([item["key"] for item in coverage], ["000001.SZ"])
+        requests_before_resume = len(self.transport.requests)
+        resumed = self.service.run("tushare_daily_basic", "complete", operands)
+
+        self.assertEqual(resumed.fetched_requests, 2)
+        self.assertEqual(len(self.transport.requests) - requests_before_resume, 2)
+        self.assertEqual(
+            set(DataLoader(self.root).dataset("tushare_daily_basic").coverage().column("key").to_pylist()),
+            {"000001.SZ", "600000.SH", "600519.SH"},
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
-

@@ -17,6 +17,7 @@ class MockTushareTransport:
         self.requests: list[dict[str, Any]] = []
         self._next_error: tuple[int, str] | None = None
         self._next_drop_field: str | None = None
+        self._call_errors: dict[int, tuple[int, str]] = {}
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}(today={self.today.isoformat()!r})"
@@ -27,9 +28,18 @@ class MockTushareTransport:
     def drop_field_next(self, field: str) -> None:
         self._next_drop_field = field
 
+    def fail_on_call(self, number: int, *, code: int, message: str) -> None:
+        if number <= 0:
+            raise ValueError("call number must be positive")
+        self._call_errors[number] = (code, message)
+
     def __call__(self, payload: Mapping[str, Any]) -> Mapping[str, Any]:
         request = deepcopy(dict(payload))
         self.requests.append(request)
+        scheduled_error = self._call_errors.pop(len(self.requests), None)
+        if scheduled_error is not None:
+            code, message = scheduled_error
+            return {"code": code, "msg": message, "data": None}
         if self._next_error is not None:
             code, message = self._next_error
             self._next_error = None
@@ -203,4 +213,3 @@ def _stock_row(
         "act_name": None,
         "act_ent_type": None,
     }
-

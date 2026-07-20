@@ -70,6 +70,14 @@ class CronScheduleTests(unittest.TestCase):
             datetime(2026, 11, 2, 6, 30, tzinfo=UTC),
         )
 
+    def test_detects_nonexistent_scheduled_wall_time(self) -> None:
+        schedule = CronSchedule("30 2 * * *", "Europe/Berlin")
+        skipped = schedule.skipped_between(
+            datetime(2026, 3, 28, 12, 0, tzinfo=UTC),
+            datetime(2026, 3, 29, 3, 0, tzinfo=UTC),
+        )
+        self.assertEqual(skipped, ["2026-03-29T02:30:00"])
+
 
 class CronManagerTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -115,6 +123,17 @@ class CronManagerTests(unittest.TestCase):
         self.manager.recover(datetime(2026, 7, 20, 2, 0, tzinfo=UTC))
         self.assertEqual(self.submissions, [])
         self.assertEqual(self.events.list_events()[0].kind, "cron_missed")
+
+    def test_dst_gap_records_warning_event(self) -> None:
+        self.manager.set_schedule(
+            "tushare_trade_cal", "30 2 * * *", "Europe/Berlin"
+        )
+        self.manager.enable(
+            "tushare_trade_cal", now=datetime(2026, 3, 28, 12, 0, tzinfo=UTC)
+        )
+        self.manager.tick(datetime(2026, 3, 29, 3, 0, tzinfo=UTC))
+        event = next(item for item in self.events.list_events() if item.kind == "cron_dst_gap")
+        self.assertEqual(event.severity, "warning")
 
 
 if __name__ == "__main__":
