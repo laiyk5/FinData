@@ -135,6 +135,7 @@ class TaskRunner:
         cancel_grace: float = 5.0,
         terminal_history: int = 1_000,
         launch_timeout: float = 5.0,
+        event_sink: Callable[..., Any] | None = None,
     ) -> None:
         if global_concurrency <= 0:
             raise ValueError("global_concurrency must be positive")
@@ -147,6 +148,7 @@ class TaskRunner:
         self.cancel_grace = cancel_grace
         self.terminal_history = terminal_history
         self.launch_timeout = launch_timeout
+        self.event_sink = event_sink
         self.tasks_root = self.workspace / "tasks"
         self.handles_root = self.tasks_root / "handles"
         self.executions_root = self.tasks_root / "executions"
@@ -221,6 +223,13 @@ class TaskRunner:
                 ]
                 waiting_count = max(0, len(active) - 1)
                 if waiting_count >= self.per_dataset_queue_limit:
+                    self._event(
+                        "queue_rejected",
+                        "error",
+                        f"task rejected because the {dataset} queue is full",
+                        dataset=dataset,
+                        operation=operation,
+                    )
                     raise QueueFullError(
                         f"dataset {dataset!r} already has {self.per_dataset_queue_limit} queued executions"
                     )
@@ -620,6 +629,15 @@ class TaskRunner:
                 handle.updated_at = execution.updated_at
                 self._persist_handle(handle)
             self._persist_execution(execution)
+            if status == "failed":
+                self._event(
+                    "task_failed",
+                    "error",
+                    f"task {execution.execution_id} failed: {error}",
+                    dataset=execution.dataset,
+                    operation=execution.operation,
+                    execution_id=execution.execution_id,
+                )
             self._prune_history(execution.dataset)
             self._condition.notify_all()
 
@@ -702,6 +720,23 @@ class TaskRunner:
                 handle.error = "server_interrupted"
                 handle.updated_at = now
                 self._persist_handle(handle)
+            self._event(
+                "task_failed",
+                "error",
+                f"task {execution.execution_id} failed: server_interrupted",
+                dataset=execution.dataset,
+                operation=execution.operation,
+                execution_id=execution.execution_id,
+            )
+
+    def _event(self, kind: str, severity: str, message: str, **context: Any) -> None:
+        if self.event_sink is None:
+            return
+        try:
+            self.event_sink(kind, severity, message, **context)
+        except Exception:
+            # Event reporting cannot corrupt the task state transition it describes.
+            pass
 
     def _prune_history(self, dataset: str) -> None:
         terminal = sorted(

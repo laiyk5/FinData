@@ -6,15 +6,17 @@ import json
 import os
 import secrets
 import threading
+import time
 from dataclasses import asdict
-from datetime import date
+from datetime import UTC, date, datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-from findata.loader import DatasetNotReadyError
+from findata.cron import CronManager
+from findata.events import EventStore
 from findata.operations import OperationWorker, register_v1_datasets
 from findata.storage import Workspace
 from findata.taskrunner import QueueFullError, TaskNotFoundError, TaskRunner
@@ -58,6 +60,9 @@ class FindataServer:
         self._lock_file: Any = None
         self._httpd: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
+        self._cron_thread: threading.Thread | None = None
+        self._cron_stop = threading.Event()
+        self.events = EventStore(self.root)
         self.taskrunner = TaskRunner(
             self.root,
             OperationWorker(
@@ -67,6 +72,16 @@ class FindataServer:
                 today=self.today.isoformat(),
             ),
             global_concurrency=global_concurrency,
+            event_sink=self.events.record,
+        )
+        self.cron = CronManager(
+            self.workspace,
+            self.events,
+            submit=lambda dataset, operation, operands: self.taskrunner.submit(
+                dataset, operation, operands, owner="cron"
+            ),
+            provider_ready=lambda _dataset: self._provider_ready(),
+            universe_ready=self._universe_ready,
         )
 
     @property
@@ -81,10 +96,14 @@ class FindataServer:
         self._acquire_lock()
         try:
             self.taskrunner.start()
+            self.cron.recover()
             handler = _handler_for(self)
             self._httpd = ThreadingHTTPServer((self.host, self.port), handler)
             self._thread = threading.Thread(target=self._httpd.serve_forever, daemon=True)
             self._thread.start()
+            self._cron_stop.clear()
+            self._cron_thread = threading.Thread(target=self._cron_loop, daemon=True)
+            self._cron_thread.start()
             _write_json(
                 self.root / "server.json",
                 {"host": self.host, "port": self._httpd.server_port, "pid": os.getpid()},
@@ -104,6 +123,11 @@ class FindataServer:
             self.shutdown()
 
     def shutdown(self) -> None:
+        self._cron_stop.set()
+        if self._cron_thread is not None:
+            self._cron_thread.join(timeout=2)
+            self._cron_thread = None
+        self.cron.note_shutdown()
         if self._httpd is not None:
             self._httpd.shutdown()
             self._httpd.server_close()
@@ -114,6 +138,20 @@ class FindataServer:
         self.taskrunner.shutdown()
         (self.root / "server.json").unlink(missing_ok=True)
         self._release_lock()
+
+    def _cron_loop(self) -> None:
+        while not self._cron_stop.wait(1.0):
+            self.cron.tick()
+
+    def _provider_ready(self) -> bool:
+        return self.provider_mode == "mock" or _configured_secret_ready(
+            self.workspace.get_config("provider.tushare.token")
+        )
+
+    def _universe_ready(self, dataset: str) -> bool:
+        return dataset not in {"tushare_index_weight", "tushare_daily_basic"} or bool(
+            self.workspace.get_universe(dataset)
+        )
 
     def _acquire_lock(self) -> None:
         lock_path = self.root / "server.lock"
@@ -144,6 +182,9 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
 
         def do_PUT(self) -> None:  # noqa: N802
             self._dispatch("PUT")
+
+        def do_DELETE(self) -> None:  # noqa: N802
+            self._dispatch("DELETE")
 
         def log_message(self, format: str, *args: Any) -> None:
             return
@@ -204,9 +245,26 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                     app.workspace.set_config(str(body["key"]), body["value"])
                     self._send(HTTPStatus.OK, {"updated": True})
                     return
+                if method == "GET" and parts == ["v1", "config"]:
+                    key = _query_one(query, "key")
+                    values = app.workspace.list_config()
+                    if key is not None:
+                        if key not in values:
+                            self._send(HTTPStatus.NOT_FOUND, {"error": "config_not_found"})
+                        else:
+                            self._send(HTTPStatus.OK, {"key": key, "value": _redact(key, values[key])})
+                    else:
+                        self._send(
+                            HTTPStatus.OK,
+                            {"values": {name: _redact(name, value) for name, value in values.items()}},
+                        )
+                    return
+                if method == "DELETE" and len(parts) == 3 and parts[:2] == ["v1", "config"]:
+                    self._send(HTTPStatus.OK, {"removed": app.workspace.unset_config(parts[2])})
+                    return
                 if method == "GET" and parts == ["v1", "providers", "tushare", "check"]:
                     configured = app.workspace.get_config("provider.tushare.token")
-                    ready = app.provider_mode == "mock" or _configured_secret_ready(configured)
+                    ready = app._provider_ready()
                     self._send(HTTPStatus.OK, {"provider": "tushare", "ready": ready})
                     return
                 if len(parts) == 4 and parts[:2] == ["v1", "datasets"] and parts[3:] == ["universe"]:
@@ -217,6 +275,44 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                         body = self._body()
                         app.workspace.set_universe(dataset, list(body.get("selectors") or []))
                         self._send(HTTPStatus.OK, {"selectors": app.workspace.get_universe(dataset)})
+                    return
+                if method == "GET" and parts == ["v1", "cron"]:
+                    self._send(HTTPStatus.OK, {"items": [asdict(job) for job in app.cron.list_jobs()]})
+                    return
+                if len(parts) >= 4 and parts[:2] == ["v1", "cron"]:
+                    dataset, action = parts[2], parts[3]
+                    if method == "POST" and action == "enable":
+                        self._send(HTTPStatus.OK, asdict(app.cron.enable(dataset)))
+                    elif method == "POST" and action == "disable":
+                        self._send(HTTPStatus.OK, asdict(app.cron.disable(dataset)))
+                    elif method == "PUT" and action == "schedule":
+                        body = self._body()
+                        self._send(
+                            HTTPStatus.OK,
+                            asdict(app.cron.set_schedule(dataset, str(body["expression"]), str(body["timezone"]))),
+                        )
+                    elif method == "POST" and action == "reset":
+                        self._send(HTTPStatus.OK, asdict(app.cron.reset(dataset)))
+                    else:
+                        self._send(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+                    return
+                if method == "GET" and parts == ["v1", "events"]:
+                    since_text = _query_one(query, "since")
+                    items = app.events.list_events(
+                        unread=_query_one(query, "unread") == "true",
+                        since=float(since_text) if since_text else None,
+                        severity=_query_one(query, "severity"),
+                    )
+                    self._send(HTTPStatus.OK, {"items": [asdict(item) for item in items]})
+                    return
+                if method == "POST" and parts == ["v1", "events", "ack"]:
+                    body = self._body()
+                    if body.get("all"):
+                        count = app.events.ack_all()
+                    else:
+                        app.events.ack(str(body["event_id"]))
+                        count = 1
+                    self._send(HTTPStatus.OK, {"acknowledged": count})
                     return
                 self._send(HTTPStatus.NOT_FOUND, {"error": "not_found"})
             except QueueFullError as exc:
@@ -257,6 +353,13 @@ def _configured_secret_ready(value: Any) -> bool:
     if isinstance(value, dict) and isinstance(value.get("env"), str):
         return bool(os.environ.get(value["env"]))
     return bool(value)
+
+
+def _redact(key: str, value: Any) -> Any:
+    lowered = key.lower()
+    if any(word in lowered for word in ("token", "secret", "password", "credential")):
+        return "<redacted>"
+    return value
 
 
 def _query_one(query: dict[str, list[str]], key: str) -> str | None:

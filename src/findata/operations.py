@@ -12,6 +12,7 @@ from findata.contracts import DateRange, DatasetSpec, OperandError
 from findata.datasets.tushare import TUSHARE_DATASETS
 from findata.loader import DataLoader, DatasetNotReadyError, UnsupportedCoverageError
 from findata.providers.tushare import TushareClient, TushareHTTPTransport
+from findata.rate_limit import FileRateLimiter
 from findata.storage import Coverage, Workspace
 from findata.testing.tushare import MockTushareTransport
 
@@ -56,9 +57,20 @@ class OperationWorker:
                 token = str(configured or self.token)
         else:
             raise ValueError(f"unsupported provider mode {self.provider!r}")
+        rate_limit = int(workspace.get_config("provider.tushare.rate_limit", 500))
+        limiter = FileRateLimiter(
+            workspace.root / "providers" / "tushare-rate.json",
+            limit=rate_limit,
+            period=60,
+        )
+
+        def permit() -> None:
+            limiter.acquire(checkpoint=context.checkpoint, waiting=context.waiting)
+            context.running()
+
         service = DatasetService(
             workspace,
-            TushareClient(token=token, transport=transport),
+            TushareClient(token=token, transport=transport, permit=permit),
             today=current_date,
             reporter=context,
         )

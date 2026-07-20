@@ -42,6 +42,11 @@ def _execute(client: _Client, args: argparse.Namespace) -> object:
         else:
             raise ValueError("config set requires a value, --env, or --stdin")
         return client.request("POST", "/v1/config", {"key": args.key, "value": value})
+    if args.group == "config" and args.action in {"get", "ls"}:
+        suffix = f"?{urlencode({'key': args.key})}" if getattr(args, "key", None) else ""
+        return client.request("GET", f"/v1/config{suffix}")
+    if args.group == "config" and args.action == "unset":
+        return client.request("DELETE", f"/v1/config/{args.key}")
     if args.group == "provider" and args.action == "check":
         return client.request("GET", f"/v1/providers/{args.name}/check")
     if args.group == "dataset" and args.action == "universe":
@@ -75,6 +80,33 @@ def _execute(client: _Client, args: argparse.Namespace) -> object:
         return client.request("GET", f"/v1/tasks/{args.handle}/logs")
     if args.group == "task" and args.action == "cancel":
         return client.request("POST", f"/v1/tasks/{args.handle}/cancel", {})
+    if args.group == "cron":
+        if args.action == "ls":
+            return client.request("GET", "/v1/cron")
+        if args.action in {"enable", "disable", "reset"}:
+            return client.request("POST", f"/v1/cron/{args.dataset}/{args.action}", {})
+        if args.action == "set":
+            return client.request(
+                "PUT",
+                f"/v1/cron/{args.dataset}/schedule",
+                {"expression": args.expression, "timezone": args.timezone},
+            )
+    if args.group == "events":
+        if args.action == "ls":
+            query: dict[str, str] = {}
+            if args.unread:
+                query["unread"] = "true"
+            if args.severity:
+                query["severity"] = args.severity
+            if args.since:
+                query["since"] = str(time.time() - _duration_seconds(args.since))
+            suffix = f"?{urlencode(query)}" if query else ""
+            return client.request("GET", f"/v1/events{suffix}")
+        return client.request(
+            "POST", "/v1/events/ack", {"all": args.all, "event_id": args.event_id}
+        )
+    if args.group == "system" and args.action == "status":
+        return client.request("GET", "/v1/system/status")
     raise ValueError("unsupported command")
 
 
@@ -159,6 +191,11 @@ def _parser() -> argparse.ArgumentParser:
     config_set.add_argument("value", nargs="?")
     config_set.add_argument("--env")
     config_set.add_argument("--stdin", action="store_true")
+    config_get = config.add_parser("get")
+    config_get.add_argument("key", nargs="?")
+    config.add_parser("ls")
+    config_unset = config.add_parser("unset")
+    config_unset.add_argument("key")
 
     provider = groups.add_parser("provider").add_subparsers(dest="action", required=True)
     provider_check = provider.add_parser("check")
@@ -185,9 +222,43 @@ def _parser() -> argparse.ArgumentParser:
     for action in ("status", "logs", "cancel"):
         command = task.add_parser(action)
         command.add_argument("handle")
+
+    cron = groups.add_parser("cron").add_subparsers(dest="action", required=True)
+    cron.add_parser("ls")
+    for action in ("enable", "disable", "reset"):
+        command = cron.add_parser(action)
+        command.add_argument("dataset")
+    cron_set = cron.add_parser("set")
+    cron_set.add_argument("dataset")
+    cron_set.add_argument("--expression", required=True)
+    cron_set.add_argument("--timezone", required=True)
+
+    events = groups.add_parser("events").add_subparsers(dest="action", required=True)
+    events_ls = events.add_parser("ls")
+    events_ls.add_argument("--unread", action="store_true")
+    events_ls.add_argument("--since")
+    events_ls.add_argument("--severity", choices=("info", "warning", "error"))
+    events_ack = events.add_parser("ack")
+    events_ack.add_argument("event_id", nargs="?")
+    events_ack.add_argument("--all", action="store_true")
+
+    system = groups.add_parser("system").add_subparsers(dest="action", required=True)
+    system.add_parser("status")
     return parser
+
+
+def _duration_seconds(value: str) -> float:
+    units = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+    if len(value) < 2 or value[-1] not in units:
+        raise ValueError("duration must end in s, m, h, or d")
+    try:
+        amount = float(value[:-1])
+    except ValueError as exc:
+        raise ValueError(f"invalid duration {value!r}") from exc
+    if amount < 0:
+        raise ValueError("duration cannot be negative")
+    return amount * units[value[-1]]
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

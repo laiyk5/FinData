@@ -1,0 +1,259 @@
+from __future__ import annotations
+
+from collections.abc import Callable
+from dataclasses import asdict, dataclass
+from datetime import UTC, datetime, timedelta
+from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+from findata.events import EventStore
+from findata.storage import Workspace
+
+
+SUGGESTED_JOBS = {
+    "tushare_trade_cal": ("0 9 * * 1", "Asia/Shanghai"),
+    "tushare_stock_basic": ("0 8 * * 1", "Asia/Shanghai"),
+    "tushare_index_weight": ("0 18 * * 1", "Asia/Shanghai"),
+    "tushare_daily_basic": ("40 17 * * 1-5", "Asia/Shanghai"),
+}
+
+
+@dataclass(frozen=True, slots=True)
+class CronJob:
+    dataset: str
+    expression: str
+    timezone: str
+    enabled: bool
+    source: str
+    last_run: str | None
+    next_run: str | None
+
+
+class CronSchedule:
+    def __init__(self, expression: str, timezone: str) -> None:
+        fields = expression.split()
+        if len(fields) != 5:
+            raise ValueError("cron expression must have five fields")
+        try:
+            self.zone = ZoneInfo(timezone)
+        except ZoneInfoNotFoundError as exc:
+            raise ValueError(f"unknown IANA timezone {timezone!r}") from exc
+        self.expression = expression
+        self.timezone = timezone
+        self.minutes = _field(fields[0], 0, 59)
+        self.hours = _field(fields[1], 0, 23)
+        self.days = _field(fields[2], 1, 31)
+        self.months = _field(fields[3], 1, 12)
+        self.weekdays = _field(fields[4], 0, 7, sunday=True)
+
+    def next_after(self, instant: datetime) -> datetime:
+        if instant.tzinfo is None:
+            raise ValueError("cron instants must be timezone-aware")
+        candidate = instant.astimezone(UTC).replace(second=0, microsecond=0) + timedelta(minutes=1)
+        limit = candidate + timedelta(days=370)
+        while candidate <= limit:
+            local = candidate.astimezone(self.zone)
+            if local.fold == 0 and self.matches(local):
+                return candidate
+            candidate += timedelta(minutes=1)
+        raise ValueError("cron expression has no occurrence within one year")
+
+    def matches(self, local: datetime) -> bool:
+        cron_weekday = (local.weekday() + 1) % 7
+        return (
+            local.minute in self.minutes
+            and local.hour in self.hours
+            and local.day in self.days
+            and local.month in self.months
+            and cron_weekday in self.weekdays
+        )
+
+
+class CronManager:
+    def __init__(
+        self,
+        workspace: Workspace,
+        events: EventStore,
+        *,
+        submit: Callable[[str, str, dict[str, object]], Any],
+        provider_ready: Callable[[str], bool],
+        universe_ready: Callable[[str], bool],
+    ) -> None:
+        self.workspace = workspace
+        self.events = events
+        self.submit = submit
+        self.provider_ready = provider_ready
+        self.universe_ready = universe_ready
+
+    def list_jobs(self, *, now: datetime | None = None) -> list[CronJob]:
+        current = (now or datetime.now(UTC)).astimezone(UTC)
+        state = self._state()
+        return [self._job(dataset, state.get(dataset, {}), current) for dataset in SUGGESTED_JOBS]
+
+    def enable(self, dataset: str, *, now: datetime | None = None) -> CronJob:
+        current = (now or datetime.now(UTC)).astimezone(UTC)
+        self._validate_dataset(dataset)
+        if not self.provider_ready(dataset):
+            self.events.record(
+                "cron_skipped", "error", f"cannot enable {dataset}: provider is not ready", dataset=dataset
+            )
+            raise ValueError(f"provider for {dataset} is not ready")
+        if not self.universe_ready(dataset):
+            self.events.record(
+                "cron_skipped", "error", f"cannot enable {dataset}: universe is empty", dataset=dataset
+            )
+            raise ValueError(f"maintenance universe for {dataset} is empty")
+        state = self._state()
+        entry = dict(state.get(dataset) or {})
+        entry["enabled"] = True
+        job = self._job(dataset, entry, current)
+        entry["next_run"] = job.next_run
+        state[dataset] = entry
+        self._save(state)
+        return self._job(dataset, entry, current)
+
+    def disable(self, dataset: str) -> CronJob:
+        self._validate_dataset(dataset)
+        state = self._state()
+        entry = dict(state.get(dataset) or {})
+        entry["enabled"] = False
+        entry["next_run"] = None
+        state[dataset] = entry
+        self._save(state)
+        return self._job(dataset, entry, datetime.now(UTC))
+
+    def set_schedule(self, dataset: str, expression: str, timezone: str) -> CronJob:
+        self._validate_dataset(dataset)
+        CronSchedule(expression, timezone)
+        state = self._state()
+        entry = dict(state.get(dataset) or {})
+        entry.update({"expression": expression, "timezone": timezone, "source": "override"})
+        if entry.get("enabled"):
+            entry["next_run"] = CronSchedule(expression, timezone).next_after(datetime.now(UTC)).isoformat()
+        state[dataset] = entry
+        self._save(state)
+        return self._job(dataset, entry, datetime.now(UTC))
+
+    def reset(self, dataset: str) -> CronJob:
+        self._validate_dataset(dataset)
+        state = self._state()
+        entry = dict(state.get(dataset) or {})
+        for key in ("expression", "timezone", "source"):
+            entry.pop(key, None)
+        if entry.get("enabled"):
+            expression, timezone = SUGGESTED_JOBS[dataset]
+            entry["next_run"] = CronSchedule(expression, timezone).next_after(datetime.now(UTC)).isoformat()
+        state[dataset] = entry
+        self._save(state)
+        return self._job(dataset, entry, datetime.now(UTC))
+
+    def tick(self, now: datetime | None = None) -> None:
+        current = (now or datetime.now(UTC)).astimezone(UTC).replace(second=0, microsecond=0)
+        state = self._state()
+        changed = False
+        for dataset in SUGGESTED_JOBS:
+            entry = dict(state.get(dataset) or {})
+            if not entry.get("enabled"):
+                continue
+            job = self._job(dataset, entry, current)
+            due = datetime.fromisoformat(job.next_run) if job.next_run else None
+            if due is None or due > current:
+                continue
+            if not self.provider_ready(dataset) or not self.universe_ready(dataset):
+                self.events.record(
+                    "cron_skipped", "error", f"scheduled update skipped for {dataset}", dataset=dataset
+                )
+            else:
+                try:
+                    self.submit(dataset, "update", {})
+                except Exception as exc:
+                    self.events.record(
+                        "cron_skipped", "error", f"scheduled update rejected for {dataset}: {exc}", dataset=dataset
+                    )
+                else:
+                    entry["last_run"] = current.isoformat()
+            schedule = CronSchedule(job.expression, job.timezone)
+            entry["next_run"] = schedule.next_after(current).isoformat()
+            state[dataset] = entry
+            changed = True
+        if changed:
+            self._save(state)
+
+    def note_shutdown(self, now: datetime | None = None) -> None:
+        self.workspace.set_config("cron.last_seen", (now or datetime.now(UTC)).astimezone(UTC).isoformat())
+
+    def recover(self, now: datetime | None = None) -> None:
+        current = (now or datetime.now(UTC)).astimezone(UTC)
+        state = self._state()
+        changed = False
+        for dataset in SUGGESTED_JOBS:
+            entry = dict(state.get(dataset) or {})
+            if not entry.get("enabled") or not entry.get("next_run"):
+                continue
+            due = datetime.fromisoformat(entry["next_run"])
+            if due <= current:
+                self.events.record(
+                    "cron_missed", "warning", f"scheduled update was missed for {dataset}", dataset=dataset,
+                    scheduled_for=due.isoformat(),
+                )
+                job = self._job(dataset, entry, current)
+                entry["next_run"] = CronSchedule(job.expression, job.timezone).next_after(current).isoformat()
+                state[dataset] = entry
+                changed = True
+        if changed:
+            self._save(state)
+
+    def _job(self, dataset: str, entry: dict[str, Any], now: datetime) -> CronJob:
+        suggested_expression, suggested_timezone = SUGGESTED_JOBS[dataset]
+        expression = str(entry.get("expression") or suggested_expression)
+        timezone = str(entry.get("timezone") or suggested_timezone)
+        enabled = bool(entry.get("enabled", False))
+        next_run = entry.get("next_run")
+        if enabled and not next_run:
+            next_run = CronSchedule(expression, timezone).next_after(now).isoformat()
+        return CronJob(
+            dataset=dataset,
+            expression=expression,
+            timezone=timezone,
+            enabled=enabled,
+            source=str(entry.get("source") or "suggested"),
+            last_run=entry.get("last_run"),
+            next_run=str(next_run) if next_run else None,
+        )
+
+    def _state(self) -> dict[str, Any]:
+        value = self.workspace.get_config("cron.jobs", {})
+        return dict(value) if isinstance(value, dict) else {}
+
+    def _save(self, state: dict[str, Any]) -> None:
+        self.workspace.set_config("cron.jobs", state)
+
+    @staticmethod
+    def _validate_dataset(dataset: str) -> None:
+        if dataset not in SUGGESTED_JOBS:
+            raise ValueError(f"unknown scheduled dataset {dataset!r}")
+
+
+def _field(text: str, minimum: int, maximum: int, *, sunday: bool = False) -> set[int]:
+    result: set[int] = set()
+    for item in text.split(","):
+        step = 1
+        if "/" in item:
+            item, step_text = item.split("/", 1)
+            step = int(step_text)
+            if step <= 0:
+                raise ValueError("cron step must be positive")
+        if item == "*":
+            start, end = minimum, maximum
+        elif "-" in item:
+            start_text, end_text = item.split("-", 1)
+            start, end = int(start_text), int(end_text)
+        else:
+            start = end = int(item)
+        if start < minimum or end > maximum or start > end:
+            raise ValueError(f"cron field {text!r} is out of range")
+        result.update(range(start, end + 1, step))
+    if sunday and 7 in result:
+        result.discard(7)
+        result.add(0)
+    return result
