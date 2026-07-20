@@ -1,0 +1,115 @@
+from __future__ import annotations
+
+import unittest
+from datetime import date
+
+import pyarrow as pa
+
+from findata.providers.tushare import (
+    ProviderProtocolError,
+    TushareAPIError,
+    TushareClient,
+)
+from findata.testing.tushare import MockTushareTransport
+
+
+class TushareClientTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.transport = MockTushareTransport(today=date(2026, 7, 20))
+        self.client = TushareClient(token="test-token", transport=self.transport)
+
+    def test_builds_official_envelope_without_exposing_token(self) -> None:
+        table = self.client.query(
+            "tushare_trade_cal",
+            exchange="SSE",
+            start_date="20260717",
+            end_date="20260720",
+        )
+
+        request = self.transport.requests[0]
+        self.assertEqual(request["api_name"], "trade_cal")
+        self.assertEqual(request["token"], "test-token")
+        self.assertEqual(
+            request["params"],
+            {"exchange": "SSE", "start_date": "20260717", "end_date": "20260720"},
+        )
+        self.assertEqual(request["fields"], "exchange,cal_date,is_open,pretrade_date")
+        self.assertNotIn("test-token", repr(self.client))
+        self.assertEqual(table.schema.field("cal_date").type, pa.date32())
+        self.assertEqual(table.column("is_open").to_pylist(), [True, False, False, True])
+
+    def test_stock_basic_mock_filters_status_and_exchange(self) -> None:
+        table = self.client.query(
+            "tushare_stock_basic",
+            list_status="L",
+            exchange="SSE",
+        )
+
+        self.assertGreater(table.num_rows, 0)
+        self.assertEqual(set(table.column("list_status").to_pylist()), {"L"})
+        self.assertEqual(set(table.column("exchange").to_pylist()), {"SSE"})
+        self.assertEqual(table.schema.field("list_date").type, pa.date32())
+
+    def test_index_weight_mock_is_monthly_and_adds_effective_month(self) -> None:
+        table = self.client.query(
+            "tushare_index_weight",
+            index_code="000300.SH",
+            start_date="20260601",
+            end_date="20260630",
+        )
+
+        self.assertEqual(table.num_rows, 3)
+        self.assertEqual(
+            set(table.column("effective_month").to_pylist()),
+            {date(2026, 6, 1)},
+        )
+        self.assertEqual(sum(table.column("weight").to_pylist()), 100.0)
+
+    def test_daily_basic_mock_is_deterministic_and_nullable(self) -> None:
+        first = self.client.query(
+            "tushare_daily_basic",
+            ts_code="000001.SZ",
+            start_date="20260717",
+            end_date="20260720",
+        )
+        second = self.client.query(
+            "tushare_daily_basic",
+            ts_code="000001.SZ",
+            start_date="20260717",
+            end_date="20260720",
+        )
+
+        self.assertEqual(first.to_pylist(), second.to_pylist())
+        self.assertEqual(first.num_rows, 2)
+        self.assertEqual(first.schema.field("limit_status").type, pa.int8())
+
+    def test_provider_error_envelope_raises_sanitized_exception(self) -> None:
+        self.transport.fail_next(code=2002, message="no permission for test-token")
+
+        with self.assertRaises(TushareAPIError) as caught:
+            self.client.query("tushare_stock_basic", list_status="L", exchange="SSE")
+
+        self.assertEqual(caught.exception.code, 2002)
+        self.assertNotIn("test-token", str(caught.exception))
+
+    def test_missing_required_response_field_is_protocol_error(self) -> None:
+        self.transport.drop_field_next("cal_date")
+
+        with self.assertRaises(ProviderProtocolError):
+            self.client.query(
+                "tushare_trade_cal",
+                exchange="SSE",
+                start_date="20260720",
+                end_date="20260720",
+            )
+
+    def test_unknown_dataset_is_rejected_before_transport(self) -> None:
+        with self.assertRaises(KeyError):
+            self.client.query("not_registered")
+
+        self.assertEqual(self.transport.requests, [])
+
+
+if __name__ == "__main__":
+    unittest.main()
+
