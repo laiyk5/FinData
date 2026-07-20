@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Callable, Mapping
 from typing import Any
 from urllib.request import Request, urlopen
+from urllib.error import URLError
 
 import pyarrow as pa
 
@@ -52,27 +54,40 @@ class TushareClient:
         token: str,
         transport: Transport,
         permit: Callable[[], None] | None = None,
+        max_attempts: int = 3,
+        retry_delay: float = 0.25,
     ) -> None:
         if not token:
             raise ValueError("Tushare token is required")
         self._token = token
         self._transport = transport
         self._permit = permit
+        if max_attempts <= 0 or retry_delay < 0:
+            raise ValueError("retry settings are invalid")
+        self._max_attempts = max_attempts
+        self._retry_delay = retry_delay
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}(token=<redacted>, transport={self._transport!r})"
 
     def query(self, dataset: str, **params: Any) -> pa.Table:
         spec = TUSHARE_DATASETS[dataset]
-        if self._permit is not None:
-            self._permit()
         payload = {
             "api_name": spec.api_name,
             "token": self._token,
             "params": dict(params),
             "fields": ",".join(spec.provider_fields),
         }
-        response = self._transport(payload)
+        for attempt in range(1, self._max_attempts + 1):
+            if self._permit is not None:
+                self._permit()
+            try:
+                response = self._transport(payload)
+                break
+            except (URLError, TimeoutError):
+                if attempt == self._max_attempts:
+                    raise
+                time.sleep(self._retry_delay * (2 ** (attempt - 1)))
         if not isinstance(response, Mapping):
             raise ProviderProtocolError("Tushare response root is not an object")
         code = response.get("code")

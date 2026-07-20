@@ -182,8 +182,8 @@ class DatasetService:
 
         spec = TUSHARE_DATASETS["tushare_trade_cal"]
         existing_coverage = self._coverage_map(spec.name)
-        tables: list[pa.Table] = []
         next_coverage = dict(existing_coverage)
+        publication: str | None = None
         for exchange in exchanges:
             for interval in _missing_for_continuity(existing_coverage.get(exchange), requested):
                 start, end = interval.to_provider_inclusive()
@@ -195,9 +195,9 @@ class DatasetService:
                 )
                 if table.num_rows == 0:
                     raise RuntimeError(f"trade_cal returned empty due interval for {exchange}")
-                tables.append(table)
                 next_coverage[exchange] = _merge_interval(next_coverage.get(exchange), interval)
-        return self._publish(spec, tables, next_coverage)
+                publication = self._publish(spec, [table], next_coverage)
+        return publication or self._publish(spec, [], next_coverage)
 
     def _stock_basic(self, operation: str, operands: dict[str, Any]) -> str:
         if operation != "update":
@@ -238,7 +238,7 @@ class DatasetService:
         spec = TUSHARE_DATASETS["tushare_index_weight"]
         existing_coverage = self._coverage_map(spec.name)
         next_coverage = dict(existing_coverage)
-        tables: list[pa.Table] = []
+        publication: str | None = None
         for index in indexes:
             intervals = _missing_for_continuity(existing_coverage.get(index), requested)
             for interval in intervals:
@@ -253,9 +253,11 @@ class DatasetService:
                     )
                     if table.num_rows == 0:
                         raise RuntimeError(f"index_weight returned empty historical month for {index}")
-                    tables.append(table)
-                next_coverage[index] = _merge_interval(next_coverage.get(index), interval)
-        return self._publish(spec, tables, next_coverage)
+                    next_coverage[index] = _merge_interval(
+                        next_coverage.get(index), month_interval
+                    )
+                    publication = self._publish(spec, [table], next_coverage)
+        return publication or self._publish(spec, [], next_coverage)
 
     def _daily_basic(self, operation: str, operands: dict[str, Any]) -> str:
         if operation == "update":
@@ -288,23 +290,22 @@ class DatasetService:
                 if covered is None or requested.start < covered.start or requested.end > covered.end:
                     raise OperandError(f"refresh range is outside coverage for {symbol}")
         next_coverage = dict(existing_coverage)
-        tables: list[pa.Table] = []
+        publication: str | None = None
         for symbol in symbols:
             intervals = [requested] if operation == "refresh" else _missing_for_continuity(
                 existing_coverage.get(symbol), requested
             )
             for interval in intervals:
                 start, end = interval.to_provider_inclusive()
-                tables.append(
-                    self._fetch(
-                        spec.name,
-                        ts_code=symbol,
-                        start_date=start,
-                        end_date=end,
-                    )
+                table = self._fetch(
+                    spec.name,
+                    ts_code=symbol,
+                    start_date=start,
+                    end_date=end,
                 )
                 next_coverage[symbol] = _merge_interval(next_coverage.get(symbol), interval)
-        return self._publish(spec, tables, next_coverage)
+                publication = self._publish(spec, [table], next_coverage)
+        return publication or self._publish(spec, [], next_coverage)
 
     def _resolve_symbols(self, selectors: list[str], requested: DateRange) -> list[str]:
         direct: list[str] = []
