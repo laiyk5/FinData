@@ -61,8 +61,20 @@ def main(
             return 0
         _validate_cli_args(args, output_format=output_format)
         client = _Client(resolve_workspace(args.workspace, environ=environment))
+        if output_format == "human":
+            configured_timezone = client.optional_config("display.timezone")
+            if isinstance(configured_timezone, str):
+                output.set_display_timezone(configured_timezone)
         result = _execute(client, args, output=output, stdin=stdin)
         output.finish_progress()
+        if _render_nonfollowing_task_logs(args, result, output=output):
+            return 0
+        handle = (
+            str(result.get("handle_id"))
+            if isinstance(result, Mapping) and result.get("handle_id")
+            else None
+        )
+        output.finish_diagnostics(handle)
         output.result(result, record_type=_result_record_type(args))
         return 0 if not (isinstance(result, dict) and result.get("status") in {"failed", "canceled"}) else 1
     except TaskDetached as exc:
@@ -151,7 +163,7 @@ def _execute(
                 if args.follow:
                     logs = client.request("GET", f"/v1/tasks/{handle}/logs")["items"]
                     for message in logs[emitted_logs:]:
-                        output.log(str(message))
+                        _render_task_log(output, message, handle_id=handle)
                     emitted_logs = len(logs)
                 status = client.request("GET", f"/v1/tasks/{handle}")
                 if status["status"] in {"succeeded", "failed", "canceled"}:
@@ -176,7 +188,7 @@ def _execute(
             while True:
                 logs = client.request("GET", f"/v1/tasks/{args.handle}/logs")["items"]
                 for message in logs[emitted:]:
-                    output.log(str(message))
+                    _render_task_log(output, message, handle_id=str(args.handle))
                 emitted = len(logs)
                 status = client.request("GET", f"/v1/tasks/{args.handle}")
                 if status["status"] in {"succeeded", "failed", "canceled"}:
@@ -243,6 +255,45 @@ class _Client:
         if not isinstance(result, dict):
             raise RuntimeError("server returned a non-object response")
         return result
+
+    def optional_config(self, key: str) -> object | None:
+        try:
+            return self.request("GET", f"/v1/config?{urlencode({'key': key})}").get("value")
+        except RuntimeError as exc:
+            if "server returned 404:" in str(exc):
+                return None
+            raise
+
+
+def _render_task_log(output: CLIOutput, item: object, *, handle_id: str) -> None:
+    if isinstance(item, Mapping) and item.get("type") == "task.diagnostic":
+        diagnostic = dict(item)
+        diagnostic.setdefault("handle_id", handle_id)
+        output.diagnostic(diagnostic)
+    else:
+        output.log(str(item))
+
+
+def _render_nonfollowing_task_logs(
+    args: argparse.Namespace,
+    result: object,
+    *,
+    output: CLIOutput,
+) -> bool:
+    if not (
+        args.group == "task"
+        and args.action == "logs"
+        and not args.follow
+        and output.output_format in {"human", "jsonl"}
+        and isinstance(result, Mapping)
+        and isinstance(result.get("items"), list)
+    ):
+        return False
+    handle_id = str(result.get("handle_id") or args.handle)
+    for item in result["items"]:
+        _render_task_log(output, item, handle_id=handle_id)
+    output.finish_diagnostics(handle_id)
+    return True
 
 
 def _params(

@@ -18,6 +18,8 @@ from multiprocessing.connection import Client, Connection, Listener
 from pathlib import Path
 from typing import Any
 
+from findata.identifiers import IdentifierNotFoundError, resolve_identifier
+
 
 TERMINAL_STATES = {"succeeded", "failed", "canceled"}
 ACTIVE_STATES = {"queued", "running", "waiting", "canceling"}
@@ -55,6 +57,9 @@ class HandleRecord:
     progress: dict[str, int | float] | None = None
     reason: str | None = None
     stage: str | None = None
+    diagnostic_counts: dict[str, int] = field(
+        default_factory=lambda: {"warning": 0, "error": 0}
+    )
 
 
 @dataclass(slots=True)
@@ -78,6 +83,9 @@ class ExecutionRecord:
     trigger_depth: int = 0
     reason: str | None = None
     stage: str | None = None
+    diagnostic_counts: dict[str, int] = field(
+        default_factory=lambda: {"warning": 0, "error": 0}
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,6 +111,32 @@ class TaskContext:
 
     def log(self, message: str) -> None:
         self._send({"type": "log", "message": str(message)})
+
+    def diagnostic(
+        self,
+        severity: str,
+        code: str,
+        message: str,
+        *,
+        context: Mapping[str, Any] | None = None,
+        count: int = 1,
+    ) -> None:
+        if severity not in {"warning", "error"}:
+            raise ValueError(f"invalid task diagnostic severity {severity!r}")
+        if not code:
+            raise ValueError("task diagnostic code cannot be empty")
+        if not isinstance(count, int) or isinstance(count, bool) or count < 1:
+            raise ValueError("task diagnostic count must be a positive integer")
+        self._send(
+            {
+                "type": "diagnostic",
+                "severity": severity,
+                "code": str(code),
+                "message": str(message),
+                "context": dict(context or {}),
+                "count": count,
+            }
+        )
 
     def progress(self, current: int | float, total: int | float) -> None:
         if total < 0 or current < 0:
@@ -323,6 +357,7 @@ class TaskRunner:
                 progress=dict(execution.progress) if execution.progress else None,
                 reason=execution.reason,
                 stage=execution.stage,
+                diagnostic_counts=dict(execution.diagnostic_counts),
             )
             execution.handle_ids.append(handle_id)
             execution.updated_at = now
@@ -334,10 +369,21 @@ class TaskRunner:
 
     def status(self, handle_id: str) -> HandleRecord:
         with self._condition:
-            handle = self._handles.get(handle_id)
-            if handle is None:
-                raise TaskNotFoundError(handle_id)
+            resolved = self._resolve_handle(handle_id)
+            handle = self._handles[resolved]
             return _copy_handle(handle)
+
+    def status_with_subscriber_count(self, handle_id: str) -> tuple[HandleRecord, int]:
+        with self._condition:
+            resolved = self._resolve_handle(handle_id)
+            handle = self._handles[resolved]
+            execution = self._executions[handle.execution_id]
+            subscribers = sum(
+                self._handles[item].status not in TERMINAL_STATES
+                for item in execution.handle_ids
+                if item in self._handles
+            )
+            return _copy_handle(handle), subscribers
 
     def list_handles(
         self,
@@ -356,9 +402,8 @@ class TaskRunner:
 
     def subscriber_count(self, handle_id: str) -> int:
         with self._condition:
-            handle = self._handles.get(handle_id)
-            if handle is None:
-                raise TaskNotFoundError(handle_id)
+            resolved = self._resolve_handle(handle_id)
+            handle = self._handles[resolved]
             execution = self._executions[handle.execution_id]
             return sum(
                 self._handles[item].status not in TERMINAL_STATES
@@ -416,9 +461,8 @@ class TaskRunner:
 
     def cancel(self, handle_id: str) -> CancellationResult:
         with self._condition:
-            handle = self._handles.get(handle_id)
-            if handle is None:
-                raise TaskNotFoundError(handle_id)
+            handle_id = self._resolve_handle(handle_id)
+            handle = self._handles[handle_id]
             if handle.status in TERMINAL_STATES:
                 return CancellationResult(handle_id, False, handle.status)
             execution = self._executions[handle.execution_id]
@@ -472,23 +516,40 @@ class TaskRunner:
             self._condition.notify_all()
             return CancellationResult(handle_id, False, "canceling")
 
-    def logs(self, handle_id: str) -> list[str]:
+    def logs(self, handle_id: str) -> list[object]:
         with self._condition:
-            handle = self._handles.get(handle_id)
-            if handle is None:
-                raise TaskNotFoundError(handle_id)
+            resolved = self._resolve_handle(handle_id)
+            handle = self._handles[resolved]
             path = self.logs_root / f"{handle.execution_id}.jsonl"
-        if not path.exists():
-            return []
-        result: list[str] = []
-        for line in path.read_text(encoding="utf-8").splitlines():
+            lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+        result: list[object] = []
+        for line in lines:
             try:
                 item = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if isinstance(item, dict) and isinstance(item.get("message"), str):
+            if not isinstance(item, dict) or not isinstance(item.get("message"), str):
+                continue
+            if item.get("type") == "diagnostic":
+                result.append(
+                    {
+                        "type": "task.diagnostic",
+                        "severity": item.get("severity"),
+                        "code": item.get("code"),
+                        "message": item["message"],
+                        "context": dict(item.get("context") or {}),
+                        "count": item.get("count", 1),
+                    }
+                )
+            else:
                 result.append(item["message"])
         return result
+
+    def _resolve_handle(self, operand: str) -> str:
+        try:
+            return resolve_identifier(operand, self._handles)
+        except IdentifierNotFoundError as exc:
+            raise TaskNotFoundError(operand) from exc
 
     def shutdown(self) -> None:
         if not self._started:
@@ -703,6 +764,34 @@ class TaskRunner:
             kind = message.get("type")
             if kind == "log":
                 self._append_log(execution_id, str(message.get("message", "")))
+                return
+            if kind == "diagnostic":
+                severity = str(message.get("severity"))
+                count = message.get("count", 1)
+                if severity not in {"warning", "error"}:
+                    return
+                if not isinstance(count, int) or isinstance(count, bool) or count < 1:
+                    return
+                self._append_diagnostic(
+                    execution_id,
+                    severity=severity,
+                    code=str(message.get("code") or "task_diagnostic"),
+                    message=str(message.get("message", "")),
+                    context=dict(message.get("context") or {}),
+                    count=count,
+                )
+                execution.diagnostic_counts[severity] = (
+                    execution.diagnostic_counts.get(severity, 0) + count
+                )
+                for handle_id in execution.handle_ids:
+                    handle = self._handles[handle_id]
+                    handle.diagnostic_counts[severity] = (
+                        handle.diagnostic_counts.get(severity, 0) + count
+                    )
+                    handle.updated_at = time.time()
+                    self._persist_handle(handle)
+                execution.updated_at = time.time()
+                self._persist_execution(execution)
                 return
             if kind == "progress":
                 execution.progress = {
@@ -922,6 +1011,31 @@ class TaskRunner:
         path = self.logs_root / f"{execution_id}.jsonl"
         with path.open("a", encoding="utf-8") as file:
             file.write(json.dumps({"time": time.time(), "message": message}) + "\n")
+            file.flush()
+            os.fsync(file.fileno())
+
+    def _append_diagnostic(
+        self,
+        execution_id: str,
+        *,
+        severity: str,
+        code: str,
+        message: str,
+        context: Mapping[str, Any],
+        count: int,
+    ) -> None:
+        path = self.logs_root / f"{execution_id}.jsonl"
+        record = {
+            "time": time.time(),
+            "type": "diagnostic",
+            "severity": severity,
+            "code": code,
+            "message": message,
+            "context": dict(context),
+            "count": count,
+        }
+        with path.open("a", encoding="utf-8") as file:
+            file.write(json.dumps(record, separators=(",", ":"), default=str) + "\n")
             file.flush()
             os.fsync(file.fileno())
 

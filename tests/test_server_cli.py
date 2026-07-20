@@ -105,6 +105,7 @@ class ServerCLITests(unittest.TestCase):
             },
         )
         handle = submitted["handle_id"]
+        self.assertTrue(submitted["execution_id"])
         terminal = self.wait_http(handle)
 
         self.assertEqual(terminal["status"], "succeeded")

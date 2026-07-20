@@ -17,6 +17,7 @@ from zoneinfo import ZoneInfo
 
 from findata.cron import CronManager
 from findata.events import EventStore
+from findata.identifiers import AmbiguousIdentifierError, IdentifierNotFoundError
 from findata.providers.tushare import TushareClient, TushareHTTPTransport
 from findata.rate_limit import FileRateLimiter
 from findata.datasets.tushare import TUSHARE_DATASETS
@@ -281,7 +282,13 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                         operands,
                         owner=str(body.get("owner") or "api"),
                     )
-                    self._send(HTTPStatus.ACCEPTED, {"handle_id": handle})
+                    self._send(
+                        HTTPStatus.ACCEPTED,
+                        {
+                            "handle_id": handle,
+                            "execution_id": app.taskrunner.status(handle).execution_id,
+                        },
+                    )
                     return
                 if method == "GET" and parts == ["v1", "tasks"]:
                     items = app.taskrunner.list_handles(
@@ -292,29 +299,43 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                         active = [item for item in items if item.status not in {"succeeded", "failed", "canceled"}]
                         terminal = [item for item in items if item.status in {"succeeded", "failed", "canceled"}][:50]
                         items = active + terminal
-                    self._send(HTTPStatus.OK, {"items": [asdict(item) for item in items]})
+                    self._send(
+                        HTTPStatus.OK,
+                        {"items": [_task_payload(item) for item in items]},
+                    )
                     return
                 if len(parts) >= 3 and parts[:2] == ["v1", "tasks"]:
                     handle_id = parts[2]
                     if method == "GET" and len(parts) == 3:
-                        value = asdict(app.taskrunner.status(handle_id))
-                        value["subscriber_count"] = app.taskrunner.subscriber_count(handle_id)
+                        record, subscriber_count = app.taskrunner.status_with_subscriber_count(
+                            handle_id
+                        )
+                        value = _task_payload(record)
+                        value["subscriber_count"] = subscriber_count
                         self._send(HTTPStatus.OK, value)
                         return
                     if method == "GET" and parts[3:] == ["logs"]:
-                        self._send(HTTPStatus.OK, {"items": app.taskrunner.logs(handle_id)})
+                        resolved = app.taskrunner.status(handle_id).handle_id
+                        self._send(
+                            HTTPStatus.OK,
+                            {"handle_id": resolved, "items": app.taskrunner.logs(resolved)},
+                        )
                         return
                     if method == "POST" and parts[3:] == ["cancel"]:
                         current = app.taskrunner.status(handle_id)
                         if current.status in {"succeeded", "failed", "canceled"}:
-                            self._send(HTTPStatus.OK, asdict(current))
+                            self._send(HTTPStatus.OK, _task_payload(current))
                         else:
-                            result = app.taskrunner.cancel(handle_id)
+                            result = app.taskrunner.cancel(current.handle_id)
                             self._send(HTTPStatus.OK, asdict(result))
                         return
                 if method == "POST" and parts == ["v1", "config"]:
                     body = self._body()
-                    app.workspace.set_config(str(body["key"]), body["value"])
+                    key = str(body["key"])
+                    value = body["value"]
+                    if key == "display.timezone":
+                        ZoneInfo(str(value))
+                    app.workspace.set_config(key, value)
                     self._send(HTTPStatus.OK, {"updated": True})
                     return
                 if method == "GET" and parts == ["v1", "config"]:
@@ -461,16 +482,22 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                     body = self._body()
                     if body.get("all"):
                         count = app.events.ack_all()
+                        response = {"acknowledged": count}
                     else:
-                        app.events.ack(str(body["event_id"]))
+                        event_id = app.events.ack(str(body["event_id"]))
                         count = 1
-                    self._send(HTTPStatus.OK, {"acknowledged": count})
+                        response = {"acknowledged": count, "event_id": event_id}
+                    self._send(HTTPStatus.OK, response)
                     return
                 self._send(HTTPStatus.NOT_FOUND, {"error": "not_found"})
             except QueueFullError as exc:
                 self._send(HTTPStatus.CONFLICT, {"error": str(exc)})
+            except AmbiguousIdentifierError as exc:
+                self._send(HTTPStatus.CONFLICT, {"error": str(exc)})
             except TaskNotFoundError:
                 self._send(HTTPStatus.NOT_FOUND, {"error": "task_not_found"})
+            except IdentifierNotFoundError:
+                self._send(HTTPStatus.NOT_FOUND, {"error": "event_not_found"})
             except (KeyError, TypeError, ValueError) as exc:
                 self._send(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
             except Exception as exc:
@@ -505,6 +532,14 @@ def _configured_secret_ready(value: Any) -> bool:
     if isinstance(value, dict) and isinstance(value.get("env"), str):
         return bool(os.environ.get(value["env"]))
     return bool(value)
+
+
+def _task_payload(record: Any) -> dict[str, Any]:
+    value = asdict(record)
+    counts = value.get("diagnostic_counts")
+    if isinstance(counts, dict) and not any(counts.values()):
+        value.pop("diagnostic_counts", None)
+    return value
 
 
 def _redact(key: str, value: Any) -> Any:

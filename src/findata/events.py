@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from findata.identifiers import resolve_identifier
+
 
 SEVERITIES = {"info", "warning", "error"}
 
@@ -56,21 +58,29 @@ class EventStore:
         self._append(record)
         return EventRecord(**record)
 
-    def ack(self, event_id: str, *, timestamp: float | None = None) -> None:
-        known = {item.event_id for item in self.list_events()}
-        if event_id not in known:
-            raise KeyError(event_id)
-        self._append(
-            {
-                "event_id": uuid.uuid4().hex,
-                "timestamp": time.time() if timestamp is None else float(timestamp),
-                "kind": "acknowledgement",
-                "severity": "info",
-                "message": "event acknowledged",
-                "context": {},
-                "reference": event_id,
-            }
-        )
+    def ack(self, event_id: str, *, timestamp: float | None = None) -> str:
+        with self.lock_path.open("a+b") as lock:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            records = self._read_unlocked()
+            primary_ids = [
+                str(item["event_id"])
+                for item in records
+                if item.get("kind") != "acknowledgement" and item.get("event_id")
+            ]
+            resolved = resolve_identifier(event_id, primary_ids)
+            self._append_unlocked(
+                {
+                    "event_id": uuid.uuid4().hex,
+                    "timestamp": time.time() if timestamp is None else float(timestamp),
+                    "kind": "acknowledgement",
+                    "severity": "info",
+                    "message": "event acknowledged",
+                    "context": {},
+                    "reference": resolved,
+                }
+            )
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+        return resolved
 
     def ack_all(self, *, timestamp: float | None = None) -> int:
         unread = self.list_events(unread=True)
@@ -120,19 +130,26 @@ class EventStore:
     def _append(self, record: dict[str, Any]) -> None:
         with self.lock_path.open("a+b") as lock:
             fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
-            with self.path.open("a", encoding="utf-8") as stream:
-                stream.write(json.dumps(record, separators=(",", ":"), default=str) + "\n")
-                stream.flush()
-                os.fsync(stream.fileno())
+            self._append_unlocked(record)
             fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
 
+    def _append_unlocked(self, record: dict[str, Any]) -> None:
+        with self.path.open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps(record, separators=(",", ":"), default=str) + "\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+
     def _read(self) -> list[dict[str, Any]]:
-        if not self.path.exists():
-            return []
         with self.lock_path.open("a+b") as lock:
             fcntl.flock(lock.fileno(), fcntl.LOCK_SH)
-            lines = self.path.read_text(encoding="utf-8").splitlines()
+            result = self._read_unlocked()
             fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+        return result
+
+    def _read_unlocked(self) -> list[dict[str, Any]]:
+        if not self.path.exists():
+            return []
+        lines = self.path.read_text(encoding="utf-8").splitlines()
         result = []
         for line in lines:
             try:

@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 import json
 import os
 import shutil
 import time
 from typing import TextIO
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
 ANSI_RESET = "\x1b[0m"
@@ -14,6 +16,28 @@ ANSI_BOLD = "\x1b[1m"
 ANSI_GREEN = "\x1b[32m"
 ANSI_YELLOW = "\x1b[33m"
 ANSI_RED = "\x1b[31m"
+
+TIMESTAMP_FIELDS = {
+    "created_at",
+    "updated_at",
+    "timestamp",
+    "last_run",
+    "next_run",
+    "last_evaluation_time",
+}
+DURATION_FIELDS = {"duration_seconds", "elapsed_seconds"}
+PERCENTAGE_FIELDS = {"coverage_percent": 2, "progress_percent": 1}
+COUNT_FIELDS = {
+    "acknowledged",
+    "current",
+    "error_count",
+    "fetched_requests",
+    "running_tasks",
+    "subscriber_count",
+    "tasks",
+    "total",
+    "warning_count",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,10 +84,15 @@ class CLIOutput:
         stdout: TextIO,
         stderr: TextIO,
         environ: Mapping[str, str] | None = None,
+        display_timezone: str = "UTC",
     ) -> None:
         self.output_format = output_format
         self.stdout = stdout
         self.stderr = stderr
+        try:
+            self.display_timezone = ZoneInfo(display_timezone)
+        except ZoneInfoNotFoundError as exc:
+            raise ValueError(f"unknown display timezone {display_timezone!r}") from exc
         self.out_terminal = TerminalCapabilities.detect(
             stdout, color_mode=color_mode, environ=environ
         )
@@ -77,6 +106,11 @@ class CLIOutput:
         self._accepted_at: float | None = None
         self._spinner_index = 0
         self._progress_active = False
+        self._diagnostic_status_active = False
+        self._diagnostic_visible: set[str] = set()
+        self._diagnostic_visible_totals = {"warning": 0, "error": 0}
+        self._diagnostic_totals = {"warning": 0, "error": 0}
+        self._suppression_noted = False
 
     def result(self, value: object, *, record_type: str = "result") -> None:
         if self.output_format == "json":
@@ -158,6 +192,92 @@ class CLIOutput:
             self.stderr.flush()
             self._progress_active = False
 
+    def diagnostic(self, diagnostic: Mapping[str, object]) -> None:
+        severity = str(diagnostic.get("severity") or "warning")
+        if severity not in self._diagnostic_totals:
+            raise ValueError(f"invalid task diagnostic severity {severity!r}")
+        try:
+            count = int(diagnostic.get("count", 1))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("task diagnostic count must be a positive integer") from exc
+        if count < 1:
+            raise ValueError("task diagnostic count must be a positive integer")
+
+        record = dict(diagnostic)
+        record["severity"] = severity
+        record["count"] = count
+        self._diagnostic_totals[severity] += count
+        if self.output_format == "jsonl":
+            self._jsonl(record, "task.diagnostic")
+            return
+        if self.output_format != "human":
+            return
+
+        identity = json.dumps(
+            {
+                "severity": severity,
+                "code": record.get("code"),
+                "message": record.get("message"),
+                "context": record.get("context"),
+            },
+            sort_keys=True,
+            default=str,
+        )
+        if identity in self._diagnostic_visible:
+            return
+        if len(self._diagnostic_visible) < 10:
+            self.finish_progress()
+            self._clear_diagnostic_status()
+            self._diagnostic_visible.add(identity)
+            self._diagnostic_visible_totals[severity] += count
+            marker = "Warning" if severity == "warning" else "Error"
+            code = f" [{record['code']}]" if record.get("code") else ""
+            suffix = f" (x{count})" if count > 1 else ""
+            self.stderr.write(f"{marker}{code}: {record.get('message', '')}{suffix}\n")
+            self.stderr.flush()
+            return
+
+        if self.err_terminal.interactive:
+            warnings = self._suppressed_occurrences("warning")
+            errors = self._suppressed_occurrences("error")
+            self.stderr.write(
+                f"\r\x1b[2K{warnings} additional warnings, {errors} additional errors"
+            )
+            self.stderr.flush()
+            self._diagnostic_status_active = True
+        elif not self._suppression_noted:
+            self.stderr.write("additional diagnostics suppressed from the live view.\n")
+            self.stderr.flush()
+            self._suppression_noted = True
+
+    def finish_diagnostics(self, handle_id: str | None = None) -> None:
+        if not any(self._diagnostic_totals.values()) or self.output_format != "human":
+            return
+        self._clear_diagnostic_status()
+        warning_count = self._diagnostic_totals["warning"]
+        error_count = self._diagnostic_totals["error"]
+        self.stderr.write(f"Diagnostics: {warning_count} warnings, {error_count} errors.\n")
+        if handle_id:
+            self.stderr.write(f"  Inspect: findata task logs {handle_id}\n")
+        self.stderr.flush()
+
+    def _suppressed_occurrences(self, severity: str) -> int:
+        return max(
+            0,
+            self._diagnostic_totals[severity] - self._diagnostic_visible_totals[severity],
+        )
+
+    def _clear_diagnostic_status(self) -> None:
+        if self._diagnostic_status_active:
+            self.stderr.write("\r\x1b[2K")
+            self._diagnostic_status_active = False
+
+    def set_display_timezone(self, name: str) -> None:
+        try:
+            self.display_timezone = ZoneInfo(name)
+        except ZoneInfoNotFoundError as exc:
+            raise ValueError(f"unknown display timezone {name!r}") from exc
+
     def log(self, message: str) -> None:
         if self.output_format == "jsonl":
             self._jsonl({"message": message}, "task.log")
@@ -194,7 +314,7 @@ class CLIOutput:
             return self._details(value)
         if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
             return self._table(value)
-        return f"{_display(value)}\n"
+        return f"{_display(value, timezone=self.display_timezone)}\n"
 
     def _details(self, value: Mapping[object, object]) -> str:
         lines: list[str] = []
@@ -202,7 +322,8 @@ class CLIOutput:
             label = str(key).replace("_", " ").title()
             padded = label.ljust(16)
             lines.append(
-                f"{self._style(padded, ANSI_BOLD, terminal=self.out_terminal)}  {_display(item)}"
+                f"{self._style(padded, ANSI_BOLD, terminal=self.out_terminal)}  "
+                f"{_display(item, field=str(key), timezone=self.display_timezone)}"
             )
         return "\n".join(lines) + "\n"
 
@@ -226,8 +347,16 @@ class CLIOutput:
         while len(columns) > 1 and 8 * len(columns) + 2 * (len(columns) - 1) > self.out_terminal.width:
             columns.pop()
         if not columns:
-            return "\n".join(_display(row) for row in rows) + "\n"
-        rendered = [[_display(row.get(column)) for column in columns] for row in rows]
+            return "\n".join(
+                _display(row, timezone=self.display_timezone) for row in rows
+            ) + "\n"
+        rendered = [
+            [
+                _display(row.get(column), field=column, timezone=self.display_timezone)
+                for column in columns
+            ]
+            for row in rows
+        ]
         widths = [
             min(max(len(column.upper()), *(len(row[index]) for row in rendered)), 36)
             for index, column in enumerate(columns)
@@ -270,13 +399,23 @@ class CLIOutput:
                     ("Requests", result.get("fetched_requests")),
                 ]
             )
+        diagnostic_counts = value.get("diagnostic_counts")
+        if isinstance(diagnostic_counts, Mapping):
+            warning_count = diagnostic_counts.get("warning", 0)
+            error_count = diagnostic_counts.get("error", 0)
+            if warning_count or error_count:
+                fields.append(("Diagnostics", f"{warning_count} warnings, {error_count} errors"))
         if value.get("error"):
             fields.append(("Reason", value["error"]))
         created = value.get("created_at")
         updated = value.get("updated_at")
         if isinstance(created, (int, float)) and isinstance(updated, (int, float)):
-            fields.append(("Elapsed", f"{max(0.0, updated - created):.1f}s"))
-        lines.extend(f"  {label:<12} {_display(item)}" for label, item in fields if item is not None)
+            fields.append(("Elapsed", _format_duration(max(0.0, updated - created))))
+        lines.extend(
+            f"  {label:<12} {_display(item, timezone=self.display_timezone)}"
+            for label, item in fields
+            if item is not None
+        )
         return "\n".join(lines) + "\n"
 
     def _jsonl(self, value: object, record_type: str) -> None:
@@ -302,18 +441,70 @@ def _without_decoration(value: TerminalCapabilities) -> TerminalCapabilities:
     )
 
 
-def _display(value: object) -> str:
+def _display(
+    value: object,
+    *,
+    field: str | None = None,
+    timezone: ZoneInfo | None = None,
+) -> str:
     if value is None:
         return "—"
     if value is True:
         return "yes"
     if value is False:
         return "no"
+    if field in TIMESTAMP_FIELDS:
+        return _format_timestamp(value, timezone or ZoneInfo("UTC"))
+    if field in DURATION_FIELDS and isinstance(value, (int, float)):
+        return _format_duration(float(value))
+    if field in PERCENTAGE_FIELDS and isinstance(value, (int, float)):
+        precision = PERCENTAGE_FIELDS[field]
+        return f"{float(value):.{precision}f}%"
+    if field in COUNT_FIELDS and isinstance(value, int):
+        return f"{value:,}"
     if isinstance(value, float):
-        return f"{value:g}"
+        return _format_measurement(value)
     if isinstance(value, (Mapping, list, tuple)):
         return json.dumps(value, ensure_ascii=False, separators=(",", ":"), default=str)
     return str(value)
+
+
+def _format_timestamp(value: object, timezone: ZoneInfo) -> str:
+    if isinstance(value, (int, float)):
+        instant = datetime.fromtimestamp(float(value), UTC)
+    elif isinstance(value, datetime):
+        instant = value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+    elif isinstance(value, str):
+        try:
+            instant = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return value
+        if instant.tzinfo is None:
+            instant = instant.replace(tzinfo=UTC)
+    else:
+        return str(value)
+    return instant.astimezone(timezone).isoformat(timespec="seconds")
+
+
+def _format_duration(seconds: float) -> str:
+    seconds = max(0.0, seconds)
+    if seconds < 1:
+        return f"{round(seconds * 1000):,} ms"
+    if seconds < 60:
+        return f"{seconds:.1f}".rstrip("0").rstrip(".") + " s"
+    minutes, remainder = divmod(round(seconds), 60)
+    if remainder:
+        return f"{minutes:,} min {remainder} s"
+    return f"{minutes:,} min"
+
+
+def _format_measurement(value: float) -> str:
+    magnitude = abs(value)
+    if magnitude >= 1e9 or (0 < magnitude < 1e-4):
+        coefficient, exponent = f"{value:.6e}".split("e")
+        coefficient = coefficient.rstrip("0").rstrip(".")
+        return f"{coefficient}e{int(exponent):+03d}"
+    return f"{value:.12f}".rstrip("0").rstrip(".") or "0"
 
 
 def _truncate(value: str, width: int) -> str:
