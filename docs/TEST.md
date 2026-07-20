@@ -64,6 +64,12 @@ E2E tests use real user surfaces. CLI tests execute commands and inspect stdout,
 
 The primary required E2E scenario is the workflow in [USER.md](USER.md#quick-start): configure a mocked Tushare provider, set a CSI 300 universe, backfill `tushare_daily_basic`, fulfill dependencies, query covered data, enable cron, inject a failure, and verify that rerunning resumes unresolved intervals.
 
+The reserved token `findata-mock` selects the deterministic Tushare mock without contacting the
+provider. `findata-mock:fail=<api>@<call>` injects one terminal failure at the numbered call to that
+mock API; for example, `findata-mock:fail=daily_basic@2` fails after the first daily-basic request
+has been checkpointed. These values are testing controls, are never valid real credentials, and
+must be identified as mock mode by provider status and readiness output.
+
 Real-provider E2E tests are opt-in, use dedicated credentials, respect the provider limiter, and never run as the default test suite.
 
 Each automated E2E run creates a unique clean workspace through the operating system's temporary-

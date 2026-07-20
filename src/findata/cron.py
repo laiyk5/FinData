@@ -184,9 +184,9 @@ class CronManager:
             last_checked_text = entry.get("last_checked")
             if last_checked_text:
                 schedule = CronSchedule(job.expression, job.timezone)
-                for wall_time in schedule.skipped_between(
-                    datetime.fromisoformat(last_checked_text), current
-                ):
+                last_checked = datetime.fromisoformat(last_checked_text)
+                skipped = schedule.skipped_between(last_checked, current) if last_checked < current else []
+                for wall_time in skipped:
                     self.events.record(
                         "cron_dst_gap",
                         "warning",

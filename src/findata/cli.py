@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 import json
 import os
 import sys
 import time
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TextIO
 from urllib.error import HTTPError, URLError
@@ -12,30 +14,74 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from findata import __version__
+from findata.presentation import CLIOutput
+
+
+class CLIUsageError(ValueError):
+    pass
+
+
+class _ArgumentParser(argparse.ArgumentParser):
+    def error(self, message: str) -> None:
+        raise CLIUsageError(message)
+
+
+@dataclass(frozen=True, slots=True)
+class TaskDetached(Exception):
+    handle: str
 
 
 def main(
     argv: list[str] | None = None,
     *,
+    stdin: TextIO = sys.stdin,
     stdout: TextIO = sys.stdout,
     stderr: TextIO = sys.stderr,
+    environ: Mapping[str, str] | None = None,
 ) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
-    output_format = _extract_format(arguments)
-    _normalize_aliases(arguments)
-    parser = _parser()
+    environment = os.environ if environ is None else environ
+    output_format = "human"
+    color_mode = "auto"
     try:
+        output_format = _extract_format(arguments)
+        color_mode = _extract_color(arguments)
+        output = CLIOutput(
+            output_format=output_format,
+            color_mode=color_mode,
+            stdout=stdout,
+            stderr=stderr,
+            environ=environment,
+        )
+        _normalize_aliases(arguments)
+        parser = _parser()
         args = parser.parse_args(arguments)
         if args.group == "completion":
             stdout.write(_completion_script(args.shell))
             return 0
-        _validate_cli_args(args)
-        client = _Client(resolve_workspace(args.workspace))
-        result = _execute(client, args, output_format=output_format, stdout=stdout)
-        _print_result(result, output_format, stdout)
+        _validate_cli_args(args, output_format=output_format)
+        client = _Client(resolve_workspace(args.workspace, environ=environment))
+        result = _execute(client, args, output=output, stdin=stdin)
+        output.finish_progress()
+        output.result(result, record_type=_result_record_type(args))
         return 0 if not (isinstance(result, dict) and result.get("status") in {"failed", "canceled"}) else 1
+    except TaskDetached as exc:
+        output.detached(exc.handle)
+        return 130
+    except CLIUsageError as exc:
+        output.finish_progress()
+        output.error(str(exc))
+        return 2
     except (ValueError, RuntimeError, HTTPError, URLError) as exc:
-        stderr.write(f"findata: {exc}\n")
+        output = locals().get("output") or CLIOutput(
+            output_format=output_format,
+            color_mode=color_mode,
+            stdout=stdout,
+            stderr=stderr,
+            environ=environment,
+        )
+        output.finish_progress()
+        output.error(str(exc))
         return 1
 
 
@@ -43,14 +89,14 @@ def _execute(
     client: _Client,
     args: argparse.Namespace,
     *,
-    output_format: str = "human",
-    stdout: TextIO = sys.stdout,
+    output: CLIOutput,
+    stdin: TextIO = sys.stdin,
 ) -> object:
     if args.group == "config" and args.action == "set":
         if args.env:
             value: object = {"env": args.env}
         elif args.stdin:
-            value = sys.stdin.readline().rstrip("\n")
+            value = stdin.readline().rstrip("\n")
         elif args.value is not None:
             value = args.value
         else:
@@ -89,7 +135,7 @@ def _execute(
             return client.request("DELETE", f"/v1/datasets/{args.dataset}/universe")
         return client.request("GET", f"/v1/datasets/{args.dataset}/universe")
     if args.group == "task" and args.action == "run":
-        operands = _params(args.param, args.params)
+        operands = _params(args.param, args.params, stdin=stdin)
         submitted = client.request(
             "POST",
             "/v1/tasks",
@@ -97,24 +143,23 @@ def _execute(
         )
         if not (args.wait or args.follow):
             return submitted
-        handle = submitted["handle_id"]
+        handle = str(submitted["handle_id"])
+        output.accepted(submitted)
         emitted_logs = 0
-        while True:
-            if args.follow:
-                logs = client.request("GET", f"/v1/tasks/{handle}/logs")["items"]
-                for message in logs[emitted_logs:]:
-                    _print_result(
-                        {"type": "log", "message": message}
-                        if output_format in {"json", "jsonl"}
-                        else message,
-                        "jsonl" if output_format in {"json", "jsonl"} else "human",
-                        stdout,
-                    )
-                emitted_logs = len(logs)
-            status = client.request("GET", f"/v1/tasks/{handle}")
-            if status["status"] in {"succeeded", "failed", "canceled"}:
-                return status
-            time.sleep(0.02)
+        try:
+            while True:
+                if args.follow:
+                    logs = client.request("GET", f"/v1/tasks/{handle}/logs")["items"]
+                    for message in logs[emitted_logs:]:
+                        output.log(str(message))
+                    emitted_logs = len(logs)
+                status = client.request("GET", f"/v1/tasks/{handle}")
+                if status["status"] in {"succeeded", "failed", "canceled"}:
+                    return status
+                output.state(status)
+                time.sleep(0.05)
+        except KeyboardInterrupt as exc:
+            raise TaskDetached(handle) from exc
     if args.group == "task" and args.action == "ls":
         query = {key: value for key, value in {"dataset": args.dataset, "status": args.status}.items() if value}
         if args.all:
@@ -127,21 +172,19 @@ def _execute(
         if not args.follow:
             return client.request("GET", f"/v1/tasks/{args.handle}/logs")
         emitted = 0
-        while True:
-            logs = client.request("GET", f"/v1/tasks/{args.handle}/logs")["items"]
-            for message in logs[emitted:]:
-                _print_result(
-                    {"type": "log", "message": message}
-                    if output_format in {"json", "jsonl"}
-                    else message,
-                    "jsonl" if output_format in {"json", "jsonl"} else "human",
-                    stdout,
-                )
-            emitted = len(logs)
-            status = client.request("GET", f"/v1/tasks/{args.handle}")
-            if status["status"] in {"succeeded", "failed", "canceled"}:
-                return status
-            time.sleep(0.05)
+        try:
+            while True:
+                logs = client.request("GET", f"/v1/tasks/{args.handle}/logs")["items"]
+                for message in logs[emitted:]:
+                    output.log(str(message))
+                emitted = len(logs)
+                status = client.request("GET", f"/v1/tasks/{args.handle}")
+                if status["status"] in {"succeeded", "failed", "canceled"}:
+                    return status
+                output.state(status)
+                time.sleep(0.05)
+        except KeyboardInterrupt as exc:
+            raise TaskDetached(str(args.handle)) from exc
     if args.group == "task" and args.action == "cancel":
         return client.request("POST", f"/v1/tasks/{args.handle}/cancel", {})
     if args.group == "cron":
@@ -202,12 +245,14 @@ class _Client:
         return result
 
 
-def _params(values: list[str], source: str | None = None) -> dict[str, object]:
+def _params(
+    values: list[str], source: str | None = None, *, stdin: TextIO = sys.stdin
+) -> dict[str, object]:
     if source is not None:
         if values:
             raise ValueError("--param and --params are mutually exclusive")
         if source == "-":
-            text = sys.stdin.read()
+            text = stdin.read()
         elif source.startswith("@"):
             text = Path(source[1:]).read_text(encoding="utf-8")
         else:
@@ -243,25 +288,30 @@ def _extract_format(arguments: list[str]) -> str:
         try:
             value = arguments[index + 1]
         except IndexError as exc:
-            raise ValueError("--format requires a value") from exc
+            raise CLIUsageError("--format requires human, json, or jsonl") from exc
         del arguments[index : index + 2]
         if value not in {"human", "json", "jsonl"}:
-            raise ValueError(f"unsupported format {value!r}")
+            raise CLIUsageError(f"unsupported format {value!r}")
         return value
     return "human"
 
 
-def _print_result(value: object, output_format: str, stdout: TextIO) -> None:
-    if output_format in {"json", "jsonl"}:
-        stdout.write(json.dumps(value, separators=(",", ":"), default=str) + "\n")
-    elif isinstance(value, dict):
-        stdout.write(json.dumps(value, indent=2, default=str) + "\n")
-    else:
-        stdout.write(f"{value}\n")
+def _extract_color(arguments: list[str]) -> str:
+    if "--color" not in arguments:
+        return "auto"
+    index = arguments.index("--color")
+    try:
+        value = arguments[index + 1]
+    except IndexError as exc:
+        raise CLIUsageError("--color requires auto, always, or never") from exc
+    del arguments[index : index + 2]
+    if value not in {"auto", "always", "never"}:
+        raise CLIUsageError("--color requires auto, always, or never")
+    return value
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="findata")
+    parser = _ArgumentParser(prog="findata")
     parser.add_argument("--version", action="version", version=f"findata {__version__}")
     parser.add_argument("--workspace", type=Path)
     groups = parser.add_subparsers(dest="group", required=True)
@@ -404,7 +454,7 @@ def _normalize_aliases(arguments: list[str]) -> None:
         return
 
 
-def _validate_cli_args(args: argparse.Namespace) -> None:
+def _validate_cli_args(args: argparse.Namespace, *, output_format: str = "human") -> None:
     if args.group == "events" and args.action == "ack":
         if bool(args.event_id) == bool(args.all):
             raise ValueError("events ack requires an event ID or --all")
@@ -413,6 +463,9 @@ def _validate_cli_args(args: argparse.Namespace) -> None:
             raise ValueError("dataset status requires a dataset or --all")
     if args.group == "task" and args.action == "run" and args.param and args.params:
         raise ValueError("--param and --params are mutually exclusive")
+    if args.group == "task" and args.action in {"run", "logs"}:
+        if getattr(args, "follow", False) and output_format == "json":
+            raise CLIUsageError("--follow is a stream; use --format JSONL instead of JSON")
     if args.group == "config" and args.action == "set":
         sources = sum((args.value is not None, bool(args.env), bool(args.stdin)))
         if sources != 1:
@@ -421,6 +474,12 @@ def _validate_cli_args(args: argparse.Namespace) -> None:
         secret = any(word in lowered for word in ("token", "secret", "password", "credential"))
         if secret and args.value is not None:
             raise ValueError("secret configuration must use --stdin or --env")
+
+
+def _result_record_type(args: argparse.Namespace) -> str:
+    if args.group == "task" and args.action in {"run", "logs"}:
+        return "task.result"
+    return f"{args.group}.{getattr(args, 'action', 'result')}.result"
 
 
 if __name__ == "__main__":

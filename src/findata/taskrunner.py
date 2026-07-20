@@ -53,6 +53,8 @@ class HandleRecord:
     result: Any = None
     error: str | None = None
     progress: dict[str, int | float] | None = None
+    reason: str | None = None
+    stage: str | None = None
 
 
 @dataclass(slots=True)
@@ -74,6 +76,8 @@ class ExecutionRecord:
     cancel_requested: bool = False
     triggered_handle_ids: list[str] = field(default_factory=list)
     trigger_depth: int = 0
+    reason: str | None = None
+    stage: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,6 +108,9 @@ class TaskContext:
         if total < 0 or current < 0:
             raise ValueError("progress values cannot be negative")
         self._send({"type": "progress", "current": current, "total": total})
+
+    def stage(self, value: str) -> None:
+        self._send({"type": "stage", "stage": str(value)})
 
     def waiting(self, reason: str) -> None:
         self._send({"type": "state", "state": "waiting", "reason": reason})
@@ -314,6 +321,8 @@ class TaskRunner:
                 created_at=now,
                 updated_at=now,
                 progress=dict(execution.progress) if execution.progress else None,
+                reason=execution.reason,
+                stage=execution.stage,
             )
             execution.handle_ids.append(handle_id)
             execution.updated_at = now
@@ -701,6 +710,9 @@ class TaskRunner:
                     "total": message.get("total", 0),
                 }
                 self._update_active_handles(execution, progress=execution.progress)
+            elif kind == "stage":
+                execution.stage = str(message.get("stage") or "") or None
+                self._update_active_handles(execution, stage=execution.stage, update_stage=True)
             elif kind == "subtask":
                 timeout = float(message.get("timeout", 0))
                 if timeout <= 0:
@@ -716,7 +728,14 @@ class TaskRunner:
                     runtime.liveness_warned = False
             elif kind == "state" and message.get("state") in {"running", "waiting"}:
                 execution.status = str(message["state"])
-                self._update_active_handles(execution, status=execution.status)
+                execution.reason = (
+                    str(message.get("reason"))
+                    if execution.status == "waiting" and message.get("reason")
+                    else None
+                )
+                self._update_active_handles(
+                    execution, status=execution.status, reason=execution.reason, update_reason=True
+                )
             execution.updated_at = time.time()
             self._persist_execution(execution)
             self._condition.notify_all()
@@ -770,7 +789,10 @@ class TaskRunner:
                 parent = self._executions[execution_id]
                 parent.triggered_handle_ids.append(child_handle)
                 parent.status = "waiting"
-                self._update_active_handles(parent, status="waiting")
+                parent.reason = f"dependency:{target}"
+                self._update_active_handles(
+                    parent, status="waiting", reason=parent.reason, update_reason=True
+                )
                 self._persist_execution(parent)
             child = self.wait(child_handle)
             if child.status != "succeeded":
@@ -793,7 +815,10 @@ class TaskRunner:
                 parent = self._executions.get(execution_id)
                 if parent is not None and parent.status == "waiting":
                     parent.status = "running"
-                    self._update_active_handles(parent, status="running")
+                    parent.reason = None
+                    self._update_active_handles(
+                        parent, status="running", reason=None, update_reason=True
+                    )
                     self._persist_execution(parent)
         try:
             connection.send(response)
@@ -825,6 +850,8 @@ class TaskRunner:
             execution.status = status
             execution.result = result
             execution.error = error
+            execution.reason = None
+            execution.stage = None
             execution.updated_at = time.time()
             self._dataset_running.discard(execution.dataset)
             for handle_id in execution.handle_ids:
@@ -835,6 +862,8 @@ class TaskRunner:
                 handle.result = result
                 handle.error = error
                 handle.progress = dict(execution.progress) if execution.progress else None
+                handle.reason = None
+                handle.stage = None
                 handle.updated_at = execution.updated_at
                 self._persist_handle(handle)
             self._persist_execution(execution)
@@ -867,6 +896,10 @@ class TaskRunner:
         *,
         status: str | None = None,
         progress: Mapping[str, int | float] | None = None,
+        reason: str | None = None,
+        update_reason: bool = False,
+        stage: str | None = None,
+        update_stage: bool = False,
     ) -> None:
         now = time.time()
         for handle_id in execution.handle_ids:
@@ -877,6 +910,10 @@ class TaskRunner:
                 handle.status = status
             if progress is not None:
                 handle.progress = dict(progress)
+            if update_reason:
+                handle.reason = reason
+            if update_stage:
+                handle.stage = stage
             handle.updated_at = now
             self._persist_handle(handle)
         self._condition.notify_all()

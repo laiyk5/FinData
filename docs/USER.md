@@ -70,11 +70,15 @@ stable `type` field. Neither format includes spinners, readiness banners, explan
 other human decoration. On failure, the selected structured format is also used for the diagnostic
 written to stderr, and the documented nonzero exit code remains authoritative.
 
+Because following is a stream, `--follow --format json` is rejected with exit code `2`; use
+`--format jsonl` instead. A non-following `--wait --format json` emits only its terminal task object.
+
 Exit codes are:
 
 - `0` — success;
 - `1` — operational failure or a failed or canceled task when waiting;
 - `2` — invalid CLI usage.
+- `130` — the user interrupted a wait or follow; the accepted server task remains running.
 
 Task submission is asynchronous by default. The CLI reports acceptance and the task ID as soon as
 the server accepts it. `--wait` waits for the terminal result; `--follow` streams logs and implies
