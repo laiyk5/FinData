@@ -17,7 +17,7 @@ from urllib.parse import parse_qs, urlparse
 
 from findata.cron import CronManager
 from findata.events import EventStore
-from findata.operations import OperationWorker, register_v1_datasets
+from findata.operations import OperationWorker, register_v1_datasets, resolve_v1_dependency
 from findata.storage import Workspace
 from findata.taskrunner import QueueFullError, TaskNotFoundError, TaskRunner
 
@@ -73,6 +73,7 @@ class FindataServer:
             ),
             global_concurrency=global_concurrency,
             event_sink=self.events.record,
+            dependency_resolver=resolve_v1_dependency,
         )
         self.cron = CronManager(
             self.workspace,

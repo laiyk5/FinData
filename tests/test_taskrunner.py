@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 
 from findata import DataLoader
-from findata.operations import OperationWorker, register_v1_datasets
+from findata.operations import OperationWorker, register_v1_datasets, resolve_v1_dependency
 from findata.storage import Workspace
 from findata.taskrunner import QueueFullError, TaskContext, TaskNotFoundError, TaskRunner
 
@@ -27,6 +27,21 @@ def slow_worker(request: dict[str, object], context: TaskContext) -> dict[str, o
         context.checkpoint()
         time.sleep(0.01)
     return {"pid": os.getpid(), "started": started, "ended": time.time()}
+
+
+def dependency_worker(request: dict[str, object], context: TaskContext) -> dict[str, object]:
+    if request["dataset"] == "parent":
+        context.fulfill("child", {"timerange": "2026-07-01:2026-07-02"})
+        return {"dependency": "complete"}
+    return slow_worker({"operands": {"duration": 0.3}}, context)
+
+
+def dependency_resolver(
+    parent: str, target: str, requirement: dict[str, object]
+) -> tuple[str, dict[str, object]]:
+    if (parent, target) != ("parent", "child"):
+        raise ValueError("undeclared dependency")
+    return "complete", requirement
 
 
 class TaskRunnerTests(unittest.TestCase):
@@ -128,7 +143,12 @@ class TaskRunnerTests(unittest.TestCase):
             token="test-token",
             today="2026-07-20",
         )
-        with TaskRunner(self.root, worker) as runner:
+        with TaskRunner(
+            self.root,
+            worker,
+            global_concurrency=1,
+            dependency_resolver=resolve_v1_dependency,
+        ) as runner:
             handle = runner.submit(
                 "tushare_daily_basic",
                 "complete",
@@ -136,13 +156,66 @@ class TaskRunnerTests(unittest.TestCase):
             )
             status = runner.wait(handle, timeout=10)
 
+            handles = runner.list_handles()
+
         self.assertEqual(status.status, "succeeded", status.error)
+        self.assertEqual(
+            {item.dataset for item in handles},
+            {"tushare_daily_basic", "tushare_trade_cal", "tushare_index_weight"},
+        )
+        self.assertTrue(all(item.owner.startswith("trigger:") for item in handles if item.handle_id != handle))
         table = DataLoader(self.root).dataset("tushare_daily_basic").query(
             keys=["000001.SZ", "600000.SH", "600519.SH"],
             time_range=("2026-06-29", "2026-07-04"),
             require_coverage=True,
         )
         self.assertGreater(table.num_rows, 0)
+
+    def test_waiting_parent_releases_global_slot_for_owned_triggered_task(self) -> None:
+        with TaskRunner(
+            self.root,
+            dependency_worker,
+            global_concurrency=1,
+            dependency_resolver=dependency_resolver,
+        ) as runner:
+            parent = runner.submit("parent", "complete", {})
+            result = runner.wait(parent, timeout=5)
+            handles = runner.list_handles()
+
+        self.assertEqual(result.status, "succeeded", result.error)
+        child = next(item for item in handles if item.dataset == "child")
+        self.assertEqual(child.status, "succeeded")
+        self.assertEqual(child.owner, f"trigger:{parent}")
+
+    def test_canceling_parent_recursively_releases_triggered_handle(self) -> None:
+        with TaskRunner(
+            self.root,
+            dependency_worker,
+            global_concurrency=1,
+            dependency_resolver=dependency_resolver,
+            cancel_grace=0.2,
+        ) as runner:
+            parent = runner.submit("parent", "complete", {})
+            runner.wait_for_status(parent, {"waiting"}, timeout=3)
+            child = next(item for item in runner.list_handles() if item.dataset == "child")
+            runner.cancel(parent)
+
+            self.assertEqual(runner.wait(parent, timeout=3).status, "canceled")
+            self.assertEqual(runner.wait(child.handle_id, timeout=3).status, "canceled")
+
+    def test_dependency_depth_limit_rejects_before_child_submission(self) -> None:
+        with TaskRunner(
+            self.root,
+            dependency_worker,
+            dependency_resolver=dependency_resolver,
+            max_trigger_depth=0,
+        ) as runner:
+            parent = runner.submit("parent", "complete", {})
+            result = runner.wait(parent, timeout=3)
+
+            self.assertEqual(result.status, "failed")
+            self.assertIn("dependency depth exceeds", result.error)
+            self.assertEqual(len(runner.list_handles()), 1)
 
     def test_terminal_history_prunes_old_handles_and_unreferenced_executions(self) -> None:
         with TaskRunner(self.root, successful_worker, terminal_history=2) as runner:

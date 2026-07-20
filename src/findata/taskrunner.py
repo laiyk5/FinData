@@ -72,6 +72,8 @@ class ExecutionRecord:
     error: str | None = None
     progress: dict[str, int | float] | None = None
     cancel_requested: bool = False
+    triggered_handle_ids: list[str] = field(default_factory=list)
+    trigger_depth: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,6 +90,8 @@ class TaskContext:
         self._connection = connection
         self._canceled = canceled
         self._send_lock = threading.Lock()
+        self._dependency_condition = threading.Condition()
+        self._dependency_results: dict[str, Mapping[str, Any]] = {}
 
     def checkpoint(self) -> None:
         if self._canceled.is_set():
@@ -109,12 +113,41 @@ class TaskContext:
         self._send({"type": "state", "state": "running"})
         self.checkpoint()
 
+    def fulfill(self, dataset: str, requirement: Mapping[str, Any]) -> Any:
+        request_id = uuid.uuid4().hex
+        self._send(
+            {
+                "type": "dependency",
+                "request_id": request_id,
+                "dataset": dataset,
+                "requirement": dict(requirement),
+            }
+        )
+        with self._dependency_condition:
+            while request_id not in self._dependency_results:
+                self.checkpoint()
+                self._dependency_condition.wait(0.1)
+            response = self._dependency_results.pop(request_id)
+        if not response.get("ok"):
+            raise RuntimeError(f"dependency {dataset} failed: {response.get('error')}")
+        return response.get("result")
+
+    def receive_control(self, message: Mapping[str, Any]) -> None:
+        if message.get("type") == "cancel":
+            self._canceled.set()
+        elif message.get("type") == "dependency_result":
+            request_id = str(message.get("request_id"))
+            with self._dependency_condition:
+                self._dependency_results[request_id] = dict(message)
+                self._dependency_condition.notify_all()
+
     def _send(self, message: Mapping[str, Any]) -> None:
         with self._send_lock:
             self._connection.send(dict(message))
 
 
 Worker = Callable[[dict[str, object], TaskContext], Any]
+DependencyResolver = Callable[[str, str, dict[str, object]], tuple[str, dict[str, object]]]
 
 
 @dataclass(slots=True)
@@ -136,6 +169,8 @@ class TaskRunner:
         terminal_history: int = 1_000,
         launch_timeout: float = 5.0,
         event_sink: Callable[..., Any] | None = None,
+        dependency_resolver: DependencyResolver | None = None,
+        max_trigger_depth: int = 8,
     ) -> None:
         if global_concurrency <= 0:
             raise ValueError("global_concurrency must be positive")
@@ -149,6 +184,8 @@ class TaskRunner:
         self.terminal_history = terminal_history
         self.launch_timeout = launch_timeout
         self.event_sink = event_sink
+        self.dependency_resolver = dependency_resolver
+        self.max_trigger_depth = max_trigger_depth
         self.tasks_root = self.workspace / "tasks"
         self.handles_root = self.tasks_root / "handles"
         self.executions_root = self.tasks_root / "executions"
@@ -197,6 +234,7 @@ class TaskRunner:
         operands: Mapping[str, Any],
         *,
         owner: str = "user",
+        _trigger_depth: int = 0,
     ) -> str:
         self._ensure_started()
         normalized = _canonical_value(dict(operands))
@@ -243,6 +281,7 @@ class TaskRunner:
                     created_at=now,
                     updated_at=now,
                     coalescing_key=key,
+                    trigger_depth=_trigger_depth,
                 )
                 self._executions[execution_id] = execution
                 self._persist_execution(execution)
@@ -349,6 +388,10 @@ class TaskRunner:
 
             execution.cancel_requested = True
             execution.updated_at = now
+            for triggered_handle_id in list(execution.triggered_handle_ids):
+                triggered = self._handles.get(triggered_handle_id)
+                if triggered is not None and triggered.status not in TERMINAL_STATES:
+                    self.cancel(triggered_handle_id)
             if execution.status == "queued" and execution.execution_id not in self._launching:
                 execution.status = "canceled"
                 handle.status = "canceled"
@@ -465,7 +508,7 @@ class TaskRunner:
 
     def _next_execution(self) -> ExecutionRecord | None:
         running_count = len(self._launching) + sum(
-            item.status in {"running", "waiting", "canceling"} for item in self._executions.values()
+            item.status in {"running", "canceling"} for item in self._executions.values()
         )
         if running_count >= self.global_concurrency:
             return None
@@ -541,6 +584,9 @@ class TaskRunner:
                 if kind in {"succeeded", "failed", "canceled"}:
                     terminal_message = message
                     break
+                if kind == "dependency":
+                    self._handle_dependency(execution_id, message, connection)
+                    continue
                 self._handle_message(execution_id, message)
             process.join(timeout=0.5)
             if terminal_message is None:
@@ -590,6 +636,85 @@ class TaskRunner:
             execution.updated_at = time.time()
             self._persist_execution(execution)
             self._condition.notify_all()
+
+    def _handle_dependency(
+        self,
+        execution_id: str,
+        message: Mapping[str, Any],
+        connection: Connection,
+    ) -> None:
+        request_id = str(message.get("request_id"))
+        target = str(message.get("dataset"))
+        requirement = message.get("requirement")
+        try:
+            if self.dependency_resolver is None:
+                raise ValueError("task worker requested an undeclared dependency")
+            if not isinstance(requirement, dict):
+                raise ValueError("dependency requirement must be an object")
+            with self._condition:
+                parent = self._executions[execution_id]
+                depth = parent.trigger_depth + 1
+                if depth > self.max_trigger_depth:
+                    raise ValueError(f"dependency depth exceeds maximum {self.max_trigger_depth}")
+                operation, operands = self.dependency_resolver(
+                    parent.dataset, target, dict(requirement)
+                )
+                if depth > 3:
+                    self._event(
+                        "dependency_depth",
+                        "warning",
+                        f"dependency depth {depth} reached by {target}",
+                        dataset=target,
+                        parent_dataset=parent.dataset,
+                    )
+                owner_handle = next(
+                    (
+                        handle_id
+                        for handle_id in parent.handle_ids
+                        if self._handles[handle_id].status not in TERMINAL_STATES
+                    ),
+                    parent.handle_ids[0],
+                )
+            child_handle = self.submit(
+                target,
+                operation,
+                operands,
+                owner=f"trigger:{owner_handle}",
+                _trigger_depth=depth,
+            )
+            with self._condition:
+                parent = self._executions[execution_id]
+                parent.triggered_handle_ids.append(child_handle)
+                parent.status = "waiting"
+                self._update_active_handles(parent, status="waiting")
+                self._persist_execution(parent)
+            child = self.wait(child_handle)
+            if child.status != "succeeded":
+                raise RuntimeError(child.error or child.status)
+            response: dict[str, Any] = {
+                "type": "dependency_result",
+                "request_id": request_id,
+                "ok": True,
+                "result": child.result,
+            }
+        except Exception as exc:
+            response = {
+                "type": "dependency_result",
+                "request_id": request_id,
+                "ok": False,
+                "error": str(exc),
+            }
+        finally:
+            with self._condition:
+                parent = self._executions.get(execution_id)
+                if parent is not None and parent.status == "waiting":
+                    parent.status = "running"
+                    self._update_active_handles(parent, status="running")
+                    self._persist_execution(parent)
+        try:
+            connection.send(response)
+        except (BrokenPipeError, EOFError, OSError):
+            pass
 
     def _finish_execution(self, execution_id: str, message: Mapping[str, Any]) -> None:
         with self._condition:
@@ -771,6 +896,7 @@ def _child_main(
 ) -> None:
     connection = Client(address, authkey=authkey)
     canceled = threading.Event()
+    context = TaskContext(connection, canceled)
 
     def receive_control() -> None:
         while True:
@@ -778,13 +904,13 @@ def _child_main(
                 message = connection.recv()
             except (EOFError, OSError):
                 return
-            if isinstance(message, dict) and message.get("type") == "cancel":
-                canceled.set()
-                return
+            if isinstance(message, dict):
+                context.receive_control(message)
+                if message.get("type") == "cancel":
+                    return
 
     receiver = threading.Thread(target=receive_control, daemon=True)
     receiver.start()
-    context = TaskContext(connection, canceled)
     try:
         result = worker(request, context)
         context.checkpoint()
