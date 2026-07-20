@@ -17,7 +17,15 @@ from urllib.parse import parse_qs, urlparse
 
 from findata.cron import CronManager
 from findata.events import EventStore
-from findata.operations import OperationWorker, register_v1_datasets, resolve_v1_dependency
+from findata.datasets.tushare import TUSHARE_DATASETS
+from findata.operations import (
+    OperationWorker,
+    dataset_description,
+    normalize_operation,
+    operation_description,
+    register_v1_datasets,
+    resolve_v1_dependency,
+)
 from findata.storage import Workspace
 from findata.taskrunner import QueueFullError, TaskNotFoundError, TaskRunner
 
@@ -210,10 +218,18 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                     return
                 if method == "POST" and parts == ["v1", "tasks"]:
                     body = self._body()
-                    handle = app.taskrunner.submit(
-                        str(body["dataset"]),
-                        str(body.get("operation") or "update"),
+                    dataset = str(body["dataset"])
+                    operation = str(body.get("operation") or "update")
+                    operands = normalize_operation(
+                        dataset,
+                        operation,
                         dict(body.get("operands") or {}),
+                        today=app.today,
+                    )
+                    handle = app.taskrunner.submit(
+                        dataset,
+                        operation,
+                        operands,
                         owner=str(body.get("owner") or "api"),
                     )
                     self._send(HTTPStatus.ACCEPTED, {"handle_id": handle})
@@ -268,6 +284,63 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                     ready = app._provider_ready()
                     self._send(HTTPStatus.OK, {"provider": "tushare", "ready": ready})
                     return
+                if method == "GET" and parts == ["v1", "providers"]:
+                    self._send(
+                        HTTPStatus.OK,
+                        {"items": [{"name": "tushare", "ready": app._provider_ready()}]},
+                    )
+                    return
+                if method == "GET" and parts == ["v1", "providers", "tushare"]:
+                    configured = app.workspace.get_config("provider.tushare.token")
+                    self._send(
+                        HTTPStatus.OK,
+                        {
+                            "name": "tushare",
+                            "ready": app._provider_ready(),
+                            "configured": configured is not None or app.provider_mode == "mock",
+                        },
+                    )
+                    return
+                if method == "GET" and parts == ["v1", "datasets"]:
+                    self._send(
+                        HTTPStatus.OK,
+                        {
+                            "items": [
+                                dataset_description(
+                                    app.workspace, name, provider_ready=app._provider_ready()
+                                )
+                                for name in TUSHARE_DATASETS
+                            ]
+                        },
+                    )
+                    return
+                if method == "GET" and len(parts) == 3 and parts[:2] == ["v1", "datasets"]:
+                    self._send(
+                        HTTPStatus.OK,
+                        dataset_description(
+                            app.workspace, parts[2], provider_ready=app._provider_ready()
+                        ),
+                    )
+                    return
+                if method == "GET" and len(parts) == 4 and parts[:2] == ["v1", "datasets"]:
+                    dataset, action = parts[2], parts[3]
+                    if action in {"operations", "status"}:
+                        description = dataset_description(
+                            app.workspace, dataset, provider_ready=app._provider_ready()
+                        )
+                        self._send(
+                            HTTPStatus.OK,
+                            description if action == "status" else {"items": description["operations"]},
+                        )
+                        return
+                if (
+                    method == "GET"
+                    and len(parts) == 5
+                    and parts[:2] == ["v1", "datasets"]
+                    and parts[3] == "operations"
+                ):
+                    self._send(HTTPStatus.OK, operation_description(parts[2], parts[4]))
+                    return
                 if len(parts) == 4 and parts[:2] == ["v1", "datasets"] and parts[3:] == ["universe"]:
                     dataset = parts[2]
                     if method == "GET":
@@ -276,6 +349,9 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                         body = self._body()
                         app.workspace.set_universe(dataset, list(body.get("selectors") or []))
                         self._send(HTTPStatus.OK, {"selectors": app.workspace.get_universe(dataset)})
+                    elif method == "DELETE":
+                        app.workspace.clear_universe(dataset)
+                        self._send(HTTPStatus.OK, {"selectors": []})
                     return
                 if method == "GET" and parts == ["v1", "cron"]:
                     self._send(HTTPStatus.OK, {"items": [asdict(job) for job in app.cron.list_jobs()]})

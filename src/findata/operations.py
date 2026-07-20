@@ -155,6 +155,7 @@ class DatasetService:
             raise KeyError(dataset)
         return OperationResult(dataset, operation, publication, self._request_count - before)
 
+
     def _fetch(self, dataset: str, **params: Any) -> pa.Table:
         if self._reporter is not None:
             self._reporter.checkpoint()
@@ -371,6 +372,105 @@ class DatasetService:
             merged,
             coverage=[Coverage(key, value.start, value.end) for key, value in sorted(coverage.items())],
         )
+
+
+def normalize_operation(
+    dataset: str,
+    operation: str,
+    operands: dict[str, Any],
+    *,
+    today: date,
+) -> dict[str, Any]:
+    if dataset not in TUSHARE_DATASETS:
+        raise OperandError(f"unknown dataset {dataset!r}")
+    values = dict(operands)
+    if operation not in _operation_names(dataset):
+        raise OperandError(f"unsupported operation {operation!r} for {dataset}")
+    if operation == "update":
+        _require_no_operands(values)
+        return {}
+    timerange = _timerange(values, today=today)
+    if dataset == "tushare_trade_cal":
+        arrays = sorted(_string_array(values, "exchanges"))
+        if set(arrays) - {"SSE", "SZSE"}:
+            raise OperandError("trade calendar supports only SSE and SZSE")
+        key = "exchanges"
+    elif dataset == "tushare_index_weight":
+        arrays = sorted({_canonical_index(value) for value in _string_array(values, "indexes")})
+        key = "indexes"
+    else:
+        arrays = sorted(set(_string_array(values, "symbols")))
+        key = "symbols"
+    _require_keys(values, {key, "timerange"})
+    return {key: arrays, "timerange": _format_range(timerange)}
+
+
+def dataset_description(workspace: Workspace, dataset: str, *, provider_ready: bool) -> dict[str, Any]:
+    try:
+        spec = TUSHARE_DATASETS[dataset]
+    except KeyError as exc:
+        raise OperandError(f"unknown dataset {dataset!r}") from exc
+    manifest = workspace.datasets_root / dataset / "manifest.json"
+    state = "unregistered"
+    publication_id = None
+    if manifest.exists():
+        import json
+
+        content = json.loads(manifest.read_text(encoding="utf-8"))
+        state = str(content.get("state"))
+        publication_id = content.get("publication_id")
+    return {
+        "name": dataset,
+        "provider": "tushare",
+        "provider_ready": provider_ready,
+        "capabilities": dict(spec.capabilities),
+        "dependencies": (
+            ["tushare_trade_cal", "tushare_index_weight"]
+            if dataset == "tushare_daily_basic"
+            else []
+        ),
+        "universe": workspace.get_universe(dataset),
+        "storage": (
+            "partitioned-parquet"
+            if spec.time_field and dataset != "tushare_trade_cal"
+            else "single-file-csv"
+        ),
+        "state": state,
+        "publication_id": publication_id,
+        "operations": [operation_description(dataset, name) for name in _operation_names(dataset)],
+    }
+
+
+def operation_description(dataset: str, operation: str) -> dict[str, Any]:
+    if operation not in _operation_names(dataset):
+        raise OperandError(f"unsupported operation {operation!r} for {dataset}")
+    if operation == "update":
+        return {"name": operation, "required": [], "properties": {}}
+    key = {
+        "tushare_trade_cal": "exchanges",
+        "tushare_index_weight": "indexes",
+        "tushare_daily_basic": "symbols",
+    }[dataset]
+    return {
+        "name": operation,
+        "required": [key, "timerange"],
+        "properties": {
+            key: {"type": "array", "items": {"type": "string"}, "minItems": 1},
+            "timerange": {"type": "string", "format": "half-open-date-range"},
+        },
+    }
+
+
+def _operation_names(dataset: str) -> list[str]:
+    try:
+        return {
+            "tushare_trade_cal": ["update", "complete"],
+            "tushare_stock_basic": ["update"],
+            "tushare_index_weight": ["update", "complete"],
+            "tushare_daily_basic": ["update", "complete", "refresh"],
+        }[dataset]
+    except KeyError as exc:
+        raise OperandError(f"unknown dataset {dataset!r}") from exc
 
 
 def _merge_tables(spec: DatasetSpec, existing: pa.Table | None, incoming: pa.Table) -> pa.Table:

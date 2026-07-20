@@ -48,6 +48,7 @@ class ServerCLITests(unittest.TestCase):
             urlopen(f"{self.server.base_url}/v1/system/status", timeout=2)
 
         self.assertEqual(caught.exception.code, 401)
+        caught.exception.close()
 
     def test_cli_primary_workflow_submits_waits_and_queries_published_data(self) -> None:
         os.environ["TUSHARE_API_TOKEN"] = "not-used-by-mock"
@@ -134,15 +135,62 @@ class ServerCLITests(unittest.TestCase):
         tasks = self.request("GET", "/v1/tasks")["items"]
         self.assertTrue(any(item["owner"] == "cron" for item in tasks))
 
-        failed = self.request(
-            "POST", "/v1/tasks", {"dataset": "not_registered", "operation": "update"}
-        )["handle_id"]
-        self.wait_http(failed)
+        self.server.events.record("task_failed", "error", "injected task failure")
         events = json.loads(self.run_cli("--json", "events", "ls", "--unread")[1])
         failure = next(item for item in events["items"] if item["kind"] == "task_failed")
         self.run_cli("events", "ack", failure["event_id"])
         unread = json.loads(self.run_cli("--json", "events", "ls", "--unread")[1])
         self.assertNotIn(failure["event_id"], {item["event_id"] for item in unread["items"]})
+
+    def test_dataset_and_provider_discovery_commands_report_registered_contracts(self) -> None:
+        datasets = json.loads(self.run_cli("--json", "dataset", "ls")[1])
+        self.assertEqual(len(datasets["items"]), 4)
+        described = json.loads(
+            self.run_cli("--json", "dataset", "describe", "tushare_daily_basic")[1]
+        )
+        self.assertEqual(described["provider"], "tushare")
+        self.assertEqual(
+            {item["name"] for item in described["operations"]},
+            {"update", "complete", "refresh"},
+        )
+        operation = json.loads(
+            self.run_cli(
+                "--json", "dataset", "operation", "tushare_daily_basic", "complete"
+            )[1]
+        )
+        self.assertEqual(operation["required"], ["symbols", "timerange"])
+        providers = json.loads(self.run_cli("--json", "provider", "ls")[1])
+        self.assertEqual(providers["items"][0]["name"], "tushare")
+
+    def test_invalid_operation_is_rejected_without_creating_a_handle(self) -> None:
+        with self.assertRaises(HTTPError) as caught:
+            self.request(
+                "POST",
+                "/v1/tasks",
+                {"dataset": "tushare_stock_basic", "operation": "complete", "operands": {}},
+            )
+        self.assertEqual(caught.exception.code, 400)
+        caught.exception.close()
+        self.assertEqual(self.request("GET", "/v1/tasks")["items"], [])
+
+    def test_structured_params_and_universe_clear_cli_forms(self) -> None:
+        self.run_cli("dataset", "universe", "set", "tushare_daily_basic", "CSI300@latest")
+        cleared = json.loads(
+            self.run_cli("--json", "dataset", "universe", "clear", "tushare_daily_basic")[1]
+        )
+        self.assertEqual(cleared["selectors"], [])
+        code, output = self.run_cli(
+            "--json",
+            "task",
+            "run",
+            "tushare_trade_cal",
+            "complete",
+            "--params",
+            '{"exchanges":["SSE"],"timerange":"2026-07-17:2026-07-20"}',
+            "--wait",
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(output)["status"], "succeeded")
 
     def run_cli(self, *arguments: str) -> tuple[int, str]:
         stdout = io.StringIO()
