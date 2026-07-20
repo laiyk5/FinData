@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import date, timedelta
+from pathlib import Path
+from typing import Protocol
 from typing import Any
 
 import pyarrow as pa
@@ -9,8 +11,9 @@ import pyarrow as pa
 from findata.contracts import DateRange, DatasetSpec, OperandError
 from findata.datasets.tushare import TUSHARE_DATASETS
 from findata.loader import DataLoader, DatasetNotReadyError, UnsupportedCoverageError
-from findata.providers.tushare import TushareClient
+from findata.providers.tushare import TushareClient, TushareHTTPTransport
 from findata.storage import Coverage, Workspace
+from findata.testing.tushare import MockTushareTransport
 
 
 @dataclass(frozen=True, slots=True)
@@ -19,6 +22,47 @@ class OperationResult:
     operation: str
     publication_id: str
     fetched_requests: int
+
+
+class OperationReporter(Protocol):
+    def checkpoint(self) -> None: ...
+
+    def log(self, message: str) -> None: ...
+
+
+@dataclass(frozen=True, slots=True)
+class OperationWorker:
+    """Pickle-safe task-process entry point for one configured workspace."""
+
+    workspace: Path
+    provider: str
+    token: str
+    today: str
+
+    def __call__(self, request: dict[str, object], context: OperationReporter) -> dict[str, Any]:
+        current_date = date.fromisoformat(self.today)
+        if self.provider == "mock":
+            transport = MockTushareTransport(today=current_date)
+        elif self.provider == "real":
+            transport = TushareHTTPTransport()
+        else:
+            raise ValueError(f"unsupported provider mode {self.provider!r}")
+        service = DatasetService(
+            Workspace(Path(self.workspace)),
+            TushareClient(token=self.token, transport=transport),
+            today=current_date,
+            reporter=context,
+        )
+        context.log(f"starting {request['dataset']} {request['operation']}")
+        context.checkpoint()
+        result = service.run(
+            str(request["dataset"]),
+            str(request["operation"]),
+            dict(request.get("operands") or {}),
+        )
+        context.checkpoint()
+        context.log(f"published {result.publication_id}")
+        return asdict(result)
 
 
 def register_v1_datasets(workspace: Workspace) -> None:
@@ -35,12 +79,20 @@ def register_v1_datasets(workspace: Workspace) -> None:
 class DatasetService:
     """Synchronous operation engine used by task processes and deterministic tests."""
 
-    def __init__(self, workspace: Workspace, client: TushareClient, *, today: date) -> None:
+    def __init__(
+        self,
+        workspace: Workspace,
+        client: TushareClient,
+        *,
+        today: date,
+        reporter: OperationReporter | None = None,
+    ) -> None:
         self.workspace = workspace
         self.client = client
         self.today = today
         self.loader = DataLoader(workspace.root)
         self._request_count = 0
+        self._reporter = reporter
 
     def set_universe(self, dataset: str, selectors: list[str]) -> None:
         if dataset not in {"tushare_index_weight", "tushare_daily_basic"}:
@@ -66,8 +118,14 @@ class DatasetService:
         return OperationResult(dataset, operation, publication, self._request_count - before)
 
     def _fetch(self, dataset: str, **params: Any) -> pa.Table:
+        if self._reporter is not None:
+            self._reporter.checkpoint()
+            self._reporter.log(f"fetch {dataset}")
         self._request_count += 1
-        return self.client.query(dataset, **params)
+        table = self.client.query(dataset, **params)
+        if self._reporter is not None:
+            self._reporter.checkpoint()
+        return table
 
     def _trade_cal(self, operation: str, operands: dict[str, Any]) -> str:
         if operation == "update":
@@ -262,6 +320,8 @@ class DatasetService:
     ) -> str:
         if not new_tables:
             return self.loader.dataset(spec.name).publication_id
+        if self._reporter is not None:
+            self._reporter.checkpoint()
         incoming = pa.concat_tables(new_tables) if len(new_tables) > 1 else new_tables[0]
         merged = _merge_tables(spec, self._existing_table(spec), incoming)
         return self.workspace.publisher(spec.name).publish(
