@@ -115,6 +115,12 @@ resulting `main` commit. An urgent production fix starts from `main`, stays limi
 its regression test, and returns to `main` through review when available. Every such fix is then
 merged from the fixed `main` into `dev` immediately so later releases cannot reintroduce the defect.
 
+Passing the implementation, documentation, and verification gates makes a version release-ready;
+it does not authorize a release. A human must explicitly confirm each release before `dev` is
+merged into `main`, the final release version is assigned, or a release tag or artifact is created
+or published. In particular, an unreleased v1 remains development work until that confirmation is
+given.
+
 Do not rewrite shared `main` or `dev` history. Keep unrelated changes out of feature and fix commits,
 and do not merge while required tests or documentation updates are incomplete.
 
@@ -130,6 +136,25 @@ error views. It may shorten identifiers for display only when the full identifie
 for copying. The progress renderer writes only to stderr, updates in place only on an interactive
 terminal, and always removes transient animation before printing a terminal summary. Rendering
 failures must not change task execution or corrupt a structured result.
+
+Identifier-prefix resolution belongs to the server-side resource store, not the CLI. The CLI sends
+the operand unchanged. Under the same lock used to access retained resources, the resolver gives an
+exact match precedence, validates the minimum prefix length, and returns either one full identifier
+or a typed invalid, not-found, or ambiguous result. State-changing handlers act only after that
+atomic resolution. Task routes search handle identifiers only, so cancellation cannot target a
+shared execution record.
+
+Human value formatting uses semantic field descriptors or explicit presentation view models.
+Formatters for timestamps, durations, counts, percentages, exact decimals, and measurements must
+not mutate transport DTOs or affect JSON and JSONL serialization. Do not infer semantics from a
+generic numeric type, a substring in a field name, or the process locale.
+
+Task diagnostics use a typed semantic object with severity, stable code, message, optional context,
+and occurrence count. Persist it through the existing task-log or event path before presentation.
+The human follow renderer owns the bounded visible set, repeat aggregation, suppression counters,
+and terminal cleanup; the JSONL renderer emits all diagnostic information without applying that
+limit. Terminal failures bypass human suppression. These rules add no second diagnostic store or
+new retention policy.
 
 The JSON renderer emits one complete JSON document. The JSONL renderer emits one complete object
 per event or record, including a stable `type` discriminator. Their field schemas belong in the

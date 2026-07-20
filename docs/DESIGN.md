@@ -226,6 +226,21 @@ words, and actionable errors. Stable command results go to stdout; transient pro
 diagnostics go to stderr. Interactive decoration may improve presentation but must not carry
 meaning by itself or alter execution, task persistence, or cancellation behavior.
 
+Human task commands and event acknowledgement may use an unambiguous, server-resolved identifier
+prefix. Exact identifiers take precedence, prefixes used for state-changing operations have a
+minimum length, and every successful response returns the full resolved identifier. Prefix
+matching does not apply to dataset, provider, publication, or execution identifiers.
+
+Human rendering formats values according to declared field semantics: timestamps, durations,
+counts, percentages, and generic measurements have distinct presentation rules. Scientific
+notation is reserved for extreme generic measurements, not used as the default number format.
+Presentation never changes the values or types emitted by JSON and JSONL.
+
+Progress is transient, but warning and error diagnostics remain inspectable under the existing
+task and event retention rules. A live human view keeps a bounded set visible and reports exact
+additional counts without flooding the terminal; structured streaming preserves every logical
+diagnostic occurrence. Detailed behavior is defined in [USER.md](USER.md#cli-behavior).
+
 JSON and JSONL are stable, undecorated interfaces for scripts and tests. Structured output never
 contains terminal control sequences, progress animation, readiness banners, or explanatory prose.
 Detailed terminal behavior and examples are defined once in [USER.md](USER.md#cli-behavior), and

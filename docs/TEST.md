@@ -98,6 +98,24 @@ CLI presentation tests cover:
 - JSON as exactly one document and JSONL as one typed object per line, with no ANSI sequences,
   animation, readiness banner, or human commentary under any terminal configuration.
 
+Identifier tests cover full and exact identifiers, the shortest valid unique prefix, a too-short
+prefix, no match, and deliberately colliding retained prefixes. They verify `400`, `404`, and `409`
+results as applicable and prove that ambiguity has no side effects. Resolution is also exercised
+against concurrent retention changes, and task cancellation proves that a handle prefix cannot
+resolve an execution identifier.
+
+Human-formatting tests use semantic fields at unit boundaries: subsecond and multi-minute
+durations, timezone offsets and date rollover, grouped counts, declared percentage precision,
+scientific-notation thresholds, identifiers that look numeric, and exact decimal values. Matching
+JSON and JSONL assertions prove that presentation leaves raw values and types unchanged.
+
+Diagnostic tests cover fewer than, exactly, and more than ten distinct warning and error messages;
+interleaved severities; exact repeats; and a terminal failure after the visible limit. PTY evidence
+verifies the replaceable suppression line and cleanup. Redirected stderr verifies the single
+suppression notice and final exact totals. JSONL assertions account for every logical occurrence,
+including counts carried by aggregated records, and prove that human suppression loses no
+structured diagnostic data.
+
 Snapshot tests normalize nondeterministic timestamps, durations, paths, and identifiers but retain
 their labels and shapes. Semantic assertions accompany snapshots so a cosmetically accepted update
 cannot hide a missing status, result, or recovery instruction.

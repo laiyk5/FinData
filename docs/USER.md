@@ -77,7 +77,7 @@ Exit codes are:
 
 - `0` — success;
 - `1` — operational failure or a failed or canceled task when waiting;
-- `2` — invalid CLI usage.
+- `2` — invalid CLI usage;
 - `130` — the user interrupted a wait or follow; the accepted server task remains running.
 
 Task submission is asynchronous by default. The CLI reports acceptance and the task ID as soon as
@@ -102,6 +102,47 @@ the version, resolved workspace, listening address, and a credential-free provid
 prints readiness only after startup recovery and initialization have succeeded. Redirected or
 service-managed output uses one plain log record rather than an interactive banner, and server
 output never reveals API credentials or provider secrets.
+
+### Identifier prefixes
+
+Commands that address a task handle (`task status`, `task logs`, and `task cancel`) and `events ack`
+accept either the full identifier or a lowercase hexadecimal prefix of at least eight characters.
+An exact identifier always wins. A prefix must identify exactly one retained resource; no match is
+reported as not found, and multiple matches are reported as ambiguous with no action performed.
+Success output always includes the full resolved identifier. Task commands resolve handle
+identifiers only, never the internal execution identifier shared by coalesced tasks. Dataset,
+provider, publication, and execution identifiers must be supplied in full.
+
+### Human value formatting
+
+Human output uses the declared meaning of a field rather than guessing from its Python type or
+name:
+
+- timestamps use ISO 8601 in the configured display timezone and include the UTC offset;
+- elapsed durations use an adaptive unit such as `240 ms`, `3.2 s`, or `2 min 5 s`;
+- integer counts use ASCII thousands grouping, such as `12,500`;
+- percentages and domain measurements use their declared precision and unit; and
+- generic finite decimals use a concise fixed representation, switching to scientific notation
+  only when their absolute value is at least `1e9` or is nonzero and below `1e-4`.
+
+Identifiers, symbols, calendar dates, monetary or other exact decimals, and schema-declared text
+are not passed through generic numeric formatting. JSON and JSONL retain the original values and
+types; display timezone, grouping, units, and precision are human-presentation concerns only.
+
+### Live diagnostics
+
+While waiting or following in human mode, progress remains transient. The first ten distinct
+warning or error diagnostics remain visible as ordinary lines. Exact repeats may be combined with
+an occurrence count. Further distinct diagnostics are suppressed from the live human view: an
+interactive terminal shows a replaceable line with exact additional warning and error counts,
+while redirected stderr prints one suppression notice followed by a final count summary. A
+terminal failure is always printed even when the visible limit has already been reached.
+
+The final summary reports total warning and error occurrences and names `findata task logs <id>`
+or `findata events ls` when retained details are available. Each diagnostic has a severity, stable
+code, message, optional context, and occurrence count. JSONL represents every logical occurrence;
+an aggregated record is lossless only when its count preserves the total. JSON and JSONL do not
+apply the human visibility limit.
 
 Help, version, and shell-completion generation are not subject to structured output and do not require a workspace. Dynamic completion is best-effort and falls back to static command completion if a workspace or server is unavailable.
 
