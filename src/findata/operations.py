@@ -17,7 +17,12 @@ from findata.providers.tushare import TushareClient, TushareHTTPTransport
 from findata.publication import PublicationWindow, daily_window, monthly_window
 from findata.rate_limit import FileRateLimiter
 from findata.storage import Coverage, Workspace
-from findata.testing.tushare import MockTushareTransport
+from findata.testing.tushare import (
+    MOCK_TOKEN,
+    MockTushareTransport,
+    is_mock_token,
+    transport_from_mock_token,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +48,10 @@ class OperationReporter(Protocol):
 
     def running(self) -> None: ...
 
+    def progress(self, current: int | float, total: int | float) -> None: ...
+
+    def stage(self, value: str) -> None: ...
+
 
 @dataclass(frozen=True, slots=True)
 class OperationWorker:
@@ -64,9 +73,8 @@ class OperationWorker:
         workspace = Workspace(Path(self.workspace))
         if self.provider == "mock":
             transport = MockTushareTransport(today=current_date)
-            token = self.token or "mock-token"
+            token = self.token or MOCK_TOKEN
         elif self.provider == "real":
-            transport = TushareHTTPTransport()
             configured = workspace.get_config("provider.tushare.token")
             if isinstance(configured, dict) and isinstance(configured.get("env"), str):
                 import os
@@ -74,6 +82,11 @@ class OperationWorker:
                 token = os.environ.get(configured["env"], "")
             else:
                 token = str(configured or self.token)
+            transport = (
+                transport_from_mock_token(token, today=current_date)
+                if is_mock_token(token)
+                else TushareHTTPTransport()
+            )
         else:
             raise ValueError(f"unsupported provider mode {self.provider!r}")
         rate_limit = int(workspace.get_config("provider.tushare.rate_limit", 500))
@@ -95,6 +108,7 @@ class OperationWorker:
             reporter=context,
         )
         context.log(f"starting {request['dataset']} {request['operation']}")
+        context.stage("starting")
         context.checkpoint()
         result = service.run(
             str(request["dataset"]),
@@ -175,6 +189,8 @@ class DatasetService:
         if self._reporter is not None:
             self._reporter.checkpoint()
             self._reporter.log(f"fetch {dataset}")
+            if hasattr(self._reporter, "stage"):
+                self._reporter.stage(f"fetching:{dataset}")
             if hasattr(self._reporter, "begin_subtask"):
                 self._reporter.begin_subtask(timeout=180)
         self._request_count += 1
@@ -186,6 +202,10 @@ class DatasetService:
         finally:
             if self._reporter is not None and hasattr(self._reporter, "end_subtask"):
                 self._reporter.end_subtask()
+
+    def _progress(self, current: int, total: int) -> None:
+        if self._reporter is not None and hasattr(self._reporter, "progress"):
+            self._reporter.progress(current, total)
 
     def _trade_cal(self, operation: str, operands: dict[str, Any]) -> str:
         if operation == "update":
@@ -205,19 +225,25 @@ class DatasetService:
         existing_coverage = self._coverage_map(spec.name)
         next_coverage = dict(existing_coverage)
         publication: str | None = None
-        for exchange in exchanges:
-            for interval in _missing_for_continuity(existing_coverage.get(exchange), requested):
-                start, end = interval.to_provider_inclusive()
-                table = self._fetch(
-                    spec.name,
-                    exchange=exchange,
-                    start_date=start,
-                    end_date=end,
-                )
-                if table.num_rows == 0:
-                    raise RuntimeError(f"trade_cal returned empty due interval for {exchange}")
-                next_coverage[exchange] = _merge_interval(next_coverage.get(exchange), interval)
-                publication = self._publish(spec, [table], next_coverage)
+        jobs = [
+            (exchange, interval)
+            for exchange in exchanges
+            for interval in _missing_for_continuity(existing_coverage.get(exchange), requested)
+        ]
+        self._progress(0, len(jobs))
+        for completed, (exchange, interval) in enumerate(jobs, start=1):
+            start, end = interval.to_provider_inclusive()
+            table = self._fetch(
+                spec.name,
+                exchange=exchange,
+                start_date=start,
+                end_date=end,
+            )
+            if table.num_rows == 0:
+                raise RuntimeError(f"trade_cal returned empty due interval for {exchange}")
+            next_coverage[exchange] = _merge_interval(next_coverage.get(exchange), interval)
+            publication = self._publish(spec, [table], next_coverage)
+            self._progress(completed, len(jobs))
         return publication or self._publish(spec, [], next_coverage)
 
     def _stock_basic(self, operation: str, operands: dict[str, Any]) -> str:
@@ -225,19 +251,27 @@ class DatasetService:
             raise OperandError("tushare_stock_basic supports only update")
         _require_no_operands(operands)
         tables: list[pa.Table] = []
-        for status in ("L", "D", "P", "G"):
-            for exchange in ("SSE", "SZSE", "BSE"):
-                table = self._fetch(
-                    "tushare_stock_basic", list_status=status, exchange=exchange
+        jobs = [
+            (status, exchange)
+            for status in ("L", "D", "P", "G")
+            for exchange in ("SSE", "SZSE", "BSE")
+        ]
+        self._progress(0, len(jobs))
+        for completed, (status, exchange) in enumerate(jobs, start=1):
+            table = self._fetch(
+                "tushare_stock_basic", list_status=status, exchange=exchange
+            )
+            if table.num_rows >= 6000:
+                raise RuntimeError(
+                    f"stock_basic response may be truncated for {status}/{exchange}"
                 )
-                if table.num_rows >= 6000:
-                    raise RuntimeError(
-                        f"stock_basic response may be truncated for {status}/{exchange}"
-                    )
-                tables.append(table)
+            tables.append(table)
+            self._progress(completed, len(jobs))
         combined = pa.concat_tables(tables)
         if combined.num_rows == 0:
             raise RuntimeError("stock_basic merged snapshot is unexpectedly empty")
+        if self._reporter is not None and hasattr(self._reporter, "stage"):
+            self._reporter.stage("publishing:tushare_stock_basic")
         return self._publisher("tushare_stock_basic").publish(
             _merge_tables(TUSHARE_DATASETS["tushare_stock_basic"], None, combined)
         )
@@ -260,26 +294,31 @@ class DatasetService:
         existing_coverage = self._coverage_map(spec.name)
         next_coverage = dict(existing_coverage)
         publication: str | None = None
-        for index in indexes:
-            intervals = _missing_for_continuity(existing_coverage.get(index), requested)
-            for interval in intervals:
-                for month in _month_starts(interval):
-                    month_interval = _month_range(month, month)
-                    start, end = month_interval.to_provider_inclusive()
-                    table = self._fetch(
-                        spec.name,
-                        index_code=index,
-                        start_date=start,
-                        end_date=end,
-                    )
-                    if table.num_rows == 0:
-                        raise RuntimeError(f"index_weight returned empty historical month for {index}")
-                    if monthly_window(month, self.now) == PublicationWindow.BEFORE:
-                        raise RuntimeError(f"index_weight month is before publication window for {index}")
-                    next_coverage[index] = _merge_interval(
-                        next_coverage.get(index), month_interval
-                    )
-                    publication = self._publish(spec, [table], next_coverage)
+        jobs = [
+            (index, month)
+            for index in indexes
+            for interval in _missing_for_continuity(existing_coverage.get(index), requested)
+            for month in _month_starts(interval)
+        ]
+        self._progress(0, len(jobs))
+        for completed, (index, month) in enumerate(jobs, start=1):
+            month_interval = _month_range(month, month)
+            start, end = month_interval.to_provider_inclusive()
+            table = self._fetch(
+                spec.name,
+                index_code=index,
+                start_date=start,
+                end_date=end,
+            )
+            if table.num_rows == 0:
+                raise RuntimeError(f"index_weight returned empty historical month for {index}")
+            if monthly_window(month, self.now) == PublicationWindow.BEFORE:
+                raise RuntimeError(f"index_weight month is before publication window for {index}")
+            next_coverage[index] = _merge_interval(
+                next_coverage.get(index), month_interval
+            )
+            publication = self._publish(spec, [table], next_coverage)
+            self._progress(completed, len(jobs))
         return publication or self._publish(spec, [], next_coverage)
 
     def _daily_basic(self, operation: str, operands: dict[str, Any]) -> str:
@@ -314,28 +353,35 @@ class DatasetService:
                     raise OperandError(f"refresh range is outside coverage for {symbol}")
         next_coverage = dict(existing_coverage)
         publication: str | None = None
-        for symbol in symbols:
-            intervals = [requested] if operation == "refresh" else _missing_for_continuity(
-                existing_coverage.get(symbol), requested
+        jobs = [
+            (symbol, interval)
+            for symbol in symbols
+            for interval in (
+                [requested]
+                if operation == "refresh"
+                else _missing_for_continuity(existing_coverage.get(symbol), requested)
             )
-            for interval in intervals:
-                start, end = interval.to_provider_inclusive()
-                table = self._fetch(
-                    spec.name,
-                    ts_code=symbol,
-                    start_date=start,
-                    end_date=end,
-                )
-                if table.num_rows == 0:
-                    latest_target = interval.end - timedelta(days=1)
-                    window = daily_window(latest_target, self.now)
-                    if window != PublicationWindow.AFTER:
-                        raise RuntimeError(
-                            f"daily_basic empty result remains unresolved in {window.value}; "
-                            f"target is {window.value.split('-', 1)[0]} publication window"
-                        )
-                next_coverage[symbol] = _merge_interval(next_coverage.get(symbol), interval)
-                publication = self._publish(spec, [table], next_coverage)
+        ]
+        self._progress(0, len(jobs))
+        for completed, (symbol, interval) in enumerate(jobs, start=1):
+            start, end = interval.to_provider_inclusive()
+            table = self._fetch(
+                spec.name,
+                ts_code=symbol,
+                start_date=start,
+                end_date=end,
+            )
+            if table.num_rows == 0:
+                latest_target = interval.end - timedelta(days=1)
+                window = daily_window(latest_target, self.now)
+                if window != PublicationWindow.AFTER:
+                    raise RuntimeError(
+                        f"daily_basic empty result remains unresolved in {window.value}; "
+                        f"target is {window.value.split('-', 1)[0]} publication window"
+                    )
+            next_coverage[symbol] = _merge_interval(next_coverage.get(symbol), interval)
+            publication = self._publish(spec, [table], next_coverage)
+            self._progress(completed, len(jobs))
         return publication or self._publish(spec, [], next_coverage)
 
     def _resolve_symbols(self, selectors: list[str], requested: DateRange) -> list[str]:
@@ -398,6 +444,8 @@ class DatasetService:
             return self.loader.dataset(spec.name).publication_id
         if self._reporter is not None:
             self._reporter.checkpoint()
+            if hasattr(self._reporter, "stage"):
+                self._reporter.stage(f"publishing:{spec.name}")
         incoming = pa.concat_tables(new_tables) if len(new_tables) > 1 else new_tables[0]
         merged = _merge_tables(spec, self._existing_table(spec), incoming)
         return self._publisher(spec.name).publish(

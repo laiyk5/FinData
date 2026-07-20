@@ -174,6 +174,7 @@ class TaskRunnerTests(unittest.TestCase):
             handles = runner.list_handles()
 
         self.assertEqual(status.status, "succeeded", status.error)
+        self.assertEqual(status.progress, {"current": 3, "total": 3})
         self.assertEqual(
             {item.dataset for item in handles},
             {"tushare_daily_basic", "tushare_trade_cal", "tushare_index_weight"},
@@ -254,6 +255,7 @@ class TaskRunnerTests(unittest.TestCase):
                 {"path": str(self.root / "provider-rate.json")},
             )
             runner.wait_for_status(waiting, {"waiting"}, timeout=3)
+            self.assertEqual(runner.status(waiting).reason, "provider_rate_limit")
             quick = runner.submit("tushare_stock_basic", "update", {"path": str(self.root / "fast-rate.json")})
             # The second task also waits for its own empty bucket, proving it was dispatched
             # while the first waiting task no longer occupied global capacity.

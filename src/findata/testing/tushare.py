@@ -4,9 +4,30 @@ from calendar import monthrange
 from collections.abc import Mapping
 from copy import deepcopy
 from datetime import date, timedelta
+import re
 from typing import Any
 
 from findata.datasets.tushare import TUSHARE_DATASETS
+
+
+MOCK_TOKEN = "findata-mock"
+_MOCK_FAILURE = re.compile(r"^findata-mock:fail=([a-z_]+)@(\d+)$")
+
+
+def is_mock_token(value: object) -> bool:
+    return isinstance(value, str) and (value == MOCK_TOKEN or _MOCK_FAILURE.fullmatch(value) is not None)
+
+
+def transport_from_mock_token(value: str, *, today: date) -> MockTushareTransport:
+    if not is_mock_token(value):
+        raise ValueError("invalid findata mock token")
+    transport = MockTushareTransport(today=today)
+    match = _MOCK_FAILURE.fullmatch(value)
+    if match:
+        transport.fail_on_api_call(
+            match.group(1), int(match.group(2)), code=-1, message="injected mock API failure"
+        )
+    return transport
 
 
 class MockTushareTransport:
@@ -18,6 +39,8 @@ class MockTushareTransport:
         self._next_error: tuple[int, str] | None = None
         self._next_drop_field: str | None = None
         self._call_errors: dict[int, tuple[int, str]] = {}
+        self._api_call_errors: dict[tuple[str, int], tuple[int, str]] = {}
+        self._api_calls: dict[str, int] = {}
         self._empty_apis: set[str] = set()
 
     def __repr__(self) -> str:
@@ -34,12 +57,24 @@ class MockTushareTransport:
             raise ValueError("call number must be positive")
         self._call_errors[number] = (code, message)
 
+    def fail_on_api_call(self, api_name: str, number: int, *, code: int, message: str) -> None:
+        if number <= 0:
+            raise ValueError("call number must be positive")
+        self._api_call_errors[(api_name, number)] = (code, message)
+
     def empty_next(self, api_name: str) -> None:
         self._empty_apis.add(api_name)
 
     def __call__(self, payload: Mapping[str, Any]) -> Mapping[str, Any]:
         request = deepcopy(dict(payload))
         self.requests.append(request)
+        api_name = str(request.get("api_name"))
+        api_call = self._api_calls.get(api_name, 0) + 1
+        self._api_calls[api_name] = api_call
+        api_error = self._api_call_errors.pop((api_name, api_call), None)
+        if api_error is not None:
+            code, message = api_error
+            return {"code": code, "msg": message, "data": None}
         scheduled_error = self._call_errors.pop(len(self.requests), None)
         if scheduled_error is not None:
             code, message = scheduled_error
@@ -49,15 +84,14 @@ class MockTushareTransport:
             self._next_error = None
             return {"code": code, "msg": message, "data": None}
 
-        api_name = request.get("api_name")
         fields = str(request.get("fields") or "").split(",")
         params = request.get("params")
         if not isinstance(params, Mapping):
             return {"code": -1, "msg": "params must be an object", "data": None}
         if api_name in self._empty_apis:
-            self._empty_apis.remove(str(api_name))
+            self._empty_apis.remove(api_name)
             return {"code": 0, "msg": None, "data": {"fields": fields, "items": []}}
-        rows = self._rows(str(api_name), params)
+        rows = self._rows(api_name, params)
 
         if self._next_drop_field is not None and self._next_drop_field in fields:
             fields.remove(self._next_drop_field)

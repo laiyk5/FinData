@@ -31,6 +31,7 @@ from findata.operations import (
 )
 from findata.storage import Workspace
 from findata.taskrunner import QueueFullError, TaskNotFoundError, TaskRunner
+from findata.testing.tushare import is_mock_token
 
 
 class ServerAlreadyRunningError(RuntimeError):
@@ -160,12 +161,26 @@ class FindataServer:
 
     def _cron_loop(self) -> None:
         while not self._cron_stop.wait(1.0):
-            self.cron.tick()
+            try:
+                self.cron.tick()
+            except Exception as exc:
+                self.events.record(
+                    "cron_loop_error", "error", f"cron scheduler tick failed: {exc}"
+                )
 
     def _provider_ready(self) -> bool:
-        return self.provider_mode == "mock" or _configured_secret_ready(
+        return self._provider_is_mock() or _configured_secret_ready(
             self.workspace.get_config("provider.tushare.token")
         )
+
+    def _provider_token(self) -> str:
+        configured = self.workspace.get_config("provider.tushare.token")
+        if isinstance(configured, dict) and isinstance(configured.get("env"), str):
+            return os.environ.get(configured["env"], "")
+        return str(configured or "")
+
+    def _provider_is_mock(self) -> bool:
+        return self.provider_mode == "mock" or is_mock_token(self._provider_token())
 
     def _universe_ready(self, dataset: str) -> bool:
         return dataset not in {"tushare_index_weight", "tushare_daily_basic"} or bool(
@@ -173,11 +188,7 @@ class FindataServer:
         )
 
     def _probe_tushare(self) -> None:
-        configured = self.workspace.get_config("provider.tushare.token")
-        if isinstance(configured, dict) and isinstance(configured.get("env"), str):
-            token = os.environ.get(configured["env"], "")
-        else:
-            token = str(configured or "")
+        token = self._provider_token()
         limiter = FileRateLimiter(
             self.root / "providers" / "tushare-rate.json",
             limit=int(self.workspace.get_config("provider.tushare.rate_limit", 500)),
@@ -324,19 +335,32 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                     self._send(HTTPStatus.OK, {"removed": app.workspace.unset_config(parts[2])})
                     return
                 if method == "GET" and parts == ["v1", "providers", "tushare", "check"]:
-                    configured = app.workspace.get_config("provider.tushare.token")
                     ready = app._provider_ready()
-                    if ready and app.provider_mode == "real":
+                    mock = app._provider_is_mock()
+                    if ready and not mock:
                         app._probe_tushare()
                     self._send(
                         HTTPStatus.OK,
-                        {"provider": "tushare", "ready": ready, "authenticated": ready},
+                        {
+                            "provider": "tushare",
+                            "ready": ready,
+                            "authenticated": ready and not mock,
+                            "mode": "mock" if mock else "real",
+                        },
                     )
                     return
                 if method == "GET" and parts == ["v1", "providers"]:
                     self._send(
                         HTTPStatus.OK,
-                        {"items": [{"name": "tushare", "ready": app._provider_ready()}]},
+                        {
+                            "items": [
+                                {
+                                    "name": "tushare",
+                                    "ready": app._provider_ready(),
+                                    "mode": "mock" if app._provider_is_mock() else "real",
+                                }
+                            ]
+                        },
                     )
                     return
                 if method == "GET" and parts == ["v1", "providers", "tushare"]:
@@ -347,6 +371,7 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                             "name": "tushare",
                             "ready": app._provider_ready(),
                             "configured": configured is not None or app.provider_mode == "mock",
+                            "mode": "mock" if app._provider_is_mock() else "real",
                         },
                     )
                     return

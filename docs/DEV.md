@@ -77,3 +77,61 @@ Detailed workspace, manifest, plugin, task-message, and HTTP schemas should be p
 ## Coding-agent guidance
 
 Keep `AGENTS.md` and `CLAUDE.md` short. Project design, development, testing, dataset, toolkit, and user knowledge belongs in the documents that own those subjects rather than in agent-specific instruction files.
+
+## Environments
+
+Use `uv` for dependency resolution and the project development environment. Keep its lockfile in
+version control and use locked environments in CI. Development and automated tests must not mutate
+user data outside their allocated temporary workspace. Normal operating-system temporary
+directories and tool caches are allowed; the repository's `workspaces/` directory is reserved for
+manual verification and must never be used by automated tests.
+
+Use Nox as the multi-environment runner. Its sessions must create clean environments for each
+supported Python version and verify:
+
+- build and installation from the produced wheel, not only an editable source tree;
+- invocation of the installed `findata` and `findata-server` entry points;
+- the default test suite and static checks; and
+- the mocked end-to-end quick start in an isolated temporary workspace.
+
+The supported-version matrix must be explicit in the Nox configuration and CI rather than inferred
+from whichever interpreters happen to be installed locally. Add that configuration before treating
+the multi-version installation gate as complete.
+
+## Git branch workflow
+
+`main` and `dev` are the only long-lived branches:
+
+- `main` contains releasable code. It accepts release merges from `dev` and narrowly scoped urgent
+  fixes; incomplete development does not land there.
+- `dev` is the integration branch for the next release. Completed feature and maintenance work is
+  merged into it only after its required tests pass.
+- `feature/<short-name>` branches contain one new feature or coherent design change. They branch
+  from the current `dev`, follow test-driven development, and merge back into `dev`; they never
+  merge directly into `main`.
+
+A release merges the tested `dev` state into `main`, records the release version, and tags the
+resulting `main` commit. An urgent production fix starts from `main`, stays limited to the fix and
+its regression test, and returns to `main` through review when available. Every such fix is then
+merged from the fixed `main` into `dev` immediately so later releases cannot reintroduce the defect.
+
+Do not rewrite shared `main` or `dev` history. Keep unrelated changes out of feature and fix commits,
+and do not merge while required tests or documentation updates are incomplete.
+
+## CLI presentation development
+
+Keep presentation separate from command execution. Commands produce semantic result or event
+objects; centralized human, JSON, and JSONL renderers decide how to display them. A shared terminal
+capability detector owns TTY, width, Unicode, color, and `NO_COLOR` handling. Command handlers must
+not embed ANSI sequences, draw their own tables, or reinterpret server lifecycle states.
+
+The human renderer provides reusable table, labeled-detail, status, progress, empty-state, and
+error views. It may shorten identifiers for display only when the full identifier remains available
+for copying. The progress renderer writes only to stderr, updates in place only on an interactive
+terminal, and always removes transient animation before printing a terminal summary. Rendering
+failures must not change task execution or corrupt a structured result.
+
+The JSON renderer emits one complete JSON document. The JSONL renderer emits one complete object
+per event or record, including a stable `type` discriminator. Their field schemas belong in the
+HTTP/CLI implementation specifications under `docs/specs/`; presentation-only changes must not
+silently change those schemas.

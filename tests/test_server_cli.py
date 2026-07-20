@@ -222,6 +222,61 @@ class ServerCLITests(unittest.TestCase):
         caught.exception.close()
         self.assertEqual(self.request("GET", "/v1/tasks")["items"], [])
 
+    def test_special_mock_token_drives_failure_and_resume_through_cli(self) -> None:
+        self.server.shutdown()
+        self.server = FindataServer(
+            self.root, port=0, provider_mode="real", today=date(2026, 7, 20)
+        )
+        self.server.start_background()
+        self.assertEqual(
+            self.run_cli(
+                "config", "set", "provider.tushare.token", "--stdin",
+                stdin_text="findata-mock:fail=daily_basic@2\n",
+            )[0],
+            0,
+        )
+
+        provider = json.loads(self.run_cli("--json", "provider", "check", "tushare")[1])
+        self.assertTrue(provider["ready"])
+        self.assertEqual(provider["mode"], "mock")
+        self.run_cli(
+            "dataset", "universe", "set", "tushare_daily_basic", "CSI300@latest"
+        )
+        code, failed = self.run_cli(
+            "--json",
+            "task", "run", "tushare_daily_basic", "complete",
+            "--param", "symbols=CSI300",
+            "--param", "timerange=2026-06-29:2026-07-04",
+            "--wait",
+        )
+        self.assertEqual(code, 1)
+        self.assertEqual(json.loads(failed)["status"], "failed")
+        self.assertEqual(
+            DataLoader(self.root)
+            .dataset("tushare_daily_basic")
+            .coverage()
+            .column("key")
+            .to_pylist(),
+            ["000001.SZ"],
+        )
+
+        self.assertEqual(
+            self.run_cli(
+                "config", "set", "provider.tushare.token", "--stdin",
+                stdin_text="findata-mock\n",
+            )[0],
+            0,
+        )
+        code, resumed = self.run_cli(
+            "--json",
+            "task", "run", "tushare_daily_basic", "complete",
+            "--param", "symbols=CSI300",
+            "--param", "timerange=2026-06-29:2026-07-04",
+            "--wait",
+        )
+        self.assertEqual(code, 0, resumed)
+        self.assertEqual(json.loads(resumed)["result"]["fetched_requests"], 2)
+
     def test_universe_validation_and_system_queue_status(self) -> None:
         with self.assertRaises(HTTPError) as caught:
             self.request(
@@ -243,10 +298,15 @@ class ServerCLITests(unittest.TestCase):
         self.assertEqual(status["running_tasks"], 0)
         self.assertEqual(status["queue_lengths"], {})
 
-    def run_cli(self, *arguments: str) -> tuple[int, str]:
+    def run_cli(self, *arguments: str, stdin_text: str = "") -> tuple[int, str]:
         stdout = io.StringIO()
         stderr = io.StringIO()
-        code = cli_main(["--workspace", str(self.root), *arguments], stdout=stdout, stderr=stderr)
+        code = cli_main(
+            ["--workspace", str(self.root), *arguments],
+            stdin=io.StringIO(stdin_text),
+            stdout=stdout,
+            stderr=stderr,
+        )
         self.assertEqual(stderr.getvalue(), "")
         return code, stdout.getvalue().strip()
 

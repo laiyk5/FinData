@@ -54,6 +54,50 @@ class ServerProcessTests(unittest.TestCase):
                 if process.stderr is not None:
                     process.stderr.close()
 
+    def test_foreground_server_reports_readiness_without_secrets(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            initialize_workspace(workspace)
+            process = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-m",
+                    "findata.server_cli",
+                    "start",
+                    str(workspace),
+                    "--port",
+                    "0",
+                    "--provider-mode",
+                    "mock",
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            try:
+                deadline = time.monotonic() + 5
+                while not (workspace / "server.json").exists():
+                    if process.poll() is not None:
+                        assert process.stderr is not None
+                        self.fail(process.stderr.read())
+                    self.assertLess(time.monotonic(), deadline)
+                    time.sleep(0.02)
+                process.send_signal(signal.SIGTERM)
+                self.assertEqual(process.wait(timeout=5), 0)
+                assert process.stdout is not None
+                output = process.stdout.read()
+                self.assertIn("FinData server ready", output)
+                self.assertIn(str(workspace), output)
+                self.assertNotIn((workspace / "token").read_text().strip(), output)
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                    process.wait(timeout=2)
+                if process.stdout is not None:
+                    process.stdout.close()
+                if process.stderr is not None:
+                    process.stderr.close()
+
 
 if __name__ == "__main__":
     unittest.main()

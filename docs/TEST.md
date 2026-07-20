@@ -64,7 +64,43 @@ E2E tests use real user surfaces. CLI tests execute commands and inspect stdout,
 
 The primary required E2E scenario is the workflow in [USER.md](USER.md#quick-start): configure a mocked Tushare provider, set a CSI 300 universe, backfill `tushare_daily_basic`, fulfill dependencies, query covered data, enable cron, inject a failure, and verify that rerunning resumes unresolved intervals.
 
+The reserved token `findata-mock` selects the deterministic Tushare mock without contacting the
+provider. `findata-mock:fail=<api>@<call>` injects one terminal failure at the numbered call to that
+mock API; for example, `findata-mock:fail=daily_basic@2` fails after the first daily-basic request
+has been checkpointed. These values are testing controls, are never valid real credentials, and
+must be identified as mock mode by provider status and readiness output.
+
 Real-provider E2E tests are opt-in, use dedicated credentials, respect the provider limiter, and never run as the default test suite.
+
+Each automated E2E run creates a unique clean workspace through the operating system's temporary-
+directory facility, executes the quick start with that path substituted for `~/market-data`, and
+cleans it afterward. On failure, the harness may preserve the workspace as a named test artifact.
+Automated tests never read or write the repository's `workspaces/` directory; it is reserved for
+manual, in-person verification.
+
+Exit codes, stdout, stderr, structured records, and resulting workspace state are the primary E2E
+evidence. PTY transcripts or terminal snapshots verify interactive presentation. Screenshots may
+supplement a manual visual check, but are not the sole automated proof of correctness.
+
+## CLI presentation matrix
+
+CLI presentation tests cover:
+
+- interactive TTY and redirected stdout and stderr independently;
+- `--color auto`, `always`, and `never`, `NO_COLOR`, `TERM=dumb`, and a plain-text fallback;
+- common and narrow terminal widths, long values, and identifiers that must remain copyable;
+- tables, labeled detail views, empty results, warnings, actionable errors, and terminal summaries;
+- delayed commands without spinner flicker, progress-line replacement, and cleanup after success,
+  failure, cancellation, connection loss, and interruption;
+- Ctrl-C while waiting or following detaching without canceling the server task;
+- immediate task-acceptance output and faithful rendering of queued, waiting, running, and terminal
+  state changes supplied by the server; and
+- JSON as exactly one document and JSONL as one typed object per line, with no ANSI sequences,
+  animation, readiness banner, or human commentary under any terminal configuration.
+
+Snapshot tests normalize nondeterministic timestamps, durations, paths, and identifiers but retain
+their labels and shapes. Semantic assertions accompany snapshots so a cosmetically accepted update
+cannot hide a missing status, result, or recovery instruction.
 
 ## Crash and concurrency matrix
 
