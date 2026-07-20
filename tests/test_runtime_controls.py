@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from findata.cron import CronManager, CronSchedule
@@ -127,6 +127,20 @@ class CronManagerTests(unittest.TestCase):
         self.manager.recover(datetime(2026, 7, 20, 2, 0, tzinfo=UTC))
         self.assertEqual(self.submissions, [])
         self.assertEqual(self.events.list_events()[0].kind, "cron_missed")
+
+    def test_repeated_tick_within_one_minute_does_not_kill_scheduler(self) -> None:
+        self.manager.enable(
+            "tushare_daily_basic", now=datetime(2026, 7, 20, 8, 0, tzinfo=UTC)
+        )
+        first = datetime(2026, 7, 20, 9, 0, 1, tzinfo=UTC)
+
+        self.manager.tick(first)
+        self.manager.tick(first + timedelta(seconds=10))
+
+        self.assertEqual(
+            self.workspace.get_config("cron.jobs")["tushare_daily_basic"]["last_checked"],
+            "2026-07-20T09:00:00+00:00",
+        )
 
     def test_dst_gap_records_warning_event(self) -> None:
         self.manager.set_schedule(
