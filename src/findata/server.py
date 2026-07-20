@@ -104,6 +104,7 @@ class FindataServer:
             return
         self._acquire_lock()
         try:
+            self.workspace.recover_storage()
             self.taskrunner.start()
             self.cron.recover()
             handler = _handler_for(self)

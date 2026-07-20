@@ -195,6 +195,28 @@ class Workspace:
             _atomic_json(self.root / "config.json", config, mode=0o600)
             return existed
 
+    def recover_storage(self) -> int:
+        """Remove state that cannot be reached from any committed manifest."""
+        removed = 0
+        if not self.datasets_root.exists():
+            return removed
+        for dataset_root in self.datasets_root.iterdir():
+            if not dataset_root.is_dir() or not (dataset_root / "manifest.json").is_file():
+                continue
+            with DatasetGate(dataset_root / "gate.lock", exclusive=True):
+                manifest = _read_json(dataset_root / "manifest.json")
+                reachable = manifest.get("publication_id")
+                staging_root = dataset_root / "staging"
+                for path in list(staging_root.iterdir()) if staging_root.exists() else []:
+                    _remove_path(path)
+                    removed += 1
+                snapshots_root = dataset_root / "snapshots"
+                for path in list(snapshots_root.iterdir()) if snapshots_root.exists() else []:
+                    if path.name != reachable:
+                        _remove_path(path)
+                        removed += 1
+        return removed
+
 
 class Publisher:
     def __init__(self, dataset_root: Path, *, fault_injector: FaultInjector | None = None) -> None:
@@ -352,3 +374,10 @@ def _fsync_directory(path: Path) -> None:
         os.fsync(descriptor)
     finally:
         os.close(descriptor)
+
+
+def _remove_path(path: Path) -> None:
+    if path.is_dir():
+        shutil.rmtree(path)
+    else:
+        path.unlink(missing_ok=True)

@@ -205,6 +205,67 @@ class DatasetReader:
             return pads.dataset(files, schema=schema, format="parquet").to_table()
         raise IncompatibleDatasetError(f"unsupported reader strategy {strategy!r}")
 
+    def _stream_batches_locked(
+        self,
+        manifest: Mapping[str, Any],
+        *,
+        batch_size: int,
+        keys: Sequence[str] | None,
+        time_range: tuple[str | date, str | date] | None,
+        columns: Sequence[str] | None,
+        filters: Sequence[tuple[str, str, Any]] | None,
+        require_coverage: bool,
+    ) -> Iterator[pa.RecordBatch]:
+        schema = decode_manifest_schema(manifest)
+        normalized_range = _normalize_time_range(time_range)
+        if require_coverage:
+            self._enforce_coverage(manifest, keys=keys, time_range=normalized_range)
+        if columns is not None:
+            unknown = [column for column in columns if column not in schema.names]
+            if unknown:
+                raise QueryError(f"unknown projection columns {unknown!r}")
+        expression: pads.Expression | None = None
+        partition_key = manifest.get("partition_key")
+        time_field = manifest.get("time_field")
+        if keys is not None:
+            if not partition_key:
+                raise QueryError(f"dataset {self.name!r} has no partition key")
+            expression = pads.field(str(partition_key)).isin(list(keys))
+        if normalized_range is not None:
+            if not time_field:
+                raise QueryError(f"dataset {self.name!r} has no time field")
+            start, end = normalized_range
+            range_expression = (pads.field(str(time_field)) >= start) & (
+                pads.field(str(time_field)) < end
+            )
+            expression = range_expression if expression is None else expression & range_expression
+        for column, operator, value in filters or ():
+            if column not in schema.names:
+                raise QueryError(f"unknown filter column {column!r}")
+            item = _dataset_filter(pads.field(column), operator, value)
+            expression = item if expression is None else expression & item
+
+        snapshot = self.dataset_root / "snapshots" / str(manifest["publication_id"])
+        strategy = manifest.get("strategy")
+        if strategy == "single-file-csv":
+            source = pads.dataset(snapshot / "data.csv", schema=schema, format="csv")
+        elif strategy == "partitioned-parquet":
+            files = sorted(snapshot.glob("*/*.parquet"))
+            if not files:
+                empty_schema = schema if columns is None else pa.schema(
+                    [schema.field(column) for column in columns]
+                )
+                return iter(pa.RecordBatchReader.from_batches(empty_schema, []))
+            source = pads.dataset(files, schema=schema, format="parquet")
+        else:
+            raise IncompatibleDatasetError(f"unsupported reader strategy {strategy!r}")
+        scanner = source.scanner(
+            columns=list(columns) if columns is not None else None,
+            filter=expression,
+            batch_size=batch_size,
+        )
+        return iter(scanner.to_batches())
+
     def _read_coverage(self, manifest: Mapping[str, Any]) -> pa.Table:
         if not manifest.get("coverage"):
             raise UnsupportedCoverageError(f"dataset {self.name!r} has no coverage record")
@@ -250,7 +311,8 @@ class BatchReader(AbstractContextManager["BatchReader"]):
         self.query = dict(query)
         self.publication_id: str | None = None
         self._gate: DatasetGate | None = None
-        self._batches: list[pa.RecordBatch] | None = None
+        self._batches: Iterator[pa.RecordBatch] | None = None
+        self._limit: int | None = None
 
     def __enter__(self) -> BatchReader:
         self._gate = DatasetGate(self.dataset.dataset_root / "gate.lock", exclusive=False)
@@ -258,17 +320,33 @@ class BatchReader(AbstractContextManager["BatchReader"]):
         try:
             manifest = self.dataset._ready_manifest()
             self.publication_id = str(manifest["publication_id"])
-            table = self.dataset._query_locked(
-                manifest,
-                keys=self.query.get("keys"),
-                time_range=self.query.get("time_range"),
-                columns=self.query.get("columns"),
-                filters=self.query.get("filters"),
-                order_by=self.query.get("order_by"),
-                limit=self.query.get("limit"),
-                require_coverage=bool(self.query.get("require_coverage", False)),
-            )
-            self._batches = table.to_batches(max_chunksize=self.batch_size)
+            order_by = self.query.get("order_by")
+            if order_by:
+                table = self.dataset._query_locked(
+                    manifest,
+                    keys=self.query.get("keys"),
+                    time_range=self.query.get("time_range"),
+                    columns=self.query.get("columns"),
+                    filters=self.query.get("filters"),
+                    order_by=order_by,
+                    limit=self.query.get("limit"),
+                    require_coverage=bool(self.query.get("require_coverage", False)),
+                )
+                self._batches = iter(table.to_batches(max_chunksize=self.batch_size))
+            else:
+                self._batches = self.dataset._stream_batches_locked(
+                    manifest,
+                    batch_size=self.batch_size,
+                    keys=self.query.get("keys"),
+                    time_range=self.query.get("time_range"),
+                    columns=self.query.get("columns"),
+                    filters=self.query.get("filters"),
+                    require_coverage=bool(self.query.get("require_coverage", False)),
+                )
+                limit = self.query.get("limit")
+                if limit is not None and (not isinstance(limit, int) or limit < 0):
+                    raise QueryError("limit must be a nonnegative integer")
+                self._limit = limit
             return self
         except BaseException:
             self._gate.__exit__(None, None, None)
@@ -278,10 +356,21 @@ class BatchReader(AbstractContextManager["BatchReader"]):
     def __iter__(self) -> Iterator[pa.RecordBatch]:
         if self._batches is None:
             raise RuntimeError("batch reader must be used as a context manager")
-        return iter(self._batches)
+        if self._limit is None:
+            yield from self._batches
+            return
+        remaining = self._limit
+        for batch in self._batches:
+            if remaining <= 0:
+                break
+            emitted = batch.slice(0, min(remaining, batch.num_rows))
+            remaining -= emitted.num_rows
+            if emitted.num_rows:
+                yield emitted
 
     def __exit__(self, exc_type: Any, exc: Any, traceback: Any) -> None:
         self._batches = None
+        self._limit = None
         if self._gate is not None:
             self._gate.__exit__(exc_type, exc, traceback)
             self._gate = None
@@ -324,3 +413,23 @@ def _filter_mask(column: pa.ChunkedArray, operator: str, value: Any) -> pa.Array
         return pc.invert(result) if operator == "not in" else result
     raise QueryError(f"unsupported filter operator {operator!r}")
 
+
+def _dataset_filter(field: pads.Expression, operator: str, value: Any) -> pads.Expression:
+    if operator == "=":
+        return field == value
+    if operator == "!=":
+        return field != value
+    if operator == "<":
+        return field < value
+    if operator == "<=":
+        return field <= value
+    if operator == ">":
+        return field > value
+    if operator == ">=":
+        return field >= value
+    if operator in {"in", "not in"}:
+        if isinstance(value, (str, bytes)) or not isinstance(value, Iterable):
+            raise QueryError(f"operator {operator!r} requires a value collection")
+        expression = field.isin(list(value))
+        return ~expression if operator == "not in" else expression
+    raise QueryError(f"unsupported filter operator {operator!r}")

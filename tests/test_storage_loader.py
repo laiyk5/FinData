@@ -176,6 +176,58 @@ class StorageLoaderTests(unittest.TestCase):
         self.assertTrue(committed.is_set())
         self.assertEqual(DataLoader(self.root).dataset("tushare_stock_basic").query().column("exchange").to_pylist(), ["SZSE"])
 
+    def test_batch_reader_streams_without_using_eager_query_path(self) -> None:
+        self.workspace.register_dataset("tushare_daily_basic", strategy="partitioned-parquet")
+        table = self.client.query(
+            "tushare_daily_basic",
+            ts_code="000001.SZ",
+            start_date="20260701",
+            end_date="20260710",
+        )
+        self.workspace.publisher("tushare_daily_basic").publish(
+            table,
+            coverage=[Coverage("000001.SZ", date(2026, 7, 1), date(2026, 7, 11))],
+        )
+        reader = DataLoader(self.root).dataset("tushare_daily_basic")
+
+        def eager_must_not_run(*_args: object, **_kwargs: object) -> pa.Table:
+            raise AssertionError("streaming used eager query")
+
+        reader._query_locked = eager_must_not_run  # type: ignore[method-assign]
+        with reader.iter_batches(
+            batch_size=2,
+            keys=["000001.SZ"],
+            time_range=("2026-07-01", "2026-07-11"),
+            columns=["ts_code", "trade_date", "pe"],
+            filters=[("pe", ">", 0)],
+            limit=3,
+            require_coverage=True,
+        ) as batches:
+            materialized = list(batches)
+
+        self.assertLessEqual(max(batch.num_rows for batch in materialized), 2)
+        self.assertEqual(sum(batch.num_rows for batch in materialized), 3)
+        self.assertEqual(materialized[0].schema.names, ["ts_code", "trade_date", "pe"])
+
+    def test_recovery_removes_only_abandoned_and_unreachable_storage(self) -> None:
+        self.workspace.register_dataset("tushare_stock_basic", strategy="single-file-csv")
+        table = self.client.query("tushare_stock_basic", list_status="L", exchange="SSE")
+        publication = self.workspace.publisher("tushare_stock_basic").publish(table)
+        dataset_root = self.root / "datasets" / "tushare_stock_basic"
+        abandoned = dataset_root / "staging" / "abandoned"
+        abandoned.mkdir()
+        (abandoned / "partial").write_text("partial", encoding="utf-8")
+        unreachable = dataset_root / "snapshots" / "unreachable"
+        unreachable.mkdir()
+
+        removed = self.workspace.recover_storage()
+
+        self.assertEqual(removed, 2)
+        self.assertFalse(abandoned.exists())
+        self.assertFalse(unreachable.exists())
+        self.assertTrue((dataset_root / "snapshots" / publication).is_dir())
+        self.assertEqual(DataLoader(self.root).dataset("tushare_stock_basic").query().num_rows, table.num_rows)
+
     def test_incompatible_manifest_is_read_only_failure(self) -> None:
         self.workspace.register_dataset("tushare_stock_basic", strategy="single-file-csv")
         manifest_path = self.root / "datasets" / "tushare_stock_basic" / "manifest.json"
@@ -193,4 +245,3 @@ class StorageLoaderTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
