@@ -265,6 +265,21 @@ class TaskRunner:
                 raise TaskNotFoundError(handle_id)
             return _copy_handle(handle)
 
+    def list_handles(
+        self,
+        *,
+        dataset: str | None = None,
+        status: str | None = None,
+    ) -> list[HandleRecord]:
+        with self._condition:
+            values = [
+                _copy_handle(handle)
+                for handle in self._handles.values()
+                if (dataset is None or handle.dataset == dataset)
+                and (status is None or handle.status == status)
+            ]
+        return sorted(values, key=lambda item: item.created_at, reverse=True)
+
     def wait(self, handle_id: str, *, timeout: float | None = None) -> HandleRecord:
         deadline = None if timeout is None else time.monotonic() + timeout
         with self._condition:

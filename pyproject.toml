@@ -11,6 +11,10 @@ dependencies = [
   "pyarrow>=15",
 ]
 
+[project.scripts]
+findata = "findata.cli:main"
+findata-server = "findata.server_cli:main"
+
 [project.optional-dependencies]
 dev = [
   "pytest>=8",
@@ -31,4 +35,3 @@ markers = [
 [tool.ruff]
 line-length = 100
 target-version = "py311"
-
