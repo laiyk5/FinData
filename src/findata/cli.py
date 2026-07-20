@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -22,8 +23,8 @@ def main(
     parser = _parser()
     try:
         args = parser.parse_args(arguments)
-        client = _Client(Path(args.workspace))
-        result = _execute(client, args)
+        client = _Client(resolve_workspace(args.workspace))
+        result = _execute(client, args, output_format=output_format, stdout=stdout)
         _print_result(result, output_format, stdout)
         return 0 if not (isinstance(result, dict) and result.get("status") in {"failed", "canceled"}) else 1
     except (ValueError, RuntimeError, HTTPError, URLError) as exc:
@@ -31,7 +32,13 @@ def main(
         return 1
 
 
-def _execute(client: _Client, args: argparse.Namespace) -> object:
+def _execute(
+    client: _Client,
+    args: argparse.Namespace,
+    *,
+    output_format: str = "human",
+    stdout: TextIO = sys.stdout,
+) -> object:
     if args.group == "config" and args.action == "set":
         if args.env:
             value: object = {"env": args.env}
@@ -49,23 +56,52 @@ def _execute(client: _Client, args: argparse.Namespace) -> object:
         return client.request("DELETE", f"/v1/config/{args.key}")
     if args.group == "provider" and args.action == "check":
         return client.request("GET", f"/v1/providers/{args.name}/check")
+    if args.group == "provider" and args.action == "ls":
+        return client.request("GET", "/v1/providers")
+    if args.group == "provider" and args.action == "status":
+        return client.request("GET", f"/v1/providers/{args.name}")
+    if args.group == "dataset" and args.action == "ls":
+        return client.request("GET", "/v1/datasets")
+    if args.group == "dataset" and args.action in {"describe", "status"}:
+        suffix = "status" if args.action == "status" else ""
+        return client.request("GET", f"/v1/datasets/{args.dataset}{('/' + suffix) if suffix else ''}")
+    if args.group == "dataset" and args.action == "operations":
+        return client.request("GET", f"/v1/datasets/{args.dataset}/operations")
+    if args.group == "dataset" and args.action == "operation":
+        return client.request(
+            "GET", f"/v1/datasets/{args.dataset}/operations/{args.operation}"
+        )
     if args.group == "dataset" and args.action == "universe":
         if args.universe_action == "set":
             return client.request(
                 "PUT", f"/v1/datasets/{args.dataset}/universe", {"selectors": args.selectors}
             )
+        if args.universe_action == "clear":
+            return client.request("DELETE", f"/v1/datasets/{args.dataset}/universe")
         return client.request("GET", f"/v1/datasets/{args.dataset}/universe")
     if args.group == "task" and args.action == "run":
-        operands = _params(args.param)
+        operands = _params(args.param, args.params)
         submitted = client.request(
             "POST",
             "/v1/tasks",
             {"dataset": args.dataset, "operation": args.operation, "operands": operands},
         )
-        if not args.wait:
+        if not (args.wait or args.follow):
             return submitted
         handle = submitted["handle_id"]
+        emitted_logs = 0
         while True:
+            if args.follow:
+                logs = client.request("GET", f"/v1/tasks/{handle}/logs")["items"]
+                for message in logs[emitted_logs:]:
+                    _print_result(
+                        {"type": "log", "message": message}
+                        if output_format in {"json", "jsonl"}
+                        else message,
+                        "jsonl" if output_format in {"json", "jsonl"} else "human",
+                        stdout,
+                    )
+                emitted_logs = len(logs)
             status = client.request("GET", f"/v1/tasks/{handle}")
             if status["status"] in {"succeeded", "failed", "canceled"}:
                 return status
@@ -77,7 +113,24 @@ def _execute(client: _Client, args: argparse.Namespace) -> object:
     if args.group == "task" and args.action == "status":
         return client.request("GET", f"/v1/tasks/{args.handle}")
     if args.group == "task" and args.action == "logs":
-        return client.request("GET", f"/v1/tasks/{args.handle}/logs")
+        if not args.follow:
+            return client.request("GET", f"/v1/tasks/{args.handle}/logs")
+        emitted = 0
+        while True:
+            logs = client.request("GET", f"/v1/tasks/{args.handle}/logs")["items"]
+            for message in logs[emitted:]:
+                _print_result(
+                    {"type": "log", "message": message}
+                    if output_format in {"json", "jsonl"}
+                    else message,
+                    "jsonl" if output_format in {"json", "jsonl"} else "human",
+                    stdout,
+                )
+            emitted = len(logs)
+            status = client.request("GET", f"/v1/tasks/{args.handle}")
+            if status["status"] in {"succeeded", "failed", "canceled"}:
+                return status
+            time.sleep(0.05)
     if args.group == "task" and args.action == "cancel":
         return client.request("POST", f"/v1/tasks/{args.handle}/cancel", {})
     if args.group == "cron":
@@ -138,7 +191,23 @@ class _Client:
         return result
 
 
-def _params(values: list[str]) -> dict[str, object]:
+def _params(values: list[str], source: str | None = None) -> dict[str, object]:
+    if source is not None:
+        if values:
+            raise ValueError("--param and --params are mutually exclusive")
+        if source == "-":
+            text = sys.stdin.read()
+        elif source.startswith("@"):
+            text = Path(source[1:]).read_text(encoding="utf-8")
+        else:
+            text = source
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"invalid operands JSON: {exc.msg}") from exc
+        if not isinstance(parsed, dict):
+            raise ValueError("--params JSON must be an object")
+        return parsed
     result: dict[str, object] = {}
     for value in values:
         if "=" not in value:
@@ -182,7 +251,7 @@ def _print_result(value: object, output_format: str, stdout: TextIO) -> None:
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="findata")
-    parser.add_argument("--workspace", required=True)
+    parser.add_argument("--workspace", type=Path)
     groups = parser.add_subparsers(dest="group", required=True)
 
     config = groups.add_parser("config").add_subparsers(dest="action", required=True)
@@ -198,10 +267,20 @@ def _parser() -> argparse.ArgumentParser:
     config_unset.add_argument("key")
 
     provider = groups.add_parser("provider").add_subparsers(dest="action", required=True)
+    provider.add_parser("ls")
+    provider_status = provider.add_parser("status")
+    provider_status.add_argument("name")
     provider_check = provider.add_parser("check")
     provider_check.add_argument("name")
 
     dataset = groups.add_parser("dataset").add_subparsers(dest="action", required=True)
+    dataset.add_parser("ls")
+    for action in ("describe", "operations", "status"):
+        command = dataset.add_parser(action)
+        command.add_argument("dataset")
+    dataset_operation = dataset.add_parser("operation")
+    dataset_operation.add_argument("dataset")
+    dataset_operation.add_argument("operation")
     universe = dataset.add_parser("universe")
     universe_actions = universe.add_subparsers(dest="universe_action", required=True)
     universe_set = universe_actions.add_parser("set")
@@ -209,19 +288,26 @@ def _parser() -> argparse.ArgumentParser:
     universe_set.add_argument("selectors", nargs="+")
     universe_get = universe_actions.add_parser("get")
     universe_get.add_argument("dataset")
+    universe_clear = universe_actions.add_parser("clear")
+    universe_clear.add_argument("dataset")
 
     task = groups.add_parser("task").add_subparsers(dest="action", required=True)
     run = task.add_parser("run")
     run.add_argument("dataset")
     run.add_argument("operation", nargs="?", default="update")
     run.add_argument("--param", action="append", default=[])
+    run.add_argument("--params")
     run.add_argument("--wait", action="store_true")
+    run.add_argument("--follow", action="store_true")
     listing = task.add_parser("ls")
     listing.add_argument("--dataset")
     listing.add_argument("--status")
-    for action in ("status", "logs", "cancel"):
+    for action in ("status", "cancel"):
         command = task.add_parser(action)
         command.add_argument("handle")
+    logs = task.add_parser("logs")
+    logs.add_argument("handle")
+    logs.add_argument("--follow", "-f", action="store_true")
 
     cron = groups.add_parser("cron").add_subparsers(dest="action", required=True)
     cron.add_parser("ls")
@@ -258,6 +344,27 @@ def _duration_seconds(value: str) -> float:
     if amount < 0:
         raise ValueError("duration cannot be negative")
     return amount * units[value[-1]]
+
+
+def resolve_workspace(
+    explicit: Path | None,
+    *,
+    environ: dict[str, str] | os._Environ[str] | None = None,
+    cwd: Path | None = None,
+) -> Path:
+    environment = os.environ if environ is None else environ
+    if explicit is not None:
+        candidates = [Path(explicit)]
+    elif environment.get("FINDATA_WORKSPACE"):
+        candidates = [Path(environment["FINDATA_WORKSPACE"])]
+    else:
+        start = (cwd or Path.cwd()).resolve()
+        candidates = [start, *start.parents]
+    for candidate in candidates:
+        resolved = candidate.expanduser().resolve()
+        if (resolved / "workspace.json").is_file():
+            return resolved
+    raise RuntimeError("no findata workspace found; run findata-server init <path>")
 
 
 if __name__ == "__main__":
