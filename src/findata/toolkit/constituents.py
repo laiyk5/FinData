@@ -14,6 +14,8 @@ class ConstituentRequest:
     result_column: str
     start: date
     end: date
+    effective_date_column: str | None = None
+    selection: str = "range_union"
 
 
 def resolve_constituents(
@@ -27,10 +29,50 @@ def resolve_constituents(
     Public selector syntax is intentionally absent from this interface.
     """
     fulfill(request)
-    table = loader.dataset(request.dependency_dataset).query(
+    dataset = loader.dataset(request.dependency_dataset)
+    if request.effective_date_column is None:
+        table = dataset.query(
+            keys=[request.dependency_key],
+            time_range=(request.start, request.end),
+            columns=[request.result_column],
+            require_coverage=True,
+        )
+        return list(dict.fromkeys(table.column(request.result_column).to_pylist()))
+
+    if request.selection not in {"range_union", "latest"}:
+        raise ValueError(f"unknown constituent selection {request.selection!r}")
+    table = dataset.query(
         keys=[request.dependency_key],
-        time_range=(request.start, request.end),
-        columns=[request.result_column],
-        require_coverage=True,
+        columns=[request.result_column, request.effective_date_column],
     )
-    return list(dict.fromkeys(table.column(request.result_column).to_pylist()))
+    rows = table.to_pylist()
+    available = sorted(
+        {
+            row[request.effective_date_column]
+            for row in rows
+            if row[request.effective_date_column] < request.end
+        }
+    )
+    if not available:
+        raise ValueError(
+            f"no constituent snapshot exists before {request.end.isoformat()}"
+        )
+    if request.selection == "latest":
+        selected = {available[-1]}
+    else:
+        predecessors = [value for value in available if value <= request.start]
+        if not predecessors:
+            raise ValueError(
+                f"no constituent snapshot exists on or before {request.start.isoformat()}"
+            )
+        selected = {
+            predecessors[-1],
+            *(value for value in available if request.start < value < request.end),
+        }
+    return list(
+        dict.fromkeys(
+            row[request.result_column]
+            for row in rows
+            if row[request.effective_date_column] in selected
+        )
+    )

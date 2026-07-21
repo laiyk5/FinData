@@ -178,7 +178,6 @@ class DatasetService:
         self._request_count = 0
         self._reporter = reporter
         self._settings = dict(settings) if settings is not None else None
-        self._weight_endpoint_codes: dict[str, str] = {}
 
     def _update_setting(self, dataset: str) -> list[str]:
         suffix = "update_indexes" if dataset == "tushare_index_weight" else "update_symbols"
@@ -354,66 +353,72 @@ class DatasetService:
         existing_coverage = self._coverage_map(spec.name)
         next_coverage = dict(existing_coverage)
         publication: str | None = None
-        jobs = [
-            (index, month)
-            for index in indexes
-            for interval in _missing_for_continuity(existing_coverage.get(index), requested)
-            for month in _month_starts(interval)
-        ]
+        jobs: list[tuple[str, date]] = []
+        current_month = self.today.replace(day=1)
+        for index in indexes:
+            months = {
+                month
+                for interval in _missing_for_continuity(
+                    existing_coverage.get(index), requested
+                )
+                for month in _month_starts(interval)
+            }
+            if requested.start <= current_month < requested.end:
+                months.add(current_month)
+            jobs.extend((index, month) for month in sorted(months))
         self._progress(0, len(jobs))
         for completed, (index, month) in enumerate(jobs, start=1):
             month_interval = _month_range(month, month)
             start, end = month_interval.to_provider_inclusive()
-            table = self._fetch_index_weight(index, start=start, end=end)
-            if table.num_rows == 0:
-                raise RuntimeError(f"index_weight returned empty historical month for {index}")
             if monthly_window(month, self.now) == PublicationWindow.BEFORE:
                 raise RuntimeError(f"index_weight month is before publication window for {index}")
-            next_coverage[index] = _merge_interval(
-                next_coverage.get(index), month_interval
-            )
-            publication = self._publish(spec, [table], next_coverage)
-            self._progress(completed, len(jobs))
-        return publication or self._publish(spec, [], next_coverage)
-
-    def _fetch_index_weight(self, canonical: str, *, start: str, end: str) -> pa.Table:
-        endpoint_code = self._weight_endpoint_codes.get(canonical, canonical)
-        table = self._fetch(
-            "tushare_index_weight",
-            index_code=endpoint_code,
-            start_date=start,
-            end_date=end,
-        )
-        if table.num_rows:
-            self._weight_endpoint_codes[canonical] = endpoint_code
-            return _canonicalize_weight_index(table, canonical, endpoint_code)
-        if endpoint_code != canonical:
-            return table
-
-        metadata = self.loader.dataset("tushare_index_basic").query(
-            filters=[("ts_code", "=", canonical)]
-        )
-        name = metadata.column("name")[0].as_py()
-        fullname = metadata.column("fullname")[0].as_py()
-        aliases = self._fetch("tushare_index_basic", name=name)
-        candidates = sorted(
-            row["ts_code"]
-            for row in aliases.to_pylist()
-            if row["name"] == name
-            and (fullname is None or row["fullname"] == fullname)
-            and row["ts_code"] != canonical
-        )
-        for candidate in candidates:
-            candidate_table = self._fetch(
-                "tushare_index_weight",
-                index_code=candidate,
+            table = self._fetch(
+                spec.name,
+                index_code=index,
                 start_date=start,
                 end_date=end,
             )
-            if candidate_table.num_rows:
-                self._weight_endpoint_codes[canonical] = candidate
-                return _canonicalize_weight_index(candidate_table, canonical, candidate)
-        return table
+            next_coverage[index] = _merge_interval(
+                next_coverage.get(index), month_interval
+            )
+            publication = self._publish_index_weight_month(
+                spec, table, index=index, month=month, coverage=next_coverage
+            )
+            self._progress(completed, len(jobs))
+        return publication or self._publish(spec, [], next_coverage)
+
+    def _publish_index_weight_month(
+        self,
+        spec: DatasetSpec,
+        table: pa.Table,
+        *,
+        index: str,
+        month: date,
+        coverage: dict[str, DateRange],
+    ) -> str:
+        existing = self._existing_table(spec)
+        if table.num_rows and existing is not None:
+            rows = [
+                row
+                for row in existing.to_pylist()
+                if not (
+                    row["index_code"] == index
+                    and row["effective_month"] == month
+                )
+            ]
+            existing = pa.Table.from_pylist(rows, schema=spec.schema)
+        merged = _merge_tables(spec, existing, table)
+        if self._reporter is not None:
+            self._reporter.checkpoint()
+            if hasattr(self._reporter, "stage"):
+                self._reporter.stage(f"publishing:{spec.name}")
+        return self._publisher(spec.name).publish(
+            merged,
+            coverage=[
+                Coverage(key, value.start, value.end)
+                for key, value in sorted(coverage.items())
+            ],
+        )
 
     def _daily_basic(self, operation: str, operands: dict[str, Any]) -> str:
         if operation == "update":
@@ -481,33 +486,40 @@ class DatasetService:
     def _resolve_symbols(self, selectors: list[str], requested: DateRange) -> list[str]:
         direct: list[str] = []
         index_ranges: dict[str, DateRange] = {}
+        index_selections: dict[str, str] = {}
         for selector in selectors:
             if selector.startswith("tushare:"):
                 reference, separator, suffix = selector.partition("@")
                 self._ensure_index_metadata([reference])
-                index = _canonical_index(reference)
                 if not separator:
-                    interval = _expand_to_months(requested)
+                    interval = requested
+                    selection = "range_union"
                 else:
                     if suffix == "latest":
                         target = requested.end - timedelta(days=1)
-                        interval = _month_range(target, target)
+                        interval = DateRange(target, target + timedelta(days=1))
+                        selection = "latest"
                     elif len(suffix) == 6 and suffix.isdigit():
                         target = date(int(suffix[:4]), int(suffix[4:]), 1)
                         interval = _month_range(target, target)
+                        selection = "latest"
                     else:
                         raise OperandError(f"invalid constituent selector {selector!r}")
                 current = index_ranges.get(reference)
                 index_ranges[reference] = _merge_interval(current, interval)
+                if selection == "range_union" or reference not in index_selections:
+                    index_selections[reference] = selection
             else:
                 direct.append(selector)
         for reference, interval in index_ranges.items():
             index = _canonical_index(reference)
 
             def fulfill(request: ConstituentRequest) -> None:
+                fetch_start = _previous_month(request.start.replace(day=1))
+                fetch_end = _next_month((request.end - timedelta(days=1)).replace(day=1))
                 requirement: dict[str, object] = {
                     "indexes": [reference],
-                    "timerange": f"{request.start.isoformat()}:{request.end.isoformat()}",
+                    "timerange": f"{fetch_start.isoformat()}:{fetch_end.isoformat()}",
                 }
                 if self._reporter is not None and hasattr(self._reporter, "fulfill"):
                     self._reporter.fulfill("tushare_index_weight", requirement)
@@ -523,6 +535,8 @@ class DatasetService:
                         "con_code",
                         interval.start,
                         interval.end,
+                        effective_date_column="trade_date",
+                        selection=index_selections[reference],
                     ),
                     fulfill=fulfill,
                 )
@@ -773,23 +787,6 @@ def _canonical_index(value: str) -> str:
     return _normalize_index_reference(value).split(":", 1)[1]
 
 
-def _canonicalize_weight_index(
-    table: pa.Table, canonical: str, endpoint_code: str
-) -> pa.Table:
-    returned = set(table.column("index_code").to_pylist())
-    if returned != {endpoint_code}:
-        raise RuntimeError(
-            f"index_weight returned unexpected index codes {sorted(returned)!r} "
-            f"for endpoint code {endpoint_code}"
-        )
-    position = table.schema.get_field_index("index_code")
-    return table.set_column(
-        position,
-        "index_code",
-        pa.array([canonical] * table.num_rows, type=pa.string()),
-    )
-
-
 def _normalize_index_reference(value: str) -> str:
     if not value.startswith("tushare:") or "@" in value:
         raise OperandError(f"invalid Tushare index reference {value!r}")
@@ -825,6 +822,10 @@ def _month_range(start: date, end: date) -> DateRange:
 
 def _next_month(value: date) -> date:
     return date(value.year + (value.month == 12), value.month % 12 + 1, 1)
+
+
+def _previous_month(value: date) -> date:
+    return date(value.year - (value.month == 1), (value.month - 2) % 12 + 1, 1)
 
 
 def _month_starts(value: DateRange) -> list[date]:

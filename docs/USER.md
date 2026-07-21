@@ -41,7 +41,10 @@ findata cron enable tushare_daily_basic
 ```
 
 The half-open sample backfill uses the historical union of CSI 300 constituents over its requested
-range. Rerunning a failed backfill skips resolved coverage and resumes its remaining intervals.
+range. Resolution starts with the latest weight snapshot effective at the range start and includes
+later snapshots inside the range; a month without a new snapshot continues the preceding membership.
+Rerunning a failed backfill skips resolved historical coverage, refreshes an intersecting current
+month, and resumes its remaining intervals.
 The separate `update_symbols` setting belongs to `tushare_daily_basic`; its plugin parses the
 constituent selector and uses it only for later parameterless `update` operations. Recurring updates
 therefore resolve the constituent month containing each latest due trading date.
@@ -50,11 +53,6 @@ Within the Tushare plugins, `tushare:000300.SH` preserves an exact provider inde
 materialized in `tushare_index_basic`. The bare reference in `complete` means the historical
 constituent union over that backfill range; `@latest` is a plugin-defined suffix for future updates.
 Core findata configuration and CLI code treat both values as opaque strings.
-
-Some Tushare endpoints use a different code for the same provider index. For example, Tushare's
-`index_weight` documentation uses `399300.SZ` for the index whose canonical `index_basic` ID is
-`000300.SH`. The dataset plugin resolves such endpoint aliases from matching Tushare metadata and
-normalizes results back to the canonical ID; users continue to supply `tushare:000300.SH`.
 
 For another Tushare index, obtain its exact `ts_code`, materialize it with
 `tushare_index_basic complete`, and use the same plugin-owned `tushare:<ts_code>` form. This tracks

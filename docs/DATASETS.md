@@ -134,24 +134,18 @@ provider's `index_basic.ts_code` request. An unknown reference is rejected local
 plugin may additionally define `@YYYYMM`, `@latest`, or bare range-union selection, but suffixes are
 not part of the provider identity.
 
-Tushare does not use its canonical `index_basic.ts_code` consistently across all endpoints. The
-index-weight plugin first queries `index_weight` with the canonical code. If that exact query is
-empty, it performs a narrow `index_basic(name=...)` lookup and considers only rows whose `name` and
-non-null `fullname` match the already materialized canonical metadata. It then probes those
-provider-declared codes deterministically for the requested month. This endpoint-code resolution is
-private to the Tushare plugin: persisted rows and public queries retain the original canonical code,
-and core Findata never parses or maps it.
-
 ## `tushare_index_weight`
 
 API: <https://tushare.pro/document/2?doc_id=96>
 
-Monthly index constituent membership and weight. The plugin normalizes each provider response to one effective snapshot per index and calendar month; if a response contains multiple `trade_date` values in a month, the latest date is authoritative.
+Monthly index constituent membership and weight snapshots. `trade_date` is the authoritative
+effective date. The plugin retains the latest provider snapshot returned within each requested
+calendar month; a month with no row means that no new snapshot superseded the preceding one.
 
 | field | Arrow type | nullable | meaning |
 | --- | --- | --- | --- |
-| `index_code` | `utf8` | no | canonical `index_basic.ts_code`; an endpoint alias is normalized back to this value |
-| `effective_month` | `date32[day]` | no | first civil date of the represented month |
+| `index_code` | `utf8` | no | exact Tushare index code returned by `index_weight` |
+| `effective_month` | `date32[day]` | no | storage bucket containing `trade_date`; it is not the effective date |
 | `con_code` | `utf8` | no | constituent Tushare security code |
 | `trade_date` | `date32[day]` | no | provider snapshot date retained for provenance |
 | `weight` | `float64` | no | constituent weight in percent |
@@ -159,43 +153,47 @@ Monthly index constituent membership and weight. The plugin normalizes each prov
 - **provider**: `tushare`
 - **capabilities**: `time-accumulating`
 - **keys**: primary key `(index_code, effective_month, con_code)`; partition key `index_code`; secondary key `con_code`; time field `effective_month`; partitioned by index and month
-- **observation domain**: every calendar month, represented by `[month_start, next_month_start)`
+- **observation domain**: dated provider snapshots; monthly intervals are request and storage
+  buckets, not assertions that every month must contain a new snapshot
 - **settings**:
   - `dataset.tushare_index_weight.update_indexes`: required nonempty array for `update`; the plugin
-    accepts unsuffixed, metadata-validated `tushare:<ts_code>` references, preserves that canonical
-    code in storage, and owns all parsing and validation
-- **publication timing**: future months are before-window; the current month is inside-window, so an empty response remains unresolved; earlier months are after-window
+    accepts unsuffixed, metadata-validated `tushare:<ts_code>` references, preserves the exact
+    Tushare code, and owns all parsing and validation
+- **publication timing**: future months are before-window; the current month is mutable and is
+  re-fetched whenever an operation needs it; earlier queried months are final
 - **suggested schedule**: cron `0 18 * * 1`, `Asia/Shanghai`
-- **missing-data policy**: `strict`; an empty historical month is a failure
-- **request plan**: first request the canonical code for each index and month using that month's
-  inclusive provider endpoints; on an empty exact result, resolve and cache a matching endpoint code
-  through the narrow metadata procedure above, without materializing another tracked index
+- **missing-data policy**: `accept-empty`; an empty due month records that no new snapshot occurred
+  and carries the preceding snapshot forward semantically without copying its rows
+- **request plan**: one exact-code request per uncovered index/month using that month's inclusive
+  provider endpoints; always re-fetch an intersecting current month; constituent fulfillment also
+  fetches the preceding month needed to establish the initial as-of state
 - **dependencies**: `tushare_index_basic` for provider-reference validation
 - **dependency fulfillment**: `{indexes, timerange}` requires both fields, resolves each qualified
   reference to its exact materialized `ts_code`, expands the half-open range to intersecting calendar
-  months, and maps missing months to `complete(indexes=..., timerange=...)`
+  months plus one predecessor month, and maps missing query coverage to `complete`
 - **operations**:
-  - `update()` — extend every configured `update_indexes` entry from its coverage end through the
-    current month; a newly selected index begins at the current month, and a missing or empty setting
-    is rejected
+  - `update()` — extend every configured `update_indexes` entry through the current month and
+    re-fetch that mutable month; a missing or empty setting is rejected
   - `complete(indexes, timerange)` — fetch every intersecting historical or current calendar month
     for the requested unsuffixed `tushare:<ts_code>` references while preserving continuous monthly
     coverage
 - **toolkit**: `partitioned`, coverage tracker, publication-window pruning, mock API
 - **storage**: `:index/:month.parquet`
-- **coverage**: one continuous month-aligned interval per index; successful current-month data resolves the entire represented month
+- **coverage**: one continuous month-aligned provider-query interval per index; it records whether
+  snapshot events were queried, independently of whether rows existed; current-month coverage is
+  deliberately refreshable
 - **status fields**: resolved month range and constituent count per index
 
 No operation infers an index from `tushare_index_basic` metadata. `complete` and dependency
 fulfillment process only their explicit references and never add them to `update_indexes`; only a
 user configuration mutation changes the maintained set.
 
-The constituent-set resolver queries `effective_month`. `<reference>@YYYYMM` requires and selects
-that month. `<reference>@latest` requires the month containing the consuming operation's latest due
-date and selects it; it never silently substitutes an older covered month. A bare reference
-requires every month intersecting the consuming operation's range and returns their constituent
-union. An inside-window month that remains unavailable after dependency fulfillment therefore
-produces an explicit coverage failure rather than stale membership.
+The constituent-set resolver uses `trade_date`, never `effective_month`, for point-in-time meaning.
+`<reference>@YYYYMM` selects the latest snapshot effective by that month-end. `<reference>@latest`
+selects the latest snapshot effective on the consuming operation's latest due date. A bare reference
+returns the union of the latest snapshot effective at the range start and every later snapshot whose
+`trade_date` falls inside the half-open range. This prevents both stale-month failures and
+look-ahead bias.
 
 ## `tushare_daily_basic`
 
