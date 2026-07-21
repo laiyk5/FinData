@@ -178,6 +178,7 @@ class DatasetService:
         self._request_count = 0
         self._reporter = reporter
         self._settings = dict(settings) if settings is not None else None
+        self._weight_endpoint_codes: dict[str, str] = {}
 
     def _update_setting(self, dataset: str) -> list[str]:
         suffix = "update_indexes" if dataset == "tushare_index_weight" else "update_symbols"
@@ -363,12 +364,7 @@ class DatasetService:
         for completed, (index, month) in enumerate(jobs, start=1):
             month_interval = _month_range(month, month)
             start, end = month_interval.to_provider_inclusive()
-            table = self._fetch(
-                spec.name,
-                index_code=index,
-                start_date=start,
-                end_date=end,
-            )
+            table = self._fetch_index_weight(index, start=start, end=end)
             if table.num_rows == 0:
                 raise RuntimeError(f"index_weight returned empty historical month for {index}")
             if monthly_window(month, self.now) == PublicationWindow.BEFORE:
@@ -379,6 +375,45 @@ class DatasetService:
             publication = self._publish(spec, [table], next_coverage)
             self._progress(completed, len(jobs))
         return publication or self._publish(spec, [], next_coverage)
+
+    def _fetch_index_weight(self, canonical: str, *, start: str, end: str) -> pa.Table:
+        endpoint_code = self._weight_endpoint_codes.get(canonical, canonical)
+        table = self._fetch(
+            "tushare_index_weight",
+            index_code=endpoint_code,
+            start_date=start,
+            end_date=end,
+        )
+        if table.num_rows:
+            self._weight_endpoint_codes[canonical] = endpoint_code
+            return _canonicalize_weight_index(table, canonical, endpoint_code)
+        if endpoint_code != canonical:
+            return table
+
+        metadata = self.loader.dataset("tushare_index_basic").query(
+            filters=[("ts_code", "=", canonical)]
+        )
+        name = metadata.column("name")[0].as_py()
+        fullname = metadata.column("fullname")[0].as_py()
+        aliases = self._fetch("tushare_index_basic", name=name)
+        candidates = sorted(
+            row["ts_code"]
+            for row in aliases.to_pylist()
+            if row["name"] == name
+            and (fullname is None or row["fullname"] == fullname)
+            and row["ts_code"] != canonical
+        )
+        for candidate in candidates:
+            candidate_table = self._fetch(
+                "tushare_index_weight",
+                index_code=candidate,
+                start_date=start,
+                end_date=end,
+            )
+            if candidate_table.num_rows:
+                self._weight_endpoint_codes[canonical] = candidate
+                return _canonicalize_weight_index(candidate_table, canonical, candidate)
+        return table
 
     def _daily_basic(self, operation: str, operands: dict[str, Any]) -> str:
         if operation == "update":
@@ -736,6 +771,23 @@ def _require_keys(operands: dict[str, Any], allowed: set[str]) -> None:
 
 def _canonical_index(value: str) -> str:
     return _normalize_index_reference(value).split(":", 1)[1]
+
+
+def _canonicalize_weight_index(
+    table: pa.Table, canonical: str, endpoint_code: str
+) -> pa.Table:
+    returned = set(table.column("index_code").to_pylist())
+    if returned != {endpoint_code}:
+        raise RuntimeError(
+            f"index_weight returned unexpected index codes {sorted(returned)!r} "
+            f"for endpoint code {endpoint_code}"
+        )
+    position = table.schema.get_field_index("index_code")
+    return table.set_column(
+        position,
+        "index_code",
+        pa.array([canonical] * table.num_rows, type=pa.string()),
+    )
 
 
 def _normalize_index_reference(value: str) -> str:

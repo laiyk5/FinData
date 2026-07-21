@@ -130,9 +130,17 @@ index-specific command.
 The built-in Tushare plugins spell an index reference as `tushare:<ts_code>`, for example
 `tushare:000300.SH`. This is plugin syntax, not a core findata identifier. The prefix distinguishes
 an index selector from a direct security code, while the remainder is copied byte-for-byte into the
-provider's `ts_code` request; the plugins define no aliases and perform no exchange or suffix mapping.
-An unknown reference is rejected locally. A consuming plugin may additionally define `@YYYYMM`,
-`@latest`, or bare range-union selection, but suffixes are not part of the provider identity.
+provider's `index_basic.ts_code` request. An unknown reference is rejected locally. A consuming
+plugin may additionally define `@YYYYMM`, `@latest`, or bare range-union selection, but suffixes are
+not part of the provider identity.
+
+Tushare does not use its canonical `index_basic.ts_code` consistently across all endpoints. The
+index-weight plugin first queries `index_weight` with the canonical code. If that exact query is
+empty, it performs a narrow `index_basic(name=...)` lookup and considers only rows whose `name` and
+non-null `fullname` match the already materialized canonical metadata. It then probes those
+provider-declared codes deterministically for the requested month. This endpoint-code resolution is
+private to the Tushare plugin: persisted rows and public queries retain the original canonical code,
+and core Findata never parses or maps it.
 
 ## `tushare_index_weight`
 
@@ -142,7 +150,7 @@ Monthly index constituent membership and weight. The plugin normalizes each prov
 
 | field | Arrow type | nullable | meaning |
 | --- | --- | --- | --- |
-| `index_code` | `utf8` | no | exact Tushare index code returned by `index_weight` |
+| `index_code` | `utf8` | no | canonical `index_basic.ts_code`; an endpoint alias is normalized back to this value |
 | `effective_month` | `date32[day]` | no | first civil date of the represented month |
 | `con_code` | `utf8` | no | constituent Tushare security code |
 | `trade_date` | `date32[day]` | no | provider snapshot date retained for provenance |
@@ -154,12 +162,14 @@ Monthly index constituent membership and weight. The plugin normalizes each prov
 - **observation domain**: every calendar month, represented by `[month_start, next_month_start)`
 - **settings**:
   - `dataset.tushare_index_weight.update_indexes`: required nonempty array for `update`; the plugin
-    accepts unsuffixed, metadata-validated `tushare:<ts_code>` references, preserves the exact
-    Tushare code, and owns all parsing and validation
+    accepts unsuffixed, metadata-validated `tushare:<ts_code>` references, preserves that canonical
+    code in storage, and owns all parsing and validation
 - **publication timing**: future months are before-window; the current month is inside-window, so an empty response remains unresolved; earlier months are after-window
 - **suggested schedule**: cron `0 18 * * 1`, `Asia/Shanghai`
 - **missing-data policy**: `strict`; an empty historical month is a failure
-- **request plan**: one provider request per index and month using that month's inclusive provider endpoints
+- **request plan**: first request the canonical code for each index and month using that month's
+  inclusive provider endpoints; on an empty exact result, resolve and cache a matching endpoint code
+  through the narrow metadata procedure above, without materializing another tracked index
 - **dependencies**: `tushare_index_basic` for provider-reference validation
 - **dependency fulfillment**: `{indexes, timerange}` requires both fields, resolves each qualified
   reference to its exact materialized `ts_code`, expands the half-open range to intersecting calendar

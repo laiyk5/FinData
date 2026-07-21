@@ -12,6 +12,23 @@ from findata.storage import Workspace
 from findata.testing.tushare import MockTushareTransport
 
 
+class EndpointAliasTransport(MockTushareTransport):
+    """Mirror Tushare's distinct CSI 300 code in the index_weight endpoint."""
+
+    def _index_basic(self, params):  # type: ignore[no-untyped-def]
+        if params.get("name") == "沪深300":
+            canonical = super()._index_basic({"ts_code": "000300.SH"})[0]
+            alias = dict(canonical)
+            alias["ts_code"] = "399300.SZ"
+            return [canonical, alias]
+        return super()._index_basic(params)
+
+    def _index_weight(self, params):  # type: ignore[no-untyped-def]
+        if params.get("index_code") == "000300.SH":
+            return []
+        return super()._index_weight(params)
+
+
 class DatasetOperationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tempdir = tempfile.TemporaryDirectory()
@@ -96,6 +113,34 @@ class DatasetOperationTests(unittest.TestCase):
         )
         self.assertEqual(resumed.fetched_requests, 0)
         self.assertEqual(len(self.transport.requests), request_count)
+
+    def test_weight_endpoint_alias_is_resolved_but_storage_stays_canonical(self) -> None:
+        transport = EndpointAliasTransport(today=date(2026, 7, 20))
+        service = DatasetService(
+            self.workspace,
+            TushareClient(token="test-token", transport=transport),
+            today=date(2026, 7, 20),
+        )
+
+        service.run(
+            "tushare_daily_basic",
+            "complete",
+            {
+                "symbols": ["tushare:000300.SH"],
+                "timerange": "2026-06-29:2026-07-04",
+            },
+        )
+
+        requests = [(item["api_name"], item["params"]) for item in transport.requests]
+        self.assertIn(("index_basic", {"name": "沪深300"}), requests)
+        self.assertTrue(
+            any(
+                api == "index_weight" and params.get("index_code") == "399300.SZ"
+                for api, params in requests
+            )
+        )
+        stored = DataLoader(self.root).dataset("tushare_index_weight").query()
+        self.assertEqual(set(stored.column("index_code").to_pylist()), {"000300.SH"})
 
     def test_daily_update_uses_plugin_owned_update_symbols(self) -> None:
         self.service.run(
