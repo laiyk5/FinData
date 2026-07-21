@@ -80,7 +80,7 @@ stable public core contracts, but never on a concrete dataset or provider implem
   - `range-union`, resolved over the consuming operation's time range
 - **boundary**: the toolkit never parses a CLI string, configuration value, provider reference, or
   friendly alias. The consuming dataset plugin owns those syntaxes, validates them against any
-  provider catalog it uses, and passes the exact dependency key to the resolver.
+  provider reference metadata it uses, and passes the exact dependency key to the resolver.
 - **identity rule**: preserve the exact dependency key supplied by the plugin; never infer or
   transform it
 - **fulfillment**: query the dependency with required coverage; on `CoverageError`, convert the missing index and intervals into its declared coverage requirement, request fulfillment through the TaskRunner, and retry once

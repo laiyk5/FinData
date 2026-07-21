@@ -84,8 +84,9 @@ The complete A-share security-list snapshot across provider statuses `L`, `D`, `
 
 API: <https://tushare.pro/document/2?doc_id=94>
 
-The synchronized Tushare index-reference catalog used for discovery and validation. It preserves
-the exact `ts_code` values returned separately for every market declared by the adapter.
+Locally materialized Tushare index-reference metadata used for validation. It contains only indexes
+explicitly requested by a user or dependency and preserves each exact provider `ts_code`. It never
+enumerates Tushare markets implicitly.
 
 | field | Arrow type | nullable | meaning |
 | --- | --- | --- | --- |
@@ -101,25 +102,33 @@ the exact `ts_code` values returned separately for every market declared by the 
 
 - **provider**: `tushare`
 - **keys**: primary key `ts_code`; no partition or time field
-- **settings**: none; `update` requests every market declared by the adapter and rejects conflicting
-  duplicate `ts_code` records
-- **missing-data policy**: `strict`; an empty complete catalog is a failure
+- **settings**: none; the tracked set is the set of rows already published, not separate configuration
+- **missing-data policy**: `strict`; an empty or mismatched response for an explicitly requested
+  `ts_code` is a failure
+- **request plan**: one `index_basic(ts_code=...)` request per exact requested index; the plugin
+  never uses the provider's `market` query
 - **dependencies**: none
-- **operations**: `update()` replaces the catalog snapshot
+- **dependency fulfillment**: `{indexes}` requires a nonempty array of unsuffixed
+  `tushare:<ts_code>` references and maps absent references to `complete(indexes=...)`
+- **operations**:
+  - `update()` — refresh exactly the indexes in the committed snapshot; an uninitialized or empty
+    dataset is unready and directs the user to `complete`
+  - `complete(indexes)` — fetch the explicitly requested references, merge them with existing rows,
+    and replace the snapshot; it never discovers or adds another index
 - **toolkit**: `single-file-replace`, mock API
 - **storage**: one snapshot published through the storage contract
-- **status fields**: synchronization time and counts by market
+- **status fields**: refresh time and number of tracked indexes
 
-Catalog presence establishes only that Tushare returned the reference. It does not promise
-`index_weight` coverage, historical depth, or account permission. Synchronization is the ordinary
-`task run tushare_index_basic update` dataset operation; core findata has no index-specific command.
+Reference presence establishes only that Tushare returned its metadata. It does not promise
+`index_weight` coverage, historical depth, or account permission. Core findata has no
+index-specific command.
 
 The built-in Tushare plugins spell an index reference as `tushare:<ts_code>`, for example
 `tushare:000300.SH`. This is plugin syntax, not a core findata identifier. The prefix distinguishes
-an index selector from a direct security code, while the remainder is copied byte-for-byte from
-`tushare_index_basic`; the plugins define no aliases and perform no exchange or suffix mapping.
+an index selector from a direct security code, while the remainder is copied byte-for-byte into the
+provider's `ts_code` request; the plugins define no aliases and perform no exchange or suffix mapping.
 An unknown reference is rejected locally. A consuming plugin may additionally define `@YYYYMM`,
-`@latest`, or bare range-union selection, but suffixes are not part of the catalog identity.
+`@latest`, or bare range-union selection, but suffixes are not part of the provider identity.
 
 ## `tushare_index_weight`
 
@@ -141,7 +150,7 @@ Monthly index constituent membership and weight. The plugin normalizes each prov
 - **observation domain**: every calendar month, represented by `[month_start, next_month_start)`
 - **settings**:
   - `dataset.tushare_index_weight.update_indexes`: required nonempty array for `update`; the plugin
-    accepts unsuffixed, catalog-validated `tushare:<ts_code>` references, preserves the exact
+    accepts unsuffixed, metadata-validated `tushare:<ts_code>` references, preserves the exact
     Tushare code, and owns all parsing and validation
 - **publication timing**: future months are before-window; the current month is inside-window, so an empty response remains unresolved; earlier months are after-window
 - **suggested schedule**: cron `0 18 * * 1`, `Asia/Shanghai`
@@ -149,7 +158,7 @@ Monthly index constituent membership and weight. The plugin normalizes each prov
 - **request plan**: one provider request per index and month using that month's inclusive provider endpoints
 - **dependencies**: `tushare_index_basic` for provider-reference validation
 - **dependency fulfillment**: `{indexes, timerange}` requires both fields, resolves each qualified
-  reference to its exact catalog `ts_code`, expands the half-open range to intersecting calendar
+  reference to its exact materialized `ts_code`, expands the half-open range to intersecting calendar
   months, and maps missing months to `complete(indexes=..., timerange=...)`
 - **operations**:
   - `update()` — extend every configured `update_indexes` entry from its coverage end through the
@@ -162,6 +171,10 @@ Monthly index constituent membership and weight. The plugin normalizes each prov
 - **storage**: `:index/:month.parquet`
 - **coverage**: one continuous month-aligned interval per index; successful current-month data resolves the entire represented month
 - **status fields**: resolved month range and constituent count per index
+
+No operation infers an index from `tushare_index_basic` metadata. `complete` and dependency
+fulfillment process only their explicit references and never add them to `update_indexes`; only a
+user configuration mutation changes the maintained set.
 
 The constituent-set resolver queries `effective_month`. `<reference>@YYYYMM` requires and selects
 that month. `<reference>@latest` requires the month containing the consuming operation's latest due
@@ -207,6 +220,8 @@ Per-symbol daily valuation, share, and market-value indicators.
 - **request plan**: use the request optimizer; v1 fetches one symbol over a bounded date range and does not use the provider's full-market form because no safe market-row bound is declared
 - **dependencies**:
   - `tushare_trade_cal` with requirement `{exchanges: ["SSE", "SZSE"], timerange}` for trading-day pruning
+  - `tushare_index_basic` with requirement `{indexes}` for local selector validation and exact
+    reference metadata
   - `tushare_index_weight` with requirement `{indexes, timerange}` for symbolic constituent selectors
 - **operations**:
   - `update()` — resolve the configured `update_symbols` for the latest due trading date and extend those symbols through the next civil-date endpoint; a newly selected symbol begins at that latest due date

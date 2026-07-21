@@ -78,13 +78,20 @@ The OS user is the trust boundary. The token protects callers that can reach loc
 
 Providers declare a stable ID, configuration schema, secret fields, rate limits, retry behavior, and local readiness validation. They may expose a lightweight authenticated readiness probe. Probes use the same rate limiter as tasks and return only sanitized diagnostics.
 
+Provider plugins are discovered through the `findata.providers` entry-point group. Registration
+rejects duplicate IDs and validates their configuration schema, secret declarations, limiter
+parameters, readiness contract, and optional probe before dataset registration. Dataset plugins
+refer to providers only by registered ID; an unknown provider makes dataset registration fail.
+
 Missing provider configuration does not prevent server startup. A task using an unready provider is rejected before queueing. Credentials are resolved from literal protected configuration or environment-variable references at use time and are inherited by task processes from the server environment.
 
 The server owns one token bucket per provider. A task obtains a permit through the TaskRunner before every external API request, including retries. The bucket limits average frequency, applies a safety discount, starts empty, refills continuously, and permits only a bounded burst.
 
 ## Dataset registration and manifests
 
-Dataset plugins are discovered through the `findata.datasets` entry-point group. Registration validates providers, dependencies, operation/operand schemas, optional settings schemas, storage strategy, manifest compatibility, and dependency cycles.
+Dataset plugins are discovered through the `findata.datasets` entry-point group after providers
+have been registered. Registration validates provider references, dependencies, operation/operand
+schemas, optional settings schemas, storage strategy, manifest compatibility, and dependency cycles.
 
 Every dataset exposes a parameterless `update` operation. Additional operations may include `complete` for explicit backfill and `refresh` for re-fetching strictly inside existing coverage. Datasets also declare plain read-side status queries; an uninitialized dataset reports that state without executing them.
 
@@ -132,9 +139,9 @@ Time-accumulating datasets using `strict` or `accept-empty` keep one continuous 
 
 Each plugin defines how parameterless `update` selects its work. A complete-snapshot dataset may
 need no settings; another dataset may require plugin-defined symbols, selectors, or other values.
-The plugin reports update readiness from its settings and returns an actionable validation error
-when required configuration is missing. One-time operations use their explicit operands and never
-mutate plugin settings implicitly.
+The plugin reports update readiness from its settings and committed state and returns an actionable
+validation error when required configuration or tracked state is missing. One-time operations use
+their explicit operands and never mutate plugin settings implicitly.
 
 ## Storage publication
 

@@ -24,6 +24,8 @@ Cover small components and boundary cases, especially:
 - rate-limit accounting;
 - cron/timezone calculation;
 - manifest and configuration validation;
+- provider-then-dataset entry-point discovery, duplicate provider IDs, malformed provider
+  contracts, and dataset references to unknown providers;
 - plugin-setting schema validation, normalization, immutable task snapshots, and update readiness;
 - query-filter translation;
 - task and handle state transitions.
@@ -40,9 +42,11 @@ Every dataset has a deterministic mock generator matching its schema and respons
 - partial backfills and reruns;
 - dataset-owned index-selector parsing and month expansion, including failure rather than stale
   fallback for unavailable `@latest` coverage;
-- provider index-catalog synchronization across declared markets, exact provider-ID preservation,
-  unknown references, and the distinction between catalog membership and confirmed
-  `index_weight` availability;
+- per-index metadata materialization and refresh, exact provider-ID preservation, unknown
+  references, rejection of empty or mismatched responses, no implicit market enumeration, and the
+  distinction between metadata presence and confirmed `index_weight` availability;
+- `tushare_index_basic.update` refreshing only materialized references and
+  `tushare_index_weight.complete` never mutating `update_indexes`;
 
 A provider-family harness may share envelope and failure simulation, but row generation remains dataset-specific.
 
@@ -72,9 +76,9 @@ After a change appears complete, run a minimal representative operation and quer
 E2E tests use real user surfaces. CLI tests execute commands and inspect stdout, stderr, exit codes, and structured output. A future web UI must be tested by opening it and exercising the relevant controls.
 
 The primary required E2E scenario is the workflow in [USER.md](USER.md#quick-start): configure a
-mocked Tushare provider, synchronize its index catalog, backfill `tushare_daily_basic`, configure
-the plugin's `update_symbols`, fulfill dependencies, query covered data, enable cron, inject a
-failure, and verify that rerunning resumes unresolved intervals.
+mocked Tushare provider, materialize one exact index reference, backfill `tushare_daily_basic`,
+configure the plugin's `update_symbols`, fulfill dependencies, query covered data, enable cron,
+inject a failure, and verify that rerunning resumes unresolved intervals.
 
 The reserved token `findata-mock` selects the deterministic Tushare mock without contacting the
 provider. `findata-mock:fail=<api>@<call>` injects one terminal failure at the numbered call to that
@@ -182,9 +186,9 @@ Every supported reader strategy is tested for equivalent behavior across:
 Automated import checks reject dependencies from core modules to `findata.toolkit`, built-in
 dataset packages, built-in provider packages, or `findata.testing`. They also reject toolkit
 imports of concrete datasets or providers and read-path imports of maintenance plugins. Positive
-fixtures prove that entry-point discovery works and that a dataset plugin can use public core
-contracts, its provider adapter, and selected toolkit components. Explicit mock mode is the only
-runtime path allowed to load `findata.testing`.
+fixtures prove provider-then-dataset entry-point discovery and that a dataset plugin can use public
+core contracts, its provider adapter, and selected toolkit components. Explicit mock mode is the
+only runtime path allowed to load `findata.testing`.
 
 ## Test ordering
 

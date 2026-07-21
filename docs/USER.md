@@ -27,7 +27,9 @@ cd ~/market-data
 findata config set provider.tushare.token --stdin
 findata provider check tushare
 
-findata task run tushare_index_basic update --wait
+findata task run tushare_index_basic complete \
+  --param indexes=tushare:000300.SH \
+  --wait
 findata task run tushare_daily_basic complete \
   --param symbols=tushare:000300.SH \
   --param timerange=2026-06-29:2026-07-04 \
@@ -44,15 +46,15 @@ The separate `update_symbols` setting belongs to `tushare_daily_basic`; its plug
 constituent selector and uses it only for later parameterless `update` operations. Recurring updates
 therefore resolve the constituent month containing each latest due trading date.
 
-Within the Tushare plugins, `tushare:000300.SH` preserves an exact provider index reference from the
-`tushare_index_basic` catalog. The bare reference in `complete` means the historical constituent
-union over that backfill range; `@latest` is a plugin-defined suffix for future updates. Core
-findata configuration and CLI code treat both values as opaque strings.
+Within the Tushare plugins, `tushare:000300.SH` preserves an exact provider index reference
+materialized in `tushare_index_basic`. The bare reference in `complete` means the historical
+constituent union over that backfill range; `@latest` is a plugin-defined suffix for future updates.
+Core findata configuration and CLI code treat both values as opaque strings.
 
-For another Tushare index, query the synchronized `tushare_index_basic` dataset through DataLoader
-and copy its exact `ts_code` into the same plugin-owned `tushare:<ts_code>` form. A catalog match
-identifies the provider object but does not guarantee index-weight permission or historical
-coverage.
+For another Tushare index, obtain its exact `ts_code`, materialize it with
+`tushare_index_basic complete`, and use the same plugin-owned `tushare:<ts_code>` form. This tracks
+only the requested reference. Metadata presence identifies the provider object but does not
+guarantee index-weight permission or historical coverage.
 
 ## Workspace selection
 
@@ -225,7 +227,7 @@ Provider commands never display credentials.
 - `cron reset <dataset>` — restore the plugin's suggested schedule without changing enabled state.
 
 Automatic maintenance is opt-in. A job must have a ready provider and its dataset plugin must report
-that the configured settings are sufficient for `update`.
+that its settings and committed state are sufficient for `update`.
 
 Cron expressions are evaluated in the job's IANA timezone. A local wall time that does not exist because of a daylight-saving jump is skipped and records a warning event. A wall time that occurs twice runs once, at its first occurrence. Jobs missed while the server is down record a missed-job event after restart and are not submitted automatically.
 

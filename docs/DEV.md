@@ -23,11 +23,17 @@ Define and document:
 6. an optional lightweight authenticated readiness probe;
 7. mock behavior for success, empties, rate limiting, and failures.
 
-If a provider exposes an instrument-reference catalog, preserve its identifiers as opaque values,
-record the catalog source and synchronization behavior, and keep endpoint-capability checks
-separate from catalog membership. Do not implement cross-provider identity by transforming codes or
-matching names. Catalog synchronization and lookup belong to provider-specific dataset plugins, not
-to core findata.
+Publish the provider contract through the `findata.providers` entry-point group. Core discovery
+loads and validates that contract before loading dataset entry points; it must not import the
+provider's concrete module directly. Registration tests cover duplicate IDs, malformed schemas,
+invalid limiter parameters, and datasets referring to an unregistered provider.
+
+If a provider exposes instrument-reference metadata, preserve its identifiers as opaque values,
+record how explicitly requested references are materialized and refreshed, and keep
+endpoint-capability checks separate from metadata presence. Do not implement cross-provider
+identity by transforming codes or matching names. Reference lookup belongs to provider-specific
+dataset plugins, not to core findata; do not enumerate a provider's markets unless a dataset
+contract explicitly requires it.
 
 Provider code never logs or returns credentials. Every external request, including readiness probes, goes through the shared provider limiter.
 
@@ -51,7 +57,8 @@ routes such a key and candidate JSON value to the registered owner plugin, then 
 normalized value atomically. Unknown keys or invalid values leave configuration unchanged. Core
 configuration, CLI, cron, and task code never parses a symbol, selector, provider reference, or
 other dataset-specific value. Each task receives one immutable snapshot of its plugin settings and
-their revision; the plugin alone derives parameterless `update` work and readiness from it.
+their revision; the plugin alone derives parameterless `update` work and readiness from those
+settings and committed dataset state.
 Normalization must be deterministic and side-effect-free. It may read the committed data of a
 declared dependency through the public DataLoader, but must not call a provider, fulfill the
 dependency, submit a task, or import that dependency's plugin. If required validation data is not
