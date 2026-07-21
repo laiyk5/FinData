@@ -201,8 +201,11 @@ not embed ANSI sequences, draw their own tables, or reinterpret server lifecycle
 
 The human renderer provides reusable table, labeled-detail, status, progress, empty-state, and
 error views. It may shorten identifiers for display only when the full identifier remains available
-for copying. The progress renderer writes only to stderr, updates in place only on an interactive
-terminal, and always removes transient animation before printing a terminal summary. Rendering
+for copying. Rich owns the interactive live-progress region; command and presentation code must not
+manually compose cursor movement or erase-line sequences. The progress renderer writes only to
+stderr, uses a transient Rich display only on an interactive terminal, and stops that display before
+printing a diagnostic, detachment notice, error, or terminal summary. Redirected human output keeps
+the existing newline-delimited plain-text fallback. Rich never renders JSON or JSONL. Rendering
 failures must not change task execution or corrupt a structured result.
 
 Identifier-prefix resolution belongs to the server-side resource store, not the CLI. The CLI sends

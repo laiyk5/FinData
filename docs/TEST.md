@@ -111,6 +111,8 @@ CLI presentation tests cover:
 - tables, labeled detail views, empty results, warnings, actionable errors, and terminal summaries;
 - delayed commands without spinner flicker, progress-line replacement, and cleanup after success,
   failure, cancellation, connection loss, and interruption;
+- Rich live-progress construction with `transient=True`, exactly one live task, and `stop()` before
+  any persistent diagnostic or terminal summary;
 - Ctrl-C while waiting or following detaching without canceling the server task;
 - immediate task-acceptance output and faithful rendering of queued, waiting, running, and terminal
   state changes supplied by the server; and
