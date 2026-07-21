@@ -10,6 +10,9 @@ import time
 from typing import TextIO
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from rich.console import Console
+from rich.progress import BarColumn, MofNCompleteColumn, Progress, SpinnerColumn, TextColumn
+
 
 ANSI_RESET = "\x1b[0m"
 ANSI_BOLD = "\x1b[1m"
@@ -104,8 +107,9 @@ class CLIOutput:
             self.err_terminal = _without_decoration(self.err_terminal)
         self._last_state: tuple[object, ...] | None = None
         self._accepted_at: float | None = None
-        self._spinner_index = 0
-        self._progress_active = False
+        self._progress: Progress | None = None
+        self._progress_task_id: int | None = None
+        self._progress_failed = False
         self._diagnostic_status_active = False
         self._diagnostic_visible: set[str] = set()
         self._diagnostic_visible_totals = {"warning": 0, "error": 0}
@@ -124,8 +128,7 @@ class CLIOutput:
     def error(self, message: str) -> None:
         if self.output_format in {"json", "jsonl"}:
             self.stderr.write(
-                json.dumps({"type": "error", "error": message}, separators=(",", ":"))
-                + "\n"
+                json.dumps({"type": "error", "error": message}, separators=(",", ":")) + "\n"
             )
         else:
             marker = "✗" if self.err_terminal.unicode else "ERROR"
@@ -176,21 +179,74 @@ class CLIOutput:
             if self.err_terminal.interactive:
                 if self._accepted_at is not None and time.monotonic() - self._accepted_at < 0.25:
                     return
-                frames = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏" if self.err_terminal.unicode else "-|/\\"
-                marker = frames[self._spinner_index % len(frames)]
-                self._spinner_index += 1
-                self.stderr.write(f"\r\x1b[2K{marker} {detail}")
-                self._progress_active = True
+                current = progress.get("current", 0) if isinstance(progress, Mapping) else 0
+                total = progress.get("total") if isinstance(progress, Mapping) else None
+                self._update_progress(detail, current=current, total=total)
             else:
                 marker = "..."
                 self.stderr.write(f"{marker} {detail}\n")
             self.stderr.flush()
 
     def finish_progress(self) -> None:
-        if self._progress_active:
-            self.stderr.write("\r\x1b[2K")
+        if self._progress is not None:
+            progress = self._progress
+            self._progress = None
+            self._progress_task_id = None
+            try:
+                progress.stop()
+            except Exception:
+                self._progress_failed = True
+
+    def _update_progress(self, detail: str, *, current: object, total: object) -> None:
+        completed = _progress_number(current, fallback=0)
+        maximum = _progress_number(total, fallback=None)
+        if self._progress_failed:
+            self.stderr.write(f"... {detail}\n")
             self.stderr.flush()
-            self._progress_active = False
+            return
+        try:
+            if self._progress is None:
+                console = Console(
+                    file=self.stderr,
+                    force_terminal=True,
+                    force_interactive=True,
+                    color_system="auto" if self.err_terminal.color else None,
+                    no_color=not self.err_terminal.color,
+                    width=self.err_terminal.width,
+                )
+                leading = SpinnerColumn() if self.err_terminal.unicode else TextColumn("...")
+                columns = [leading, TextColumn("{task.description}", markup=False)]
+                if self.err_terminal.unicode:
+                    columns.append(BarColumn(bar_width=None))
+                columns.append(MofNCompleteColumn())
+                self._progress = Progress(
+                    *columns,
+                    console=console,
+                    transient=True,
+                    auto_refresh=False,
+                    redirect_stdout=False,
+                    redirect_stderr=False,
+                )
+                self._progress.start()
+                self._progress_task_id = self._progress.add_task(
+                    detail,
+                    total=maximum,
+                    completed=completed,
+                )
+            else:
+                assert self._progress_task_id is not None
+                self._progress.update(
+                    self._progress_task_id,
+                    description=detail,
+                    total=maximum,
+                    completed=completed,
+                )
+            self._progress.refresh()
+        except Exception:
+            self.finish_progress()
+            self._progress_failed = True
+            self.stderr.write(f"... {detail}\n")
+            self.stderr.flush()
 
     def diagnostic(self, diagnostic: Mapping[str, object]) -> None:
         severity = str(diagnostic.get("severity") or "warning")
@@ -332,8 +388,18 @@ class CLIOutput:
         if not rows:
             return "No results found.\n"
         preferred = [
-            "name", "dataset", "operation", "status", "ready", "enabled", "provider",
-            "handle_id", "next_run", "severity", "kind", "message",
+            "name",
+            "dataset",
+            "operation",
+            "status",
+            "ready",
+            "enabled",
+            "provider",
+            "handle_id",
+            "next_run",
+            "severity",
+            "kind",
+            "message",
         ]
         scalar_keys = {
             str(key)
@@ -344,12 +410,12 @@ class CLIOutput:
         columns = [key for key in preferred if key in scalar_keys]
         columns.extend(sorted(scalar_keys - set(columns)))
         columns = columns[:7]
-        while len(columns) > 1 and 8 * len(columns) + 2 * (len(columns) - 1) > self.out_terminal.width:
+        while (
+            len(columns) > 1 and 8 * len(columns) + 2 * (len(columns) - 1) > self.out_terminal.width
+        ):
             columns.pop()
         if not columns:
-            return "\n".join(
-                _display(row, timezone=self.display_timezone) for row in rows
-            ) + "\n"
+            return "\n".join(_display(row, timezone=self.display_timezone) for row in rows) + "\n"
         rendered = [
             [
                 _display(row.get(column), field=column, timezone=self.display_timezone)
@@ -375,7 +441,10 @@ class CLIOutput:
             for index, column in enumerate(columns)
         )
         body = [
-            "  ".join(_truncate(cell, widths[index]).ljust(widths[index]) for index, cell in enumerate(row))
+            "  ".join(
+                _truncate(cell, widths[index]).ljust(widths[index])
+                for index, cell in enumerate(row)
+            )
             for row in rendered
         ]
         return "\n".join([header, *body]) + "\n"
@@ -383,7 +452,11 @@ class CLIOutput:
     def _task_summary(self, value: Mapping[object, object]) -> str:
         status = str(value.get("status", "unknown"))
         succeeded = status == "succeeded"
-        marker = ("✓" if succeeded else "✗") if self.out_terminal.unicode else ("OK" if succeeded else "ERROR")
+        marker = (
+            ("✓" if succeeded else "✗")
+            if self.out_terminal.unicode
+            else ("OK" if succeeded else "ERROR")
+        )
         color = ANSI_GREEN if succeeded else ANSI_RED
         lines = [self._style(f"{marker} Task {status}", color, terminal=self.out_terminal)]
         fields: list[tuple[str, object]] = [
@@ -439,6 +512,12 @@ def _without_decoration(value: TerminalCapabilities) -> TerminalCapabilities:
         unicode=value.unicode,
         width=value.width,
     )
+
+
+def _progress_number(value: object, *, fallback: int | None) -> int | float | None:
+    if isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 0:
+        return value
+    return fallback
 
 
 def _display(
