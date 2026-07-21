@@ -71,6 +71,12 @@ The client resolves its workspace in this order:
 
 If no workspace is found, the client exits with an error suggesting `findata-server init <path>`.
 
+Each registered dataset owns one internal DuckDB file. These files are implementation state: users
+query them through DataLoader and must not open them read/write, remove WAL files, or copy a live
+database as a backup. Findata retains only the current committed dataset revision; routine updates
+do not create historical storage copies. Dataset initialization is local and does not contact a
+provider.
+
 ## CLI behavior
 
 Operational commands support `--format human|json|jsonl`; `--json` is shorthand for `--format json`, and `jsonl` is used for streams. Stdout contains command results and stderr contains diagnostics.
@@ -190,7 +196,7 @@ Every task ID names the submitting handle, even when several handles share one c
 | `failed` | terminal; work stopped with an error or was interrupted by server restart |
 | `canceled` | terminal; this handle's subscription was canceled |
 
-Canceling one coalesced handle makes that handle `canceled` immediately while another subscriber's handle continues. Canceling the final handle requests cooperative cancellation; after five seconds TaskRunner terminates a process that has not exited, and the handle then becomes `canceled` regardless of the process exit code. Completed publication checkpoints are not rolled back, and a publication already at its atomic commit may complete. Cancellation of an already terminal handle is a no-op reported as such.
+Canceling one coalesced handle makes that handle `canceled` immediately while another subscriber's handle continues. Canceling the final handle requests cooperative cancellation; after five seconds TaskRunner terminates a process that has not exited, and the handle then becomes `canceled` regardless of the process exit code. Completed transaction checkpoints are not rolled back, and a database transaction already committing may complete. Cancellation of an already terminal handle is a no-op reported as such.
 
 ## Command reference
 
@@ -213,6 +219,10 @@ Canceling one coalesced handle makes that handle `canceled` immediately while an
 - `dataset operations <name>`
 - `dataset operation <name> <operation>` — show operand schema, defaults, syntax, and examples.
 - `dataset status <name>` / `dataset status --all`
+- `dataset reset <name> [--yes]` — replace one dataset with a new uninitialized database while
+  preserving its settings and task history. Human interactive mode requires confirmation;
+  structured or non-interactive use requires `--yes`. Reset is rejected while that dataset has
+  queued or active work and never affects another dataset.
 
 ### Providers
 
@@ -265,7 +275,9 @@ is changed.
 
 ## DataLoader
 
-The DataLoader reads a workspace directly and does not require the server process.
+The DataLoader reads each dataset's DuckDB database directly and does not require the server
+process. It coordinates with writers through the dataset gate, so a query may briefly wait for a
+transaction on the same dataset; different datasets remain independent.
 
 ```python
 from pathlib import Path
@@ -297,9 +309,16 @@ with dataset.iter_batches(...) as batches:
         ...
 ```
 
-The iterator yields `pyarrow.RecordBatch` values and holds its read snapshot until the context manager closes.
+The iterator yields `pyarrow.RecordBatch` values and holds its shared gate, read-only connection,
+and committed database view until the context manager closes.
 
-An uninitialized dataset raises `DatasetNotReadyError`; a manifest or data-layout version unsupported by the installed core raises `IncompatibleDatasetError` without modifying the workspace. With `require_coverage=True`, a coverage-tracked dataset verifies explicit `keys` and `time_range` and raises `CoverageError(dataset, missing_intervals)` when due observations are unresolved. Non-observation dates such as a daily dataset's closed market days do not appear as gaps. Best-effort and non-coverage-tracked datasets do not support this option. `dataset.coverage(keys=None)` returns the coverage table when available.
+An uninitialized dataset raises `DatasetNotReadyError`; an unsupported storage-adapter,
+DuckDB-storage, or data-layout version raises `IncompatibleDatasetError` without modifying the
+workspace. With `require_coverage=True`, a coverage-tracked dataset verifies explicit `keys` and
+`time_range` and raises `CoverageError(dataset, missing_intervals)` when due observations are
+unresolved. Non-observation dates such as a daily dataset's closed market days do not appear as gaps.
+Best-effort and non-coverage-tracked datasets do not support this option.
+`dataset.coverage(keys=None)` returns the coverage table when available.
 
 ## User-documentation principles
 

@@ -10,12 +10,14 @@ express these contracts without changing them.
 ## Common conventions
 
 - Logical dates are Arrow `date32[day]`, strings are `utf8`, and floating-point provider values are `float64`. Provider `YYYYMMDD` strings are normalized before validation and never exposed as the logical date type.
-- A non-null primary-key field is required on every row, and primary-key tuples must be unique within a publication. A missing declared provider field is an error; undeclared extra provider fields are ignored until intentionally added by a data-layout version.
+- A non-null primary-key field is required on every row, and primary-key tuples must be unique within
+  each committed dataset revision. A missing declared provider field is an error; undeclared extra
+  provider fields are ignored until intentionally added by a data-layout version.
 - Operation `timerange` values are nonempty half-open `[start, end)` civil-date ranges. The CLI spelling is `YYYY-MM-DD:YYYY-MM-DD`; `today` is resolved once, in the dataset timezone, to the current date used as an exclusive endpoint. Inclusive provider endpoints are an adapter detail.
 - `symbols`, `indexes`, and `exchanges` are nonempty arrays of strings, deduplicated after canonicalization. A single CLI scalar is coerced to a one-element array.
 - `update` is always parameterless. Its dataset plugin alone interprets any settings needed to
   select work. A one-time `complete` or `refresh` never changes plugin settings.
-- Built-in `complete` and `refresh` operations declare their fully normalized operands as a stable coalescing identity. `update` never coalesces because its target depends on submission time, publication state, and the plugin-settings revision.
+- Built-in `complete` and `refresh` operations declare their fully normalized operands as a stable coalescing identity. `update` never coalesces because its target depends on submission time, committed dataset state, and the plugin-settings revision.
 
 ## `tushare_trade_cal`
 
@@ -43,8 +45,9 @@ The SSE and SZSE exchange calendars. Its observation domain is every civil date,
 - **operations**:
   - `update()` — extend both exchanges through the half-open endpoint tomorrow
   - `complete(exchanges, timerange)` — fetch the requested historical civil-date range; only `SSE` and `SZSE` are valid exchanges
-- **toolkit**: `single-file-append`, coverage tracker, mock API
-- **storage**: one CSV, logically append-only and published through the storage contract
+- **toolkit**: checkpoint-batch planner, coverage tracker, mock API
+- **storage mutation**: exchange/time-range replacement in the dataset's DuckDB `data` table;
+  matching coverage commits in the same transaction
 - **coverage**: one continuous civil-date interval per exchange; closed dates are covered rows with `is_open=false`
 - **status fields**: resolved time range and number of exchanges
 
@@ -52,7 +55,7 @@ The SSE and SZSE exchange calendars. Its observation domain is every civil date,
 
 API: <https://tushare.pro/document/2?doc_id=25>
 
-The complete A-share security-list snapshot across provider statuses `L`, `D`, `P`, and `G`.
+The complete A-share security table across provider statuses `L`, `D`, `P`, and `G`.
 
 | field | Arrow type | nullable | field | Arrow type | nullable |
 | --- | --- | --- | --- | --- | --- |
@@ -68,16 +71,17 @@ The complete A-share security-list snapshot across provider statuses `L`, `D`, `
 
 - **provider**: `tushare`
 - **keys**: primary key `ts_code`; no partition or time field
-- **settings**: none; every `update` fetches the complete snapshot
-- **publication timing**: no publication window; the provider maintains the snapshot
+- **settings**: none; every `update` fetches the complete provider table
+- **publication timing**: no publication window; the provider maintains a complete current view
 - **suggested schedule**: cron `0 8 * * 1`, `Asia/Shanghai`
-- **missing-data policy**: `strict`; the merged snapshot is never legitimately empty
+- **missing-data policy**: `strict`; the merged table is never legitimately empty
 - **request plan**: request each of `L`, `D`, `P`, and `G` separately for `SSE`, `SZSE`, and `BSE`, merge by `ts_code`, and fail on conflicting duplicates or any response reaching the provider's 6000-row limit because completeness would be uncertain
 - **dependencies**: none
 - **operations**:
-  - `update()` — fetch all four statuses and replace the published snapshot
-- **toolkit**: `single-file-replace`, mock API
-- **storage**: one CSV replaced on every publication
+  - `update()` — fetch all four statuses and replace the committed table
+- **toolkit**: mock API
+- **storage mutation**: complete table replacement in one DuckDB transaction; the validated result
+  of all requests is one indivisible work item
 - **status fields**: number of symbols grouped by `list_status`
 
 ## `tushare_index_basic`
@@ -106,7 +110,7 @@ enumerates Tushare markets implicitly.
 
 - **provider**: `tushare`
 - **keys**: primary key `ts_code`; no partition or time field
-- **settings**: none; the tracked set is the set of rows already published, not separate configuration
+- **settings**: none; the tracked set is the set of rows already committed, not separate configuration
 - **missing-data policy**: `strict`; an empty or mismatched response for an explicitly requested
   `ts_code` is a failure
 - **request plan**: one `index_basic(ts_code=...)` request per exact requested index; the plugin
@@ -115,12 +119,13 @@ enumerates Tushare markets implicitly.
 - **dependency fulfillment**: `{indexes}` requires a nonempty array of unsuffixed
   `tushare:<ts_code>` references and maps absent references to `complete(indexes=...)`
 - **operations**:
-  - `update()` — refresh exactly the indexes in the committed snapshot; an uninitialized or empty
+  - `update()` — refresh exactly the indexes in the committed table; an uninitialized or empty
     dataset is unready and directs the user to `complete`
   - `complete(indexes)` — fetch the explicitly requested references, merge them with existing rows,
-    and replace the snapshot; it never discovers or adds another index
-- **toolkit**: `single-file-replace`, mock API
-- **storage**: one snapshot published through the storage contract
+    and replace the committed table; it never discovers or adds another index
+- **toolkit**: checkpoint-batch planner, mock API
+- **storage mutation**: exact-`ts_code` replacement; the operation's merged logical result commits
+  transactionally
 - **status fields**: refresh time and number of tracked indexes
 
 Reference presence establishes only that Tushare returned its metadata. It does not promise
@@ -145,15 +150,15 @@ calendar month; a month with no row means that no new snapshot superseded the pr
 | field | Arrow type | nullable | meaning |
 | --- | --- | --- | --- |
 | `index_code` | `utf8` | no | exact Tushare index code returned by `index_weight` |
-| `effective_month` | `date32[day]` | no | storage bucket containing `trade_date`; it is not the effective date |
+| `effective_month` | `date32[day]` | no | calendar month containing `trade_date`; it is not the effective date |
 | `con_code` | `utf8` | no | constituent Tushare security code |
 | `trade_date` | `date32[day]` | no | provider snapshot date retained for provenance |
 | `weight` | `float64` | no | constituent weight in percent |
 
 - **provider**: `tushare`
 - **capabilities**: `time-accumulating`
-- **keys**: primary key `(index_code, effective_month, con_code)`; partition key `index_code`; secondary key `con_code`; time field `effective_month`; partitioned by index and month
-- **observation domain**: dated provider snapshots; monthly intervals are request and storage
+- **keys**: primary key `(index_code, effective_month, con_code)`; partition key `index_code`; secondary key `con_code`; time field `effective_month`
+- **observation domain**: dated provider snapshots; monthly intervals are request and logical query
   buckets, not assertions that every month must contain a new snapshot
 - **settings**:
   - `dataset.tushare_index_weight.update_indexes`: required nonempty array for `update`; the plugin
@@ -177,8 +182,9 @@ calendar month; a month with no row means that no new snapshot superseded the pr
   - `complete(indexes, timerange)` — fetch every intersecting historical or current calendar month
     for the requested unsuffixed `tushare:<ts_code>` references while preserving continuous monthly
     coverage
-- **toolkit**: `partitioned`, coverage tracker, publication-window pruning, mock API
-- **storage**: `:index/:month.parquet`
+- **toolkit**: checkpoint-batch planner, coverage tracker, publication-window pruning, mock API
+- **storage mutation**: index/month replacement in DuckDB; a nonempty refresh replaces the complete
+  logical month so removed constituents do not survive, while an empty month changes coverage only
 - **coverage**: one continuous month-aligned provider-query interval per index; it records whether
   snapshot events were queried, independently of whether rows existed; current-month coverage is
   deliberately refreshable
@@ -216,7 +222,7 @@ Per-symbol daily valuation, share, and market-value indicators.
 
 - **provider**: `tushare`
 - **capabilities**: `symbol_set_cap: 1`, `row_limit: 6000`, `time-accumulating`
-- **keys**: primary key `(ts_code, trade_date)`; partition key `ts_code`; time field `trade_date`; partitioned by symbol and month
+- **keys**: primary key `(ts_code, trade_date)`; partition key `ts_code`; time field `trade_date`
 - **observation domain**: SSE/SZSE open trading dates from `tushare_trade_cal`; a suspension can resolve without a row
 - **settings**:
   - `dataset.tushare_daily_basic.update_symbols`: required nonempty array for `update`; the plugin
@@ -240,7 +246,7 @@ Per-symbol daily valuation, share, and market-value indicators.
   - `complete(symbols, timerange)` — backfill or extend the requested canonical symbols and constituent selectors; a disjoint range is extended toward existing coverage until the intervals abut
   - `refresh(symbols, timerange)` — re-fetch the explicit symbols strictly inside their existing resolved coverage; both operands are required and symbolic selectors use the same range-based semantics as `complete`
 - **backfill visibility**: `complete` logs requested versus fetched ranges and warns per symbol when continuity causes the fetched span to exceed twice the requested span
-- **toolkit**: `partitioned`, coverage tracker, publication-window pruning, request optimizer, constituent-set resolver, mock API
-- **storage**: `:symbol/:month.parquet`
+- **toolkit**: checkpoint-batch planner, coverage tracker, publication-window pruning, request optimizer, constituent-set resolver, mock API
+- **storage mutation**: symbol/time-range replacement in DuckDB; data and coverage commit together
 - **coverage**: one continuous civil-date interval per symbol in which every open trading date is resolved; closed dates do not create gaps, and resolved-empty trading dates need no data row
 - **status fields**: resolved time range per symbol and number of symbols

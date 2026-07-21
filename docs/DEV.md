@@ -6,7 +6,7 @@ This file owns contributor workflow and implementation guidance. Architecture be
 
 - Keep the user story working through small vertical slices.
 - Put policy in the component that owns it; do not duplicate schema coercion, coverage rules, or query semantics across server, CLI, and plugins.
-- Prefer declarative manifests and schemas at process and package boundaries.
+- Prefer declarative contracts and schemas at process and package boundaries.
 - Promote a dataset-private helper into the toolkit only when a second dataset needs it.
 - Preserve user data and unrelated workspace changes while developing.
 - When a failure escapes existing tests, add a regression case.
@@ -46,11 +46,13 @@ Before implementation, add its canonical entry to [DATASETS.md](DATASETS.md). Th
 3. publication window, schedule, and missing-data policy;
 4. dependencies and optional fulfillment requirement schema;
 5. operation entry points and operand JSON schemas;
-6. supported storage strategy and DataLoader metadata;
+6. declarative database mutation scope and DataLoader metadata;
 7. coverage and status behavior;
 8. mock generator and dataset-specific tests.
 
-The plugin performs provider fetch, transformation, validation, and staged writing. It does not define public DataLoader query semantics or import itself on the read path.
+The plugin performs provider fetch, transformation, and validation, then submits Arrow data through
+the core transactional writer. It never opens DuckDB, emits SQL, defines public DataLoader query
+semantics, or imports itself on the read path.
 
 Dataset settings use keys under `dataset.<dataset-name>.*`. The generic configuration service
 routes such a key and candidate JSON value to the registered owner plugin, then commits the returned
@@ -68,7 +70,7 @@ initialized, return an error with the ordinary dataset operation the user should
 
 Use the following package-level separation as the codebase grows:
 
-- core services, public contracts, the DataLoader, server, CLI, storage reader adapters, tasks,
+- core services, public contracts, the DataLoader, server, CLI, transactional storage adapter, tasks,
   configuration, cron, and events live outside concrete provider and dataset packages;
 - built-in concrete dataset plugins live under `findata.datasets.<provider>`;
 - built-in provider transports and clients live under `findata.providers.<provider>`;
@@ -93,20 +95,42 @@ Start with a private implementation in one dataset. On second use:
 4. retain provider-specific limits as parameters rather than branches on dataset names;
 5. add unit tests and integration tests for both consuming datasets.
 
-Toolkit components are opt-in plugin helpers. Core reader adapters are not toolkit components.
+Toolkit components are opt-in plugin helpers. The core DuckDB adapter is not a toolkit component.
 
 ## Storage and reader development
 
-A supported physical layout has two coordinated halves:
+Solution B uses one DuckDB file and one cross-process gate per dataset. Core owns database creation,
+metadata tables, parameterized SQL, transactions, coverage mutation, revision assignment, Arrow
+results, checkpointing, and recovery. Plugins provide only registered mutation scopes and validated
+Arrow input.
 
-- a plugin-side writer, usually supplied by the toolkit;
-- a core reader adapter selected declaratively from the manifest.
+Never keep a read/write DuckDB connection open outside the exclusive gate. DataLoader opens a
+read-only connection only after acquiring the shared gate and closes it before releasing that gate;
+batch readers retain both for their context lifetime. Provider calls and transformation occur before
+exclusive-gate acquisition so database commits remain bounded.
 
-The DataLoader owns filtering, ordering, coverage validation, locking, snapshot selection, Arrow results, and query-engine selection. A novel layout requires a reusable writer and compatible core reader adapter rather than a private dataset query engine.
+The writer accepts complete replacement and registered key/time-range replacement, not plugin SQL.
+Validate the resulting affected scope for logical primary-key uniqueness. A plugin exposes only
+deterministic, independently committable work items; a complete-table replacement is necessarily one
+indivisible item. Benchmark whether a
+persistent DuckDB primary-key index helps each data shape before introducing one; it is not a v1
+contract. Transaction batches target about one minute and explicit request-count and staged-byte
+limits, observed only between indivisible work items, so failure replay, WAL growth, memory, and
+reader blocking remain bounded without weakening replacement atomicity.
 
-The storage implementation may use whole-generation directories, content-addressed files, or another representation, but it must prove the atomic publication-snapshot and reader-lifetime guarantees in [DESIGN.md](DESIGN.md). Benchmark and garbage-collection choices are implementation gates, not competing architectural contracts.
+Use DuckDB APIs for recovery and WAL/checkpoint handling; never unlink a WAL manually. Dataset reset
+holds the task mutex after rejecting queued or active work, creates and closes a valid empty temporary
+database, acquires the exclusive gate, atomically replaces the old database on the same filesystem,
+and flushes the containing directory. v1 does not require full-copy compaction; if introduced later,
+it must be an explicit maintenance action rather than an incidental side effect of update.
 
-Detailed workspace, manifest, plugin, task-message, and HTTP schemas should be placed under `docs/specs/` when implementation begins. Specs may elaborate an architectural contract but may not override [DESIGN.md](DESIGN.md).
+Before implementation is considered complete, benchmark initial load, daily append, bounded refresh,
+common DataLoader queries, Arrow streaming, reader/writer blocking, WAL and steady disk growth,
+checkpoint latency, reset, crash recovery, and wheel installation with the pinned DuckDB version.
+
+Detailed workspace, database metadata, plugin, task-message, and HTTP schemas belong under
+`docs/specs/`. Specs may elaborate an architectural contract but may not override
+[DESIGN.md](DESIGN.md).
 
 ## Documentation workflow
 
