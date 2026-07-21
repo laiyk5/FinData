@@ -72,6 +72,7 @@ class DatasetSpec:
     partition_key: str | None = None
     secondary_key: str | None = None
     time_field: str | None = None
+    missing_data_policy: str = "strict"
     capabilities: Mapping[str, Any] = field(default_factory=dict)
     aliases: Mapping[str, str] = field(default_factory=dict)
     normalize_rows: RowNormalizer = field(default=_identity_rows, repr=False, compare=False)
@@ -83,6 +84,8 @@ class DatasetSpec:
         for key in (self.partition_key, self.secondary_key, self.time_field):
             if key is not None and key not in schema_names:
                 raise ValueError(f"{self.name}: declared key {key!r} is absent from schema")
+        if self.missing_data_policy not in {"strict", "accept-empty", "best-effort"}:
+            raise ValueError(f"{self.name}: invalid missing-data policy")
         object.__setattr__(self, "capabilities", MappingProxyType(dict(self.capabilities)))
         object.__setattr__(self, "aliases", MappingProxyType(dict(self.aliases)))
 
@@ -136,4 +139,3 @@ def provider_date(value: Any, *, nullable: bool = False) -> date | None:
         return date.fromisoformat(f"{value[:4]}-{value[4:6]}-{value[6:8]}")
     except (TypeError, ValueError, IndexError) as exc:
         raise DatasetDataError(f"invalid provider date: {value!r}") from exc
-

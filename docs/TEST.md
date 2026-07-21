@@ -23,8 +23,13 @@ Cover small components and boundary cases, especially:
 - logical Arrow field types, nullability, date normalization, and primary-key uniqueness;
 - rate-limit accounting;
 - cron/timezone calculation;
-- manifest and configuration validation;
-- query-filter translation;
+- database metadata, storage-version, and configuration validation;
+- provider-then-dataset entry-point discovery, duplicate provider IDs, malformed provider
+  contracts, and dataset references to unknown providers;
+- plugin-setting schema validation, normalization, immutable task snapshots, and update readiness;
+- parameterized SQL translation with identifiers restricted to registered schemas;
+- checkpoint-batch request, byte, and duration boundaries, including an oversized indivisible
+  complete replacement that must not be split;
 - task and handle state transitions.
 
 ### Mocked plugin tests
@@ -37,7 +42,12 @@ Every dataset has a deterministic mock generator matching its schema and respons
 - rate limiting and retries;
 - transformation and validation failures;
 - partial backfills and reruns;
-- index-selector month expansion, including failure rather than stale fallback for unavailable `@latest` coverage.
+- dataset-owned index-selector parsing and as-of snapshot resolution without look-ahead bias;
+- per-index metadata materialization and refresh, exact provider-ID preservation, unknown
+  references, rejection of empty or mismatched responses, no implicit market enumeration, and the
+  distinction between metadata presence and confirmed `index_weight` availability;
+- `tushare_index_basic.update` refreshing only materialized references and
+  `tushare_index_weight.complete` never mutating `update_indexes`;
 
 A provider-family harness may share envelope and failure simulation, but row generation remains dataset-specific.
 
@@ -45,14 +55,19 @@ A provider-family harness may share envelope and failure simulation, but row gen
 
 Exercise real component boundaries:
 
-- plugin writer to manifest to core reader adapter;
+- plugin Arrow mutation to core DuckDB transaction to DataLoader Arrow result;
 - server to task process communication;
 - dependency fulfillment and parent retry;
 - provider limiter shared by concurrent tasks;
 - CLI to authenticated HTTP API;
+- generic configuration routing to the owning plugin, including atomic rejection without mutation;
+- local setting validation through a declared dependency's committed DataLoader revision, with no
+  provider call, task submission, plugin import, or implicit fulfillment;
+- cron readiness derived by the plugin from an immutable settings snapshot;
 - cron to TaskRunner submission;
 - event persistence and acknowledgement;
-- DataLoader reader/writer locking.
+- DataLoader shared-reader/exclusive-writer locking and connection lifetime;
+- dataset initialization and confirmed reset, including rejection during queued or active work.
 
 ### Smoke tests
 
@@ -62,13 +77,17 @@ After a change appears complete, run a minimal representative operation and quer
 
 E2E tests use real user surfaces. CLI tests execute commands and inspect stdout, stderr, exit codes, and structured output. A future web UI must be tested by opening it and exercising the relevant controls.
 
-The primary required E2E scenario is the workflow in [USER.md](USER.md#quick-start): configure a mocked Tushare provider, set a CSI 300 universe, backfill `tushare_daily_basic`, fulfill dependencies, query covered data, enable cron, inject a failure, and verify that rerunning resumes unresolved intervals.
+The primary required E2E scenario is the workflow in [USER.md](USER.md#quick-start): configure a
+mocked Tushare provider, materialize one exact index reference, backfill `tushare_daily_basic`,
+configure the plugin's `update_symbols`, fulfill dependencies, query covered data, enable cron,
+inject a failure, and verify that rerunning resumes unresolved intervals.
 
 The reserved token `findata-mock` selects the deterministic Tushare mock without contacting the
 provider. `findata-mock:fail=<api>@<call>` injects one terminal failure at the numbered call to that
-mock API; for example, `findata-mock:fail=daily_basic@2` fails after the first daily-basic request
-has been checkpointed. These values are testing controls, are never valid real credentials, and
-must be identified as mock mode by provider status and readiness output.
+mock API. Recovery scenarios set a deterministic test-only checkpoint-batch cap so the injected
+failure occurs after at least one committed batch; a provider-request boundary alone never implies
+a commit. These values are testing controls, are never valid real credentials, and must be
+identified as mock mode by provider status and readiness output.
 
 Real-provider E2E tests are opt-in, use dedicated credentials, respect the provider limiter, and never run as the default test suite.
 
@@ -92,11 +111,31 @@ CLI presentation tests cover:
 - tables, labeled detail views, empty results, warnings, actionable errors, and terminal summaries;
 - delayed commands without spinner flicker, progress-line replacement, and cleanup after success,
   failure, cancellation, connection loss, and interruption;
+- Rich live-progress construction with `transient=True`, exactly one live task, and `stop()` before
+  any persistent diagnostic or terminal summary;
 - Ctrl-C while waiting or following detaching without canceling the server task;
 - immediate task-acceptance output and faithful rendering of queued, waiting, running, and terminal
   state changes supplied by the server; and
 - JSON as exactly one document and JSONL as one typed object per line, with no ANSI sequences,
   animation, readiness banner, or human commentary under any terminal configuration.
+
+Identifier tests cover full and exact identifiers, the shortest valid unique prefix, a too-short
+prefix, no match, and deliberately colliding retained prefixes. They verify `400`, `404`, and `409`
+results as applicable and prove that ambiguity has no side effects. Resolution is also exercised
+against concurrent retention changes, and task cancellation proves that a handle prefix cannot
+resolve an execution identifier.
+
+Human-formatting tests use semantic fields at unit boundaries: subsecond and multi-minute
+durations, timezone offsets and date rollover, grouped counts, declared percentage precision,
+scientific-notation thresholds, identifiers that look numeric, and exact decimal values. Matching
+JSON and JSONL assertions prove that presentation leaves raw values and types unchanged.
+
+Diagnostic tests cover fewer than, exactly, and more than ten distinct warning and error messages;
+interleaved severities; exact repeats; and a terminal failure after the visible limit. PTY evidence
+verifies the replaceable suppression line and cleanup. Redirected stderr verifies the single
+suppression notice and final exact totals. JSONL assertions account for every logical occurrence,
+including counts carried by aggregated records, and prove that human suppression loses no
+structured diagnostic data.
 
 Snapshot tests normalize nondeterministic timestamps, durations, paths, and identifiers but retain
 their labels and shapes. Semantic assertions accompany snapshots so a cosmetically accepted update
@@ -107,16 +146,20 @@ cannot hide a missing status, result, or recovery instruction.
 Crash-safety claims require deterministic fault injection at least at:
 
 1. task record creation before and after process spawn;
-2. each publication staging and commit boundary;
-3. manifest replacement before acknowledgement;
+2. before and after DuckDB transaction begin, data mutation, coverage mutation, metadata mutation,
+   durable commit, and acknowledgement;
+3. abandonment of a validated but uncommitted checkpoint batch;
 4. server death while a task is fetching, waiting, and committing;
 5. startup orphan detection, including simulated PID reuse;
-6. cleanup of abandoned staging data and unreachable publication snapshots.
+6. DuckDB WAL recovery and cleanup of Findata-owned temporary inputs without direct WAL deletion;
+7. atomic dataset initialization and reset-file replacement.
 
 Concurrency tests cover:
 
-- multiple readers during publication;
-- a batch iterator holding its snapshot while a writer waits;
+- multiple read-only connections to one dataset and independent access to different datasets;
+- a batch iterator holding its shared gate and database view while a writer waits;
+- proof that no read/write connection exists outside the exclusive gate and no read-only connection
+  outlives the shared gate;
 - cancellation during rate-limit, dependency, and write-gate waits;
 - multiple datasets sharing one provider limiter;
 - queue limits, canonical coalescing keys, non-coalescing `update` submissions, independent handle states, and last-subscriber cancellation;
@@ -133,9 +176,9 @@ Test publication windows and cron schedules across:
 - server downtime and missed enabled jobs;
 - schedule overrides and resets.
 
-## DataLoader contract matrix
+## DuckDB storage and DataLoader contract matrix
 
-Every supported reader strategy is tested for equivalent behavior across:
+The core DuckDB adapter and DataLoader are tested across:
 
 - projection, filters, ordering, and limits;
 - eager tables and batch iteration;
@@ -145,7 +188,28 @@ Every supported reader strategy is tested for equivalent behavior across:
 - observation-domain coverage, including closed market dates and resolved-empty trading dates;
 - unsupported key/time queries;
 - low-memory batch reads;
-- reader-adapter errors without importing dataset plugins.
+- storage and SQL errors without importing dataset plugins;
+- complete replacement, key/time-range replacement, coverage-only commits, and logical primary-key
+  duplicate rejection;
+- proof that only independently committable work items may cross transaction boundaries;
+- publication ID and revision changes exactly once per committed checkpoint batch;
+- no retained historical database revisions after ordinary updates.
+
+Storage benchmarks use representative scaled market data and record initial-load throughput, daily
+append and bounded-refresh write amplification, common query latency, Arrow streaming memory,
+reader-block duration during commit, database/WAL peak and steady sizes, checkpoint latency, reset,
+and crash recovery. Acceptance thresholds belong in the v1 implementation specification before
+coding is declared complete. A full-copy compaction observed during an ordinary update fails the
+gate regardless of elapsed time.
+
+## Package-boundary checks
+
+Automated import checks reject dependencies from core modules to `findata.toolkit`, built-in
+dataset packages, built-in provider packages, or `findata.testing`. They also reject toolkit
+imports of concrete datasets or providers and read-path imports of maintenance plugins. Positive
+fixtures prove provider-then-dataset entry-point discovery and that a dataset plugin can use public
+core contracts, its provider adapter, and selected toolkit components. Explicit mock mode is the
+only runtime path allowed to load `findata.testing`.
 
 ## Test ordering
 

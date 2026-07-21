@@ -61,10 +61,26 @@ def main(
             return 0
         _validate_cli_args(args, output_format=output_format)
         client = _Client(resolve_workspace(args.workspace, environ=environment))
+        if output_format == "human":
+            configured_timezone = client.optional_config("display.timezone")
+            if isinstance(configured_timezone, str):
+                output.set_display_timezone(configured_timezone)
         result = _execute(client, args, output=output, stdin=stdin)
         output.finish_progress()
+        if _render_nonfollowing_task_logs(args, result, output=output):
+            return 0
+        handle = (
+            str(result.get("handle_id"))
+            if isinstance(result, Mapping) and result.get("handle_id")
+            else None
+        )
+        output.finish_diagnostics(handle)
         output.result(result, record_type=_result_record_type(args))
-        return 0 if not (isinstance(result, dict) and result.get("status") in {"failed", "canceled"}) else 1
+        return (
+            0
+            if not (isinstance(result, dict) and result.get("status") in {"failed", "canceled"})
+            else 1
+        )
     except TaskDetached as exc:
         output.detached(exc.handle)
         return 130
@@ -97,10 +113,12 @@ def _execute(
             value: object = {"env": args.env}
         elif args.stdin:
             value = stdin.readline().rstrip("\n")
+        elif args.value_json is not None:
+            value = _json_value(args.value_json, stdin=stdin)
         elif args.value is not None:
             value = args.value
         else:
-            raise ValueError("config set requires a value, --env, or --stdin")
+            raise ValueError("config set requires a value, --value-json, --env, or --stdin")
         return client.request("POST", "/v1/config", {"key": args.key, "value": value})
     if args.group == "config" and args.action in {"get", "ls"}:
         suffix = f"?{urlencode({'key': args.key})}" if getattr(args, "key", None) else ""
@@ -119,21 +137,24 @@ def _execute(
         if args.action == "status" and args.all:
             return client.request("GET", "/v1/datasets")
         suffix = "status" if args.action == "status" else ""
-        return client.request("GET", f"/v1/datasets/{args.dataset}{('/' + suffix) if suffix else ''}")
+        return client.request(
+            "GET", f"/v1/datasets/{args.dataset}{('/' + suffix) if suffix else ''}"
+        )
     if args.group == "dataset" and args.action == "operations":
         return client.request("GET", f"/v1/datasets/{args.dataset}/operations")
     if args.group == "dataset" and args.action == "operation":
-        return client.request(
-            "GET", f"/v1/datasets/{args.dataset}/operations/{args.operation}"
-        )
-    if args.group == "dataset" and args.action == "universe":
-        if args.universe_action == "set":
-            return client.request(
-                "PUT", f"/v1/datasets/{args.dataset}/universe", {"selectors": args.selectors}
+        return client.request("GET", f"/v1/datasets/{args.dataset}/operations/{args.operation}")
+    if args.group == "dataset" and args.action == "reset":
+        if not args.yes:
+            if output.output_format != "human" or not getattr(stdin, "isatty", lambda: False)():
+                raise CLIUsageError("dataset reset requires --yes in non-interactive use")
+            output.stderr.write(
+                f"Reset dataset {args.dataset!r} and delete its committed data? [y/N] "
             )
-        if args.universe_action == "clear":
-            return client.request("DELETE", f"/v1/datasets/{args.dataset}/universe")
-        return client.request("GET", f"/v1/datasets/{args.dataset}/universe")
+            output.stderr.flush()
+            if stdin.readline().strip().lower() not in {"y", "yes"}:
+                raise CLIUsageError("dataset reset canceled")
+        return client.request("POST", f"/v1/datasets/{args.dataset}/reset", {"confirm": True})
     if args.group == "task" and args.action == "run":
         operands = _params(args.param, args.params, stdin=stdin)
         submitted = client.request(
@@ -151,7 +172,7 @@ def _execute(
                 if args.follow:
                     logs = client.request("GET", f"/v1/tasks/{handle}/logs")["items"]
                     for message in logs[emitted_logs:]:
-                        output.log(str(message))
+                        _render_task_log(output, message, handle_id=handle)
                     emitted_logs = len(logs)
                 status = client.request("GET", f"/v1/tasks/{handle}")
                 if status["status"] in {"succeeded", "failed", "canceled"}:
@@ -161,7 +182,11 @@ def _execute(
         except KeyboardInterrupt as exc:
             raise TaskDetached(handle) from exc
     if args.group == "task" and args.action == "ls":
-        query = {key: value for key, value in {"dataset": args.dataset, "status": args.status}.items() if value}
+        query = {
+            key: value
+            for key, value in {"dataset": args.dataset, "status": args.status}.items()
+            if value
+        }
         if args.all:
             query["all"] = "true"
         suffix = f"?{urlencode(query)}" if query else ""
@@ -176,7 +201,7 @@ def _execute(
             while True:
                 logs = client.request("GET", f"/v1/tasks/{args.handle}/logs")["items"]
                 for message in logs[emitted:]:
-                    output.log(str(message))
+                    _render_task_log(output, message, handle_id=str(args.handle))
                 emitted = len(logs)
                 status = client.request("GET", f"/v1/tasks/{args.handle}")
                 if status["status"] in {"succeeded", "failed", "canceled"}:
@@ -243,6 +268,45 @@ class _Client:
         if not isinstance(result, dict):
             raise RuntimeError("server returned a non-object response")
         return result
+
+    def optional_config(self, key: str) -> object | None:
+        try:
+            return self.request("GET", f"/v1/config?{urlencode({'key': key})}").get("value")
+        except RuntimeError as exc:
+            if "server returned 404:" in str(exc):
+                return None
+            raise
+
+
+def _render_task_log(output: CLIOutput, item: object, *, handle_id: str) -> None:
+    if isinstance(item, Mapping) and item.get("type") == "task.diagnostic":
+        diagnostic = dict(item)
+        diagnostic.setdefault("handle_id", handle_id)
+        output.diagnostic(diagnostic)
+    else:
+        output.log(str(item))
+
+
+def _render_nonfollowing_task_logs(
+    args: argparse.Namespace,
+    result: object,
+    *,
+    output: CLIOutput,
+) -> bool:
+    if not (
+        args.group == "task"
+        and args.action == "logs"
+        and not args.follow
+        and output.output_format in {"human", "jsonl"}
+        and isinstance(result, Mapping)
+        and isinstance(result.get("items"), list)
+    ):
+        return False
+    handle_id = str(result.get("handle_id") or args.handle)
+    for item in result["items"]:
+        _render_task_log(output, item, handle_id=handle_id)
+    output.finish_diagnostics(handle_id)
+    return True
 
 
 def _params(
@@ -320,6 +384,7 @@ def _parser() -> argparse.ArgumentParser:
     config_set = config.add_parser("set")
     config_set.add_argument("key")
     config_set.add_argument("value", nargs="?")
+    config_set.add_argument("--value-json")
     config_set.add_argument("--env")
     config_set.add_argument("--stdin", action="store_true")
     config_get = config.add_parser("get")
@@ -346,15 +411,9 @@ def _parser() -> argparse.ArgumentParser:
     dataset_operation = dataset.add_parser("operation")
     dataset_operation.add_argument("dataset")
     dataset_operation.add_argument("operation")
-    universe = dataset.add_parser("universe")
-    universe_actions = universe.add_subparsers(dest="universe_action", required=True)
-    universe_set = universe_actions.add_parser("set")
-    universe_set.add_argument("dataset")
-    universe_set.add_argument("selectors", nargs="+")
-    universe_get = universe_actions.add_parser("get")
-    universe_get.add_argument("dataset")
-    universe_clear = universe_actions.add_parser("clear")
-    universe_clear.add_argument("dataset")
+    dataset_reset = dataset.add_parser("reset")
+    dataset_reset.add_argument("dataset")
+    dataset_reset.add_argument("--yes", action="store_true")
 
     task = groups.add_parser("task").add_subparsers(dest="action", required=True)
     run = task.add_parser("run")
@@ -446,12 +505,7 @@ def _completion_script(shell: str) -> str:
 
 
 def _normalize_aliases(arguments: list[str]) -> None:
-    for index in range(len(arguments) - 2):
-        if arguments[index : index + 2] != ["dataset", "universe"]:
-            continue
-        if arguments[index + 2] not in {"get", "set", "clear"}:
-            arguments.insert(index + 2, "get")
-        return
+    return
 
 
 def _validate_cli_args(args: argparse.Namespace, *, output_format: str = "human") -> None:
@@ -467,13 +521,33 @@ def _validate_cli_args(args: argparse.Namespace, *, output_format: str = "human"
         if getattr(args, "follow", False) and output_format == "json":
             raise CLIUsageError("--follow is a stream; use --format JSONL instead of JSON")
     if args.group == "config" and args.action == "set":
-        sources = sum((args.value is not None, bool(args.env), bool(args.stdin)))
+        sources = sum(
+            (
+                args.value is not None,
+                args.value_json is not None,
+                bool(args.env),
+                bool(args.stdin),
+            )
+        )
         if sources != 1:
             raise ValueError("config set requires exactly one value source")
         lowered = args.key.lower()
         secret = any(word in lowered for word in ("token", "secret", "password", "credential"))
-        if secret and args.value is not None:
+        if secret and (args.value is not None or args.value_json is not None):
             raise ValueError("secret configuration must use --stdin or --env")
+
+
+def _json_value(source: str, *, stdin: TextIO) -> object:
+    if source == "-":
+        text = stdin.read()
+    elif source.startswith("@"):
+        text = Path(source[1:]).read_text(encoding="utf-8")
+    else:
+        text = source
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"invalid configuration JSON: {exc.msg}") from exc
 
 
 def _result_record_type(args: argparse.Namespace) -> str:

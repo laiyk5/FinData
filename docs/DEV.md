@@ -6,7 +6,7 @@ This file owns contributor workflow and implementation guidance. Architecture be
 
 - Keep the user story working through small vertical slices.
 - Put policy in the component that owns it; do not duplicate schema coercion, coverage rules, or query semantics across server, CLI, and plugins.
-- Prefer declarative manifests and schemas at process and package boundaries.
+- Prefer declarative contracts and schemas at process and package boundaries.
 - Promote a dataset-private helper into the toolkit only when a second dataset needs it.
 - Preserve user data and unrelated workspace changes while developing.
 - When a failure escapes existing tests, add a regression case.
@@ -23,6 +23,18 @@ Define and document:
 6. an optional lightweight authenticated readiness probe;
 7. mock behavior for success, empties, rate limiting, and failures.
 
+Publish the provider contract through the `findata.providers` entry-point group. Core discovery
+loads and validates that contract before loading dataset entry points; it must not import the
+provider's concrete module directly. Registration tests cover duplicate IDs, malformed schemas,
+invalid limiter parameters, and datasets referring to an unregistered provider.
+
+If a provider exposes instrument-reference metadata, preserve its identifiers as opaque values,
+record how explicitly requested references are materialized and refreshed, and keep
+endpoint-capability checks separate from metadata presence. Do not implement cross-provider
+identity by transforming codes or matching names. Reference lookup belongs to provider-specific
+dataset plugins, not to core findata; do not enumerate a provider's markets unless a dataset
+contract explicitly requires it.
+
 Provider code never logs or returns credentials. Every external request, including readiness probes, goes through the shared provider limiter.
 
 ## Adding a dataset plugin
@@ -30,15 +42,48 @@ Provider code never logs or returns credentials. Every external request, includi
 Before implementation, add its canonical entry to [DATASETS.md](DATASETS.md). Then define:
 
 1. provider, logical Arrow schema, and keys;
-2. capabilities and maintenance-universe mode;
+2. capabilities and any typed plugin settings, including defaults, normalization, help, and update-readiness rules;
 3. publication window, schedule, and missing-data policy;
 4. dependencies and optional fulfillment requirement schema;
 5. operation entry points and operand JSON schemas;
-6. supported storage strategy and DataLoader metadata;
+6. declarative database mutation scope and DataLoader metadata;
 7. coverage and status behavior;
 8. mock generator and dataset-specific tests.
 
-The plugin performs provider fetch, transformation, validation, and staged writing. It does not define public DataLoader query semantics or import itself on the read path.
+The plugin performs provider fetch, transformation, and validation, then submits Arrow data through
+the core transactional writer. It never opens DuckDB, emits SQL, defines public DataLoader query
+semantics, or imports itself on the read path.
+
+Dataset settings use keys under `dataset.<dataset-name>.*`. The generic configuration service
+routes such a key and candidate JSON value to the registered owner plugin, then commits the returned
+normalized value atomically. Unknown keys or invalid values leave configuration unchanged. Core
+configuration, CLI, cron, and task code never parses a symbol, selector, provider reference, or
+other dataset-specific value. Each task receives one immutable snapshot of its plugin settings and
+their revision; the plugin alone derives parameterless `update` work and readiness from those
+settings and committed dataset state.
+Normalization must be deterministic and side-effect-free. It may read the committed data of a
+declared dependency through the public DataLoader, but must not call a provider, fulfill the
+dependency, submit a task, or import that dependency's plugin. If required validation data is not
+initialized, return an error with the ordinary dataset operation the user should run first.
+
+## Module organization and import boundaries
+
+Use the following package-level separation as the codebase grows:
+
+- core services, public contracts, the DataLoader, server, CLI, transactional storage adapter, tasks,
+  configuration, cron, and events live outside concrete provider and dataset packages;
+- built-in concrete dataset plugins live under `findata.datasets.<provider>`;
+- built-in provider transports and clients live under `findata.providers.<provider>`;
+- reusable opt-in plugin helpers live under `findata.toolkit`; and
+- provider mocks and test-only helpers live under `findata.testing` and are loaded only by an
+  explicitly selected mock adapter.
+
+Core modules must not import `findata.toolkit`, a concrete dataset package, or a concrete provider
+package. Discovery crosses that boundary through entry points and declared contracts. A dataset
+plugin may import public core contracts, its provider adapter, and selected toolkit components. A
+toolkit component may import public core contracts but never a concrete dataset or provider. Keep
+dataset-specific setting schemas, parsers, selector syntax, and orchestration inside its plugin
+package even when they use a toolkit resolver after parsing.
 
 ## Adding a toolkit component
 
@@ -50,20 +95,43 @@ Start with a private implementation in one dataset. On second use:
 4. retain provider-specific limits as parameters rather than branches on dataset names;
 5. add unit tests and integration tests for both consuming datasets.
 
-Toolkit components are opt-in plugin helpers. Core reader adapters are not toolkit components.
+Toolkit components are opt-in plugin helpers. The core DuckDB adapter is not a toolkit component.
 
 ## Storage and reader development
 
-A supported physical layout has two coordinated halves:
+Every v1 tabular dataset uses Solution B: one DuckDB file and one cross-process gate per dataset.
+Plugins cannot select a storage engine or private reader. Core owns database creation,
+metadata tables, parameterized SQL, transactions, coverage mutation, revision assignment, Arrow
+results, checkpointing, and recovery. Plugins provide only registered mutation scopes and validated
+Arrow input.
 
-- a plugin-side writer, usually supplied by the toolkit;
-- a core reader adapter selected declaratively from the manifest.
+Never keep a read/write DuckDB connection open outside the exclusive gate. DataLoader opens a
+read-only connection only after acquiring the shared gate and closes it before releasing that gate;
+batch readers retain both for their context lifetime. Provider calls and transformation occur before
+exclusive-gate acquisition so database commits remain bounded.
 
-The DataLoader owns filtering, ordering, coverage validation, locking, snapshot selection, Arrow results, and query-engine selection. A novel layout requires a reusable writer and compatible core reader adapter rather than a private dataset query engine.
+The writer accepts complete replacement and registered key/time-range replacement, not plugin SQL.
+Validate the resulting affected scope for logical primary-key uniqueness. A plugin exposes only
+deterministic, independently committable work items; a complete-table replacement is necessarily one
+indivisible item. Benchmark whether a
+persistent DuckDB primary-key index helps each data shape before introducing one; it is not a v1
+contract. Transaction batches target about one minute and explicit request-count and staged-byte
+limits, observed only between indivisible work items, so failure replay, WAL growth, memory, and
+reader blocking remain bounded without weakening replacement atomicity.
 
-The storage implementation may use whole-generation directories, content-addressed files, or another representation, but it must prove the atomic publication-snapshot and reader-lifetime guarantees in [DESIGN.md](DESIGN.md). Benchmark and garbage-collection choices are implementation gates, not competing architectural contracts.
+Use DuckDB APIs for recovery and WAL/checkpoint handling; never unlink a WAL manually. Dataset reset
+holds the task mutex after rejecting queued or active work, creates and closes a valid empty temporary
+database, acquires the exclusive gate, atomically replaces the old database on the same filesystem,
+and flushes the containing directory. v1 does not require full-copy compaction; if introduced later,
+it must be an explicit maintenance action rather than an incidental side effect of update.
 
-Detailed workspace, manifest, plugin, task-message, and HTTP schemas should be placed under `docs/specs/` when implementation begins. Specs may elaborate an architectural contract but may not override [DESIGN.md](DESIGN.md).
+Before implementation is considered complete, benchmark initial load, daily append, bounded refresh,
+common DataLoader queries, Arrow streaming, reader/writer blocking, WAL and steady disk growth,
+checkpoint latency, reset, crash recovery, and wheel installation with the pinned DuckDB version.
+
+Detailed workspace, database metadata, plugin, task-message, and HTTP schemas belong under
+`docs/specs/`. Specs may elaborate an architectural contract but may not override
+[DESIGN.md](DESIGN.md).
 
 ## Documentation workflow
 
@@ -115,6 +183,12 @@ resulting `main` commit. An urgent production fix starts from `main`, stays limi
 its regression test, and returns to `main` through review when available. Every such fix is then
 merged from the fixed `main` into `dev` immediately so later releases cannot reintroduce the defect.
 
+Passing the implementation, documentation, and verification gates makes a version release-ready;
+it does not authorize a release. A human must explicitly confirm each release before `dev` is
+merged into `main`, the final release version is assigned, or a release tag or artifact is created
+or published. In particular, an unreleased v1 remains development work until that confirmation is
+given.
+
 Do not rewrite shared `main` or `dev` history. Keep unrelated changes out of feature and fix commits,
 and do not merge while required tests or documentation updates are incomplete.
 
@@ -127,9 +201,31 @@ not embed ANSI sequences, draw their own tables, or reinterpret server lifecycle
 
 The human renderer provides reusable table, labeled-detail, status, progress, empty-state, and
 error views. It may shorten identifiers for display only when the full identifier remains available
-for copying. The progress renderer writes only to stderr, updates in place only on an interactive
-terminal, and always removes transient animation before printing a terminal summary. Rendering
+for copying. Rich owns the interactive live-progress region; command and presentation code must not
+manually compose cursor movement or erase-line sequences. The progress renderer writes only to
+stderr, uses a transient Rich display only on an interactive terminal, and stops that display before
+printing a diagnostic, detachment notice, error, or terminal summary. Redirected human output keeps
+the existing newline-delimited plain-text fallback. Rich never renders JSON or JSONL. Rendering
 failures must not change task execution or corrupt a structured result.
+
+Identifier-prefix resolution belongs to the server-side resource store, not the CLI. The CLI sends
+the operand unchanged. Under the same lock used to access retained resources, the resolver gives an
+exact match precedence, validates the minimum prefix length, and returns either one full identifier
+or a typed invalid, not-found, or ambiguous result. State-changing handlers act only after that
+atomic resolution. Task routes search handle identifiers only, so cancellation cannot target a
+shared execution record.
+
+Human value formatting uses semantic field descriptors or explicit presentation view models.
+Formatters for timestamps, durations, counts, percentages, exact decimals, and measurements must
+not mutate transport DTOs or affect JSON and JSONL serialization. Do not infer semantics from a
+generic numeric type, a substring in a field name, or the process locale.
+
+Task diagnostics use a typed semantic object with severity, stable code, message, optional context,
+and occurrence count. Persist it through the existing task-log or event path before presentation.
+The human follow renderer owns the bounded visible set, repeat aggregation, suppression counters,
+and terminal cleanup; the JSONL renderer emits all diagnostic information without applying that
+limit. Terminal failures bypass human suppression. These rules add no second diagnostic store or
+new retention policy.
 
 The JSON renderer emits one complete JSON document. The JSONL renderer emits one complete object
 per event or record, including a stable `type` discriminator. Their field schemas belong in the

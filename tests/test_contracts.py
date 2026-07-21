@@ -29,12 +29,13 @@ class DateRangeTests(unittest.TestCase):
 
 
 class DatasetContractTests(unittest.TestCase):
-    def test_registers_the_four_v1_tushare_datasets(self) -> None:
+    def test_registers_the_five_v1_tushare_datasets(self) -> None:
         self.assertEqual(
             set(TUSHARE_DATASETS),
             {
                 "tushare_trade_cal",
                 "tushare_stock_basic",
+                "tushare_index_basic",
                 "tushare_index_weight",
                 "tushare_daily_basic",
             },
@@ -70,7 +71,48 @@ class DatasetContractTests(unittest.TestCase):
         self.assertEqual(spec.partition_key, "index_code")
         self.assertEqual(spec.secondary_key, "con_code")
         self.assertEqual(spec.time_field, "effective_month")
-        self.assertEqual(spec.aliases, {"CSI300": "000300.SH"})
+        self.assertEqual(spec.aliases, {})
+
+    def test_index_basic_accepts_the_documented_output_without_symbol(self) -> None:
+        spec = TUSHARE_DATASETS["tushare_index_basic"]
+        fields = [
+            "ts_code",
+            "name",
+            "fullname",
+            "market",
+            "publisher",
+            "index_type",
+            "category",
+            "base_date",
+            "base_point",
+            "list_date",
+            "weight_rule",
+            "desc",
+            "exp_date",
+        ]
+
+        table = spec.table_from_response(
+            fields,
+            [[
+                "000300.SH",
+                "沪深300",
+                "沪深300指数",
+                "CSI",
+                "中证指数有限公司",
+                "规模",
+                "规模指数",
+                "20041231",
+                1000.0,
+                "20050408",
+                "派许加权",
+                "沪深市场代表性指数",
+                None,
+            ]],
+        )
+
+        self.assertNotIn("symbol", spec.provider_fields)
+        self.assertEqual(table.column("ts_code").to_pylist(), ["000300.SH"])
+        self.assertEqual(table.column("base_date").to_pylist(), [date(2004, 12, 31)])
 
     def test_daily_basic_schema_matches_declared_logical_contract(self) -> None:
         spec = TUSHARE_DATASETS["tushare_daily_basic"]
@@ -86,4 +128,3 @@ class DatasetContractTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

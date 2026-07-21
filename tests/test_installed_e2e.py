@@ -62,14 +62,20 @@ class InstalledQuickStartTests(unittest.TestCase):
                 provider = cli("--json", "provider", "check", "tushare")
                 self.assertEqual(provider.returncode, 0, provider.stderr)
                 self.assertEqual(json.loads(provider.stdout)["mode"], "mock")
-                universe = cli(
-                    "dataset", "universe", "set", "tushare_daily_basic", "CSI300@latest"
+                metadata = cli(
+                    "task", "run", "tushare_index_basic", "complete",
+                    "--param", "indexes=tushare:000300.SH", "--wait",
                 )
-                self.assertEqual(universe.returncode, 0, universe.stderr)
+                self.assertEqual(metadata.returncode, 0, metadata.stderr)
+                setting = cli(
+                    "config", "set", "dataset.tushare_daily_basic.update_symbols",
+                    "--value-json", '["tushare:000300.SH@latest"]',
+                )
+                self.assertEqual(setting.returncode, 0, setting.stderr)
 
                 task_arguments = (
                     "--json", "task", "run", "tushare_daily_basic", "complete",
-                    "--param", "symbols=CSI300",
+                    "--param", "symbols=tushare:000300.SH",
                     "--param", "timerange=2026-06-29:2026-07-04",
                     "--wait",
                 )

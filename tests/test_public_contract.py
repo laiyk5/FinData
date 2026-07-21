@@ -8,7 +8,7 @@ from pathlib import Path
 
 from findata.cli import main as cli_main, resolve_workspace
 from findata.contracts import OperandError
-from findata.operations import normalize_operation
+from findata.datasets.tushare.operations import normalize_operation
 from findata.storage import Workspace
 
 
