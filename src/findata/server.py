@@ -18,9 +18,10 @@ from zoneinfo import ZoneInfo
 from findata.cron import CronManager
 from findata.events import EventStore
 from findata.identifiers import AmbiguousIdentifierError, IdentifierNotFoundError
+from findata.loader import DataLoader, DatasetNotReadyError
 from findata.storage import Workspace
 from findata.plugins import discover_dataset_plugins, discover_provider_plugins, register_plugins
-from findata.taskrunner import QueueFullError, TaskNotFoundError, TaskRunner
+from findata.taskrunner import DatasetBusyError, QueueFullError, TaskNotFoundError, TaskRunner
 
 
 class ServerAlreadyRunningError(RuntimeError):
@@ -60,8 +61,7 @@ class FindataServer:
         self.workspace = initialize_workspace(self.root)
         self.providers = {item.provider_id: item for item in discover_provider_plugins()}
         self.plugins = {
-            item.name: item
-            for item in discover_dataset_plugins(providers=self.providers.values())
+            item.name: item for item in discover_dataset_plugins(providers=self.providers.values())
         }
         self.host = host
         self.port = port
@@ -165,9 +165,7 @@ class FindataServer:
             try:
                 self.cron.tick()
             except Exception as exc:
-                self.events.record(
-                    "cron_loop_error", "error", f"cron scheduler tick failed: {exc}"
-                )
+                self.events.record("cron_loop_error", "error", f"cron scheduler tick failed: {exc}")
 
     def _provider_ready(self) -> bool:
         runtime = self.providers["tushare"].runtime
@@ -181,16 +179,15 @@ class FindataServer:
 
     def _update_ready(self, dataset: str) -> bool:
         if dataset == "tushare_index_weight":
-            return bool(
-                self.workspace.get_config("dataset.tushare_index_weight.update_indexes")
-            )
+            return bool(self.workspace.get_config("dataset.tushare_index_weight.update_indexes"))
         if dataset == "tushare_daily_basic":
-            return bool(
-                self.workspace.get_config("dataset.tushare_daily_basic.update_symbols")
-            )
+            return bool(self.workspace.get_config("dataset.tushare_daily_basic.update_symbols"))
         if dataset == "tushare_index_basic":
-            manifest = self.workspace.datasets_root / dataset / "manifest.json"
-            return manifest.exists() and json.loads(manifest.read_text())["state"] == "ready"
+            try:
+                DataLoader(self.workspace.root).dataset(dataset).publication_id
+                return True
+            except DatasetNotReadyError:
+                return False
         return True
 
     def _execution_context(self, dataset: str) -> dict[str, Any]:
@@ -199,9 +196,7 @@ class FindataServer:
         return {
             "configuration_revision": snapshot["revision"],
             "settings": {
-                key: value
-                for key, value in snapshot["values"].items()
-                if key.startswith(prefix)
+                key: value for key, value in snapshot["values"].items() if key.startswith(prefix)
             },
         }
 
@@ -217,9 +212,7 @@ class FindataServer:
     def _resolve_dependency(
         self, parent: str, target: str, requirement: dict[str, object]
     ) -> tuple[str, dict[str, object]]:
-        return self._runtime_for_dataset(parent).resolve_dependency(
-            parent, target, requirement
-        )
+        return self._runtime_for_dataset(parent).resolve_dependency(parent, target, requirement)
 
     def _probe_tushare(self) -> None:
         runtime = self.providers["tushare"].runtime
@@ -314,8 +307,16 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                         status=_query_one(query, "status"),
                     )
                     if _query_one(query, "all") != "true":
-                        active = [item for item in items if item.status not in {"succeeded", "failed", "canceled"}]
-                        terminal = [item for item in items if item.status in {"succeeded", "failed", "canceled"}][:50]
+                        active = [
+                            item
+                            for item in items
+                            if item.status not in {"succeeded", "failed", "canceled"}
+                        ]
+                        terminal = [
+                            item
+                            for item in items
+                            if item.status in {"succeeded", "failed", "canceled"}
+                        ][:50]
                         items = active + terminal
                     self._send(
                         HTTPStatus.OK,
@@ -378,11 +379,17 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                         if key not in values:
                             self._send(HTTPStatus.NOT_FOUND, {"error": "config_not_found"})
                         else:
-                            self._send(HTTPStatus.OK, {"key": key, "value": _redact(key, values[key])})
+                            self._send(
+                                HTTPStatus.OK, {"key": key, "value": _redact(key, values[key])}
+                            )
                     else:
                         self._send(
                             HTTPStatus.OK,
-                            {"values": {name: _redact(name, value) for name, value in values.items()}},
+                            {
+                                "values": {
+                                    name: _redact(name, value) for name, value in values.items()
+                                }
+                            },
                         )
                     return
                 if method == "DELETE" and len(parts) == 3 and parts[:2] == ["v1", "config"]:
@@ -397,7 +404,12 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                             raise ValueError(f"unknown dataset setting {key!r}")
                     self._send(HTTPStatus.OK, {"removed": app.workspace.unset_config(parts[2])})
                     return
-                if method == "GET" and len(parts) == 4 and parts[:2] == ["v1", "providers"] and parts[3] == "check":
+                if (
+                    method == "GET"
+                    and len(parts) == 4
+                    and parts[:2] == ["v1", "providers"]
+                    and parts[3] == "check"
+                ):
                     provider_id = parts[2]
                     try:
                         provider = app.providers[provider_id]
@@ -478,6 +490,27 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                         },
                     )
                     return
+                if (
+                    method == "POST"
+                    and len(parts) == 4
+                    and parts[:2] == ["v1", "datasets"]
+                    and parts[3] == "reset"
+                ):
+                    body = self._body()
+                    if body.get("confirm") is not True:
+                        raise ValueError("dataset reset requires confirm=true")
+                    dataset = parts[2]
+                    try:
+                        plugin = app.plugins[dataset]
+                    except KeyError as exc:
+                        raise ValueError(f"unknown dataset {dataset!r}") from exc
+                    with app.taskrunner.reserve_dataset_reset(dataset):
+                        app.workspace.reset_dataset(dataset, spec=plugin.spec)
+                    self._send(
+                        HTTPStatus.OK,
+                        {"dataset": dataset, "state": "uninitialized", "reset": True},
+                    )
+                    return
                 if method == "GET" and len(parts) == 3 and parts[:2] == ["v1", "datasets"]:
                     self._send(
                         HTTPStatus.OK,
@@ -494,7 +527,9 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                         )
                         self._send(
                             HTTPStatus.OK,
-                            description if action == "status" else {"items": description["operations"]},
+                            description
+                            if action == "status"
+                            else {"items": description["operations"]},
                         )
                         return
                 if (
@@ -511,7 +546,9 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                     )
                     return
                 if method == "GET" and parts == ["v1", "cron"]:
-                    self._send(HTTPStatus.OK, {"items": [asdict(job) for job in app.cron.list_jobs()]})
+                    self._send(
+                        HTTPStatus.OK, {"items": [asdict(job) for job in app.cron.list_jobs()]}
+                    )
                     return
                 if len(parts) >= 4 and parts[:2] == ["v1", "cron"]:
                     dataset, action = parts[2], parts[3]
@@ -523,7 +560,11 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                         body = self._body()
                         self._send(
                             HTTPStatus.OK,
-                            asdict(app.cron.set_schedule(dataset, str(body["expression"]), str(body["timezone"]))),
+                            asdict(
+                                app.cron.set_schedule(
+                                    dataset, str(body["expression"]), str(body["timezone"])
+                                )
+                            ),
                         )
                     elif method == "POST" and action == "reset":
                         self._send(HTTPStatus.OK, asdict(app.cron.reset(dataset)))
@@ -552,6 +593,8 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                     return
                 self._send(HTTPStatus.NOT_FOUND, {"error": "not_found"})
             except QueueFullError as exc:
+                self._send(HTTPStatus.CONFLICT, {"error": str(exc)})
+            except DatasetBusyError as exc:
                 self._send(HTTPStatus.CONFLICT, {"error": str(exc)})
             except AmbiguousIdentifierError as exc:
                 self._send(HTTPStatus.CONFLICT, {"error": str(exc)})

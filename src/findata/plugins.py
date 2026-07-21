@@ -39,7 +39,6 @@ class DatasetPlugin:
     name: str
     provider: str
     spec: DatasetSpec
-    storage_strategy: str
     operations: tuple[str, ...]
     dependencies: tuple[str, ...] = ()
     settings: Mapping[str, SettingSpec] = field(default_factory=dict)
@@ -97,7 +96,9 @@ def discover_dataset_plugins(
         loaded = point.load()
         value = loaded() if callable(loaded) and not isinstance(loaded, DatasetPlugin) else loaded
         if not isinstance(value, DatasetPlugin):
-            raise PluginRegistrationError(f"entry point {point.name!r} did not return DatasetPlugin")
+            raise PluginRegistrationError(
+                f"entry point {point.name!r} did not return DatasetPlugin"
+            )
         discovered.append(value)
     validate_plugins(discovered, providers=providers)
     return discovered
@@ -116,8 +117,6 @@ def validate_plugins(
             raise PluginRegistrationError(f"plugin/spec name mismatch for {plugin.name!r}")
         if plugin.provider not in provider_ids:
             raise PluginRegistrationError(f"unknown provider {plugin.provider!r}")
-        if plugin.storage_strategy not in {"single-file-csv", "partitioned-parquet"}:
-            raise PluginRegistrationError(f"unknown storage strategy {plugin.storage_strategy!r}")
         if "update" not in plugin.operations:
             raise PluginRegistrationError(f"{plugin.name} must declare a parameterless update")
         by_name[plugin.name] = plugin
@@ -156,6 +155,5 @@ def register_plugins(
     for plugin in values:
         workspace.register_dataset(
             plugin.name,
-            strategy=plugin.storage_strategy,
             spec=plugin.spec,
         )

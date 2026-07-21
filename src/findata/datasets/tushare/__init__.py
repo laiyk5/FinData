@@ -237,6 +237,7 @@ TUSHARE_DATASETS: Mapping[str, DatasetSpec] = {
         partition_key="index_code",
         secondary_key="con_code",
         time_field="effective_month",
+        missing_data_policy="accept-empty",
         capabilities={"time_accumulating": True},
         normalize_rows=_normalize_index_weight,
     ),
@@ -248,6 +249,7 @@ TUSHARE_DATASETS: Mapping[str, DatasetSpec] = {
         primary_key=("ts_code", "trade_date"),
         partition_key="ts_code",
         time_field="trade_date",
+        missing_data_policy="accept-empty",
         capabilities={"symbol_set_cap": 1, "row_limit": 6000, "time_accumulating": True},
         normalize_rows=_normalize_daily_basic,
     ),
@@ -258,16 +260,11 @@ def builtin_plugins() -> list["DatasetPlugin"]:
     from findata.plugins import DatasetPlugin, SettingSpec
 
     definitions = {
-        "tushare_trade_cal": ("single-file-csv", ("update", "complete"), ()),
-        "tushare_stock_basic": ("single-file-csv", ("update",), ()),
-        "tushare_index_basic": ("single-file-csv", ("update", "complete"), ()),
-        "tushare_index_weight": (
-            "partitioned-parquet",
-            ("update", "complete"),
-            ("tushare_index_basic",),
-        ),
+        "tushare_trade_cal": (("update", "complete"), ()),
+        "tushare_stock_basic": (("update",), ()),
+        "tushare_index_basic": (("update", "complete"), ()),
+        "tushare_index_weight": (("update", "complete"), ("tushare_index_basic",)),
         "tushare_daily_basic": (
-            "partitioned-parquet",
             ("update", "complete", "refresh"),
             ("tushare_trade_cal", "tushare_index_basic", "tushare_index_weight"),
         ),
@@ -293,12 +290,11 @@ def builtin_plugins() -> list["DatasetPlugin"]:
             name=name,
             provider="tushare",
             spec=TUSHARE_DATASETS[name],
-            storage_strategy=strategy,
             operations=operations,
             dependencies=dependencies,
             settings=settings.get(name, {}),
         )
-        for name, (strategy, operations, dependencies) in definitions.items()
+        for name, (operations, dependencies) in definitions.items()
     ]
 
 

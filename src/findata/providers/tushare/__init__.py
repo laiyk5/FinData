@@ -18,9 +18,7 @@ from findata.storage import Workspace
 
 
 class TushareProviderRuntime:
-    def operation_worker(
-        self, workspace: Any, *, mode: str, today: Any, now: Any
-    ) -> Any:
+    def operation_worker(self, workspace: Any, *, mode: str, today: Any, now: Any) -> Any:
         from findata.datasets.tushare.operations import OperationWorker
 
         return OperationWorker(
@@ -153,6 +151,11 @@ class TushareClient:
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}(token=<redacted>, transport={self._transport!r})"
+
+    @property
+    def checkpoint_request_limit(self) -> int | None:
+        value = getattr(self._transport, "checkpoint_request_limit", None)
+        return value if isinstance(value, int) and value > 0 else None
 
     def query(self, dataset: str, **params: Any) -> pa.Table:
         spec = TUSHARE_DATASETS[dataset]

@@ -14,6 +14,7 @@ from urllib.request import Request, urlopen
 
 from findata import DataLoader
 from findata.cli import main as cli_main
+from findata.loader import DatasetNotReadyError
 from findata.server import FindataServer, ServerAlreadyRunningError, initialize_workspace
 
 
@@ -54,21 +55,35 @@ class ServerCLITests(unittest.TestCase):
         os.environ["TUSHARE_API_TOKEN"] = "not-used-by-mock"
         self.addCleanup(os.environ.pop, "TUSHARE_API_TOKEN", None)
 
-        self.assertEqual(self.run_cli("config", "set", "provider.tushare.token", "--env", "TUSHARE_API_TOKEN")[0], 0)
+        self.assertEqual(
+            self.run_cli("config", "set", "provider.tushare.token", "--env", "TUSHARE_API_TOKEN")[
+                0
+            ],
+            0,
+        )
         code, provider = self.run_cli("provider", "check", "tushare", "--format", "json")
         self.assertEqual(code, 0)
         self.assertTrue(json.loads(provider)["ready"])
         self.assertEqual(
             self.run_cli(
-                "--json", "task", "run", "tushare_index_basic", "complete",
-                "--param", "indexes=tushare:000300.SH", "--wait",
+                "--json",
+                "task",
+                "run",
+                "tushare_index_basic",
+                "complete",
+                "--param",
+                "indexes=tushare:000300.SH",
+                "--wait",
             )[0],
             0,
         )
         self.assertEqual(
             self.run_cli(
-                "config", "set", "dataset.tushare_daily_basic.update_symbols",
-                "--value-json", '["tushare:000300.SH@latest"]',
+                "config",
+                "set",
+                "dataset.tushare_daily_basic.update_symbols",
+                "--value-json",
+                '["tushare:000300.SH@latest"]',
             )[0],
             0,
         )
@@ -91,10 +106,14 @@ class ServerCLITests(unittest.TestCase):
         task = json.loads(output)
         self.assertEqual(task["status"], "succeeded")
         self.assertTrue(task["handle_id"])
-        data = DataLoader(self.root).dataset("tushare_daily_basic").query(
-            keys=["000001.SZ", "600000.SH", "600519.SH"],
-            time_range=("2026-06-29", "2026-07-04"),
-            require_coverage=True,
+        data = (
+            DataLoader(self.root)
+            .dataset("tushare_daily_basic")
+            .query(
+                keys=["000001.SZ", "600000.SH", "600519.SH"],
+                time_range=("2026-06-29", "2026-07-04"),
+                require_coverage=True,
+            )
         )
         self.assertGreater(data.num_rows, 0)
 
@@ -127,22 +146,27 @@ class ServerCLITests(unittest.TestCase):
         os.environ["TUSHARE_API_TOKEN"] = "not-used-by-mock"
         self.addCleanup(os.environ.pop, "TUSHARE_API_TOKEN", None)
         self.run_cli("config", "set", "provider.tushare.token", "--env", "TUSHARE_API_TOKEN")
-        config = json.loads(
-            self.run_cli("--json", "config", "get", "provider.tushare.token")[1]
-        )
+        config = json.loads(self.run_cli("--json", "config", "get", "provider.tushare.token")[1])
         self.assertEqual(config["value"], "<redacted>")
 
         self.run_cli(
-            "--json", "task", "run", "tushare_index_basic", "complete",
-            "--param", "indexes=tushare:000300.SH", "--wait",
+            "--json",
+            "task",
+            "run",
+            "tushare_index_basic",
+            "complete",
+            "--param",
+            "indexes=tushare:000300.SH",
+            "--wait",
         )
         self.run_cli(
-            "config", "set", "dataset.tushare_daily_basic.update_symbols",
-            "--value-json", '["tushare:000300.SH@latest"]',
+            "config",
+            "set",
+            "dataset.tushare_daily_basic.update_symbols",
+            "--value-json",
+            '["tushare:000300.SH@latest"]',
         )
-        enabled = json.loads(
-            self.run_cli("--json", "cron", "enable", "tushare_daily_basic")[1]
-        )
+        enabled = json.loads(self.run_cli("--json", "cron", "enable", "tushare_daily_basic")[1])
         self.assertTrue(enabled["enabled"])
         self.server.cron.tick(datetime.fromisoformat(enabled["next_run"]))
         tasks = self.request("GET", "/v1/tasks")["items"]
@@ -167,9 +191,7 @@ class ServerCLITests(unittest.TestCase):
             {"update", "complete", "refresh"},
         )
         operation = json.loads(
-            self.run_cli(
-                "--json", "dataset", "operation", "tushare_daily_basic", "complete"
-            )[1]
+            self.run_cli("--json", "dataset", "operation", "tushare_daily_basic", "complete")[1]
         )
         self.assertEqual(operation["required"], ["symbols", "timerange"])
         providers = json.loads(self.run_cli("--json", "provider", "ls")[1])
@@ -191,21 +213,23 @@ class ServerCLITests(unittest.TestCase):
     def test_structured_params_and_typed_config_cli_forms(self) -> None:
         configured = json.loads(
             self.run_cli(
-                "--json", "config", "set", "dataset.tushare_daily_basic.update_symbols",
-                "--value-json", '["000001.SZ"]',
+                "--json",
+                "config",
+                "set",
+                "dataset.tushare_daily_basic.update_symbols",
+                "--value-json",
+                '["000001.SZ"]',
             )[1]
         )
         self.assertEqual(configured["value"], ["000001.SZ"])
         direct = json.loads(
-            self.run_cli(
-                "--json", "config", "get", "dataset.tushare_daily_basic.update_symbols"
-            )[1]
+            self.run_cli("--json", "config", "get", "dataset.tushare_daily_basic.update_symbols")[1]
         )
         self.assertEqual(direct["value"], ["000001.SZ"])
         cleared = json.loads(
-            self.run_cli(
-                "--json", "config", "unset", "dataset.tushare_daily_basic.update_symbols"
-            )[1]
+            self.run_cli("--json", "config", "unset", "dataset.tushare_daily_basic.update_symbols")[
+                1
+            ]
         )
         self.assertTrue(cleared["removed"])
         code, output = self.run_cli(
@@ -253,7 +277,10 @@ class ServerCLITests(unittest.TestCase):
         self.server.start_background()
         self.assertEqual(
             self.run_cli(
-                "config", "set", "provider.tushare.token", "--stdin",
+                "config",
+                "set",
+                "provider.tushare.token",
+                "--stdin",
                 stdin_text="findata-mock:fail=daily_basic@2\n",
             )[0],
             0,
@@ -263,18 +290,32 @@ class ServerCLITests(unittest.TestCase):
         self.assertTrue(provider["ready"])
         self.assertEqual(provider["mode"], "mock")
         self.run_cli(
-            "--json", "task", "run", "tushare_index_basic", "complete",
-            "--param", "indexes=tushare:000300.SH", "--wait",
+            "--json",
+            "task",
+            "run",
+            "tushare_index_basic",
+            "complete",
+            "--param",
+            "indexes=tushare:000300.SH",
+            "--wait",
         )
         self.run_cli(
-            "config", "set", "dataset.tushare_daily_basic.update_symbols",
-            "--value-json", '["tushare:000300.SH@latest"]',
+            "config",
+            "set",
+            "dataset.tushare_daily_basic.update_symbols",
+            "--value-json",
+            '["tushare:000300.SH@latest"]',
         )
         code, failed = self.run_cli(
             "--json",
-            "task", "run", "tushare_daily_basic", "complete",
-            "--param", "symbols=tushare:000300.SH",
-            "--param", "timerange=2026-06-29:2026-07-04",
+            "task",
+            "run",
+            "tushare_daily_basic",
+            "complete",
+            "--param",
+            "symbols=tushare:000300.SH",
+            "--param",
+            "timerange=2026-06-29:2026-07-04",
             "--wait",
         )
         self.assertEqual(code, 1)
@@ -290,20 +331,46 @@ class ServerCLITests(unittest.TestCase):
 
         self.assertEqual(
             self.run_cli(
-                "config", "set", "provider.tushare.token", "--stdin",
+                "config",
+                "set",
+                "provider.tushare.token",
+                "--stdin",
                 stdin_text="findata-mock\n",
             )[0],
             0,
         )
         code, resumed = self.run_cli(
             "--json",
-            "task", "run", "tushare_daily_basic", "complete",
-            "--param", "symbols=tushare:000300.SH",
-            "--param", "timerange=2026-06-29:2026-07-04",
+            "task",
+            "run",
+            "tushare_daily_basic",
+            "complete",
+            "--param",
+            "symbols=tushare:000300.SH",
+            "--param",
+            "timerange=2026-06-29:2026-07-04",
             "--wait",
         )
         self.assertEqual(code, 0, resumed)
         self.assertEqual(json.loads(resumed)["result"]["fetched_requests"], 2)
+
+    def test_dataset_reset_requires_confirmation_and_reinitializes_only_that_dataset(self) -> None:
+        code, completed = self.run_cli(
+            "--json", "task", "run", "tushare_stock_basic", "update", "--wait"
+        )
+        self.assertEqual(code, 0, completed)
+        self.assertGreater(DataLoader(self.root).dataset("tushare_stock_basic").query().num_rows, 0)
+
+        code, reset = self.run_cli("--json", "dataset", "reset", "tushare_stock_basic", "--yes")
+
+        self.assertEqual(code, 0, reset)
+        self.assertEqual(json.loads(reset)["state"], "uninitialized")
+        with self.assertRaisesRegex(DatasetNotReadyError, "no committed revision"):
+            DataLoader(self.root).dataset("tushare_stock_basic").query()
+        self.assertEqual(
+            self.request("GET", "/v1/datasets/tushare_index_basic")["state"],
+            "uninitialized",
+        )
 
     def test_removed_universe_route_and_setting_validation(self) -> None:
         with self.assertRaises(HTTPError) as caught:

@@ -15,7 +15,9 @@ _MOCK_FAILURE = re.compile(r"^findata-mock:fail=([a-z_]+)@(\d+)$")
 
 
 def is_mock_token(value: object) -> bool:
-    return isinstance(value, str) and (value == MOCK_TOKEN or _MOCK_FAILURE.fullmatch(value) is not None)
+    return isinstance(value, str) and (
+        value == MOCK_TOKEN or _MOCK_FAILURE.fullmatch(value) is not None
+    )
 
 
 def transport_from_mock_token(value: str, *, today: date) -> MockTushareTransport:
@@ -42,6 +44,7 @@ class MockTushareTransport:
         self._api_call_errors: dict[tuple[str, int], tuple[int, str]] = {}
         self._api_calls: dict[str, int] = {}
         self._empty_apis: set[str] = set()
+        self.checkpoint_request_limit: int | None = None
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}(today={self.today.isoformat()!r})"
@@ -56,11 +59,13 @@ class MockTushareTransport:
         if number <= 0:
             raise ValueError("call number must be positive")
         self._call_errors[number] = (code, message)
+        self.checkpoint_request_limit = 1
 
     def fail_on_api_call(self, api_name: str, number: int, *, code: int, message: str) -> None:
         if number <= 0:
             raise ValueError("call number must be positive")
         self._api_call_errors[(api_name, number)] = (code, message)
+        self.checkpoint_request_limit = 1
 
     def empty_next(self, api_name: str) -> None:
         self._empty_apis.add(api_name)
@@ -135,7 +140,9 @@ class MockTushareTransport:
             _stock_row("600000.SH", "600000", "浦发银行", "SSE", "主板", "L", "19991110"),
             _stock_row("000001.SZ", "000001", "平安银行", "SZSE", "主板", "L", "19910403"),
             _stock_row("430047.BJ", "430047", "诺思兰德", "BSE", "北交所", "L", "20201124"),
-            _stock_row("600001.SH", "600001", "示例退市", "SSE", "主板", "D", "19910101", "20200101"),
+            _stock_row(
+                "600001.SH", "600001", "示例退市", "SSE", "主板", "D", "19910101", "20200101"
+            ),
             _stock_row("920000.BJ", "920000", "示例待交易", "BSE", "北交所", "G", None),
         ]
         return [
@@ -208,7 +215,9 @@ class MockTushareTransport:
                         "trade_date": _format_date(cursor),
                         "limit_status": seed % 7,
                     }
-                    for index, field in enumerate(TUSHARE_DATASETS["tushare_daily_basic"].provider_fields[2:-1]):
+                    for index, field in enumerate(
+                        TUSHARE_DATASETS["tushare_daily_basic"].provider_fields[2:-1]
+                    ):
                         row[field] = round((seed % 1000 + index + 1) / 10.0, 4)
                     result.append(row)
             cursor += timedelta(days=1)

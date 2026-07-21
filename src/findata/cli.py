@@ -76,7 +76,11 @@ def main(
         )
         output.finish_diagnostics(handle)
         output.result(result, record_type=_result_record_type(args))
-        return 0 if not (isinstance(result, dict) and result.get("status") in {"failed", "canceled"}) else 1
+        return (
+            0
+            if not (isinstance(result, dict) and result.get("status") in {"failed", "canceled"})
+            else 1
+        )
     except TaskDetached as exc:
         output.detached(exc.handle)
         return 130
@@ -114,9 +118,7 @@ def _execute(
         elif args.value is not None:
             value = args.value
         else:
-            raise ValueError(
-                "config set requires a value, --value-json, --env, or --stdin"
-            )
+            raise ValueError("config set requires a value, --value-json, --env, or --stdin")
         return client.request("POST", "/v1/config", {"key": args.key, "value": value})
     if args.group == "config" and args.action in {"get", "ls"}:
         suffix = f"?{urlencode({'key': args.key})}" if getattr(args, "key", None) else ""
@@ -135,13 +137,24 @@ def _execute(
         if args.action == "status" and args.all:
             return client.request("GET", "/v1/datasets")
         suffix = "status" if args.action == "status" else ""
-        return client.request("GET", f"/v1/datasets/{args.dataset}{('/' + suffix) if suffix else ''}")
+        return client.request(
+            "GET", f"/v1/datasets/{args.dataset}{('/' + suffix) if suffix else ''}"
+        )
     if args.group == "dataset" and args.action == "operations":
         return client.request("GET", f"/v1/datasets/{args.dataset}/operations")
     if args.group == "dataset" and args.action == "operation":
-        return client.request(
-            "GET", f"/v1/datasets/{args.dataset}/operations/{args.operation}"
-        )
+        return client.request("GET", f"/v1/datasets/{args.dataset}/operations/{args.operation}")
+    if args.group == "dataset" and args.action == "reset":
+        if not args.yes:
+            if output.output_format != "human" or not getattr(stdin, "isatty", lambda: False)():
+                raise CLIUsageError("dataset reset requires --yes in non-interactive use")
+            output.stderr.write(
+                f"Reset dataset {args.dataset!r} and delete its committed data? [y/N] "
+            )
+            output.stderr.flush()
+            if stdin.readline().strip().lower() not in {"y", "yes"}:
+                raise CLIUsageError("dataset reset canceled")
+        return client.request("POST", f"/v1/datasets/{args.dataset}/reset", {"confirm": True})
     if args.group == "task" and args.action == "run":
         operands = _params(args.param, args.params, stdin=stdin)
         submitted = client.request(
@@ -169,7 +182,11 @@ def _execute(
         except KeyboardInterrupt as exc:
             raise TaskDetached(handle) from exc
     if args.group == "task" and args.action == "ls":
-        query = {key: value for key, value in {"dataset": args.dataset, "status": args.status}.items() if value}
+        query = {
+            key: value
+            for key, value in {"dataset": args.dataset, "status": args.status}.items()
+            if value
+        }
         if args.all:
             query["all"] = "true"
         suffix = f"?{urlencode(query)}" if query else ""
@@ -394,6 +411,9 @@ def _parser() -> argparse.ArgumentParser:
     dataset_operation = dataset.add_parser("operation")
     dataset_operation.add_argument("dataset")
     dataset_operation.add_argument("operation")
+    dataset_reset = dataset.add_parser("reset")
+    dataset_reset.add_argument("dataset")
+    dataset_reset.add_argument("--yes", action="store_true")
 
     task = groups.add_parser("task").add_subparsers(dest="action", required=True)
     run = task.add_parser("run")

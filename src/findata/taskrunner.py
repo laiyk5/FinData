@@ -12,7 +12,8 @@ import threading
 import time
 import traceback
 import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from multiprocessing.connection import Client, Connection, Listener
 from pathlib import Path
@@ -27,6 +28,10 @@ COALESCING_OPERATIONS = {"complete", "refresh"}
 
 
 class TaskRunnerError(RuntimeError):
+    pass
+
+
+class DatasetBusyError(TaskRunnerError):
     pass
 
 
@@ -57,9 +62,7 @@ class HandleRecord:
     progress: dict[str, int | float] | None = None
     reason: str | None = None
     stage: str | None = None
-    diagnostic_counts: dict[str, int] = field(
-        default_factory=lambda: {"warning": 0, "error": 0}
-    )
+    diagnostic_counts: dict[str, int] = field(default_factory=lambda: {"warning": 0, "error": 0})
 
 
 @dataclass(slots=True)
@@ -85,9 +88,7 @@ class ExecutionRecord:
     trigger_depth: int = 0
     reason: str | None = None
     stage: str | None = None
-    diagnostic_counts: dict[str, int] = field(
-        default_factory=lambda: {"warning": 0, "error": 0}
-    )
+    diagnostic_counts: dict[str, int] = field(default_factory=lambda: {"warning": 0, "error": 0})
 
 
 @dataclass(frozen=True, slots=True)
@@ -250,6 +251,7 @@ class TaskRunner:
         self._executions: dict[str, ExecutionRecord] = {}
         self._runtime: dict[str, _Runtime] = {}
         self._dataset_running: set[str] = set()
+        self._dataset_resetting: set[str] = set()
         self._launching: set[str] = set()
         self._monitor_threads: set[threading.Thread] = set()
         self._stop = threading.Event()
@@ -305,13 +307,16 @@ class TaskRunner:
         key = _coalescing_key(dataset, operation, normalized)
         now = time.time()
         with self._condition:
+            if dataset in self._dataset_resetting:
+                raise DatasetBusyError(f"dataset {dataset!r} is being reset")
             execution = None
             if key is not None:
                 execution = next(
                     (
                         item
                         for item in self._executions.values()
-                        if item.coalescing_key == key and item.status in {"queued", "running", "waiting"}
+                        if item.coalescing_key == key
+                        and item.status in {"queued", "running", "waiting"}
                     ),
                     None,
                 )
@@ -377,6 +382,24 @@ class TaskRunner:
             self._persist_handle(handle)
             self._condition.notify_all()
             return handle_id
+
+    @contextmanager
+    def reserve_dataset_reset(self, dataset: str) -> Iterator[None]:
+        self._ensure_started()
+        with self._condition:
+            active = any(
+                item.dataset == dataset and item.status in ACTIVE_STATES
+                for item in self._executions.values()
+            )
+            if active or dataset in self._dataset_resetting:
+                raise DatasetBusyError(f"dataset {dataset!r} has queued or active work")
+            self._dataset_resetting.add(dataset)
+        try:
+            yield
+        finally:
+            with self._condition:
+                self._dataset_resetting.discard(dataset)
+                self._condition.notify_all()
 
     def status(self, handle_id: str) -> HandleRecord:
         with self._condition:
@@ -567,7 +590,9 @@ class TaskRunner:
             return
         with self._condition:
             handles = [
-                item.handle_id for item in self._handles.values() if item.status not in TERMINAL_STATES
+                item.handle_id
+                for item in self._handles.values()
+                if item.status not in TERMINAL_STATES
             ]
         for handle_id in handles:
             try:
@@ -645,9 +670,7 @@ class TaskRunner:
                         runtime.liveness_warned = True
                         execution = self._executions.get(execution_id)
                         if execution is not None:
-                            expired.append(
-                                (execution_id, execution.dataset, execution.operation)
-                            )
+                            expired.append((execution_id, execution.dataset, execution.operation))
             for execution_id, dataset, operation in expired:
                 self._event(
                     "liveness_timeout",
@@ -714,7 +737,9 @@ class TaskRunner:
             try:
                 connection = listener.accept()
             except (socket.timeout, TimeoutError) as exc:
-                raise TaskRunnerError("task process did not establish its authenticated channel") from exc
+                raise TaskRunnerError(
+                    "task process did not establish its authenticated channel"
+                ) from exc
             runtime.connection = connection
             with self._condition:
                 execution = self._executions[execution_id]
@@ -1127,7 +1152,9 @@ class TaskRunner:
             execution = self._executions.get(handle.execution_id)
             if execution is None:
                 continue
-            execution.handle_ids = [item for item in execution.handle_ids if item != handle.handle_id]
+            execution.handle_ids = [
+                item for item in execution.handle_ids if item != handle.handle_id
+            ]
             if execution.handle_ids:
                 self._persist_execution(execution)
                 continue
@@ -1193,7 +1220,9 @@ def _canonical_value(value: Any) -> Any:
     if isinstance(value, (list, tuple)):
         normalized = [_canonical_value(item) for item in value]
         if all(isinstance(item, (str, int, float, bool, type(None))) for item in normalized):
-            return sorted(dict.fromkeys(normalized), key=lambda item: (type(item).__name__, repr(item)))
+            return sorted(
+                dict.fromkeys(normalized), key=lambda item: (type(item).__name__, repr(item))
+            )
         return normalized
     return value
 

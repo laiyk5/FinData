@@ -6,18 +6,18 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+import duckdb
 import pyarrow as pa
-import pyarrow.compute as pc
-import pyarrow.csv as pacsv
-import pyarrow.dataset as pads
-import pyarrow.parquet as pq
 
 from findata.storage import (
     COVERAGE_SCHEMA,
-    MANIFEST_VERSION,
+    DATA_LAYOUT_VERSION,
+    DATABASE_NAME,
+    DUCKDB_STORAGE_VERSION,
+    STORAGE_ADAPTER_VERSION,
     DatasetGate,
-    decode_manifest_schema,
-    load_manifest,
+    decode_schema,
+    read_metadata,
 )
 
 
@@ -68,8 +68,12 @@ class DatasetReader:
     @property
     def publication_id(self) -> str:
         with DatasetGate(self.dataset_root / "gate.lock", exclusive=False):
-            manifest = self._ready_manifest()
-            return str(manifest["publication_id"])
+            connection = self._connect()
+            try:
+                metadata = self._ready_metadata(connection)
+                return str(metadata["publication_id"])
+            finally:
+                connection.close()
 
     def query(
         self,
@@ -83,17 +87,22 @@ class DatasetReader:
         require_coverage: bool = False,
     ) -> pa.Table:
         with DatasetGate(self.dataset_root / "gate.lock", exclusive=False):
-            manifest = self._ready_manifest()
-            return self._query_locked(
-                manifest,
-                keys=keys,
-                time_range=time_range,
-                columns=columns,
-                filters=filters,
-                order_by=order_by,
-                limit=limit,
-                require_coverage=require_coverage,
-            )
+            connection = self._connect()
+            try:
+                metadata = self._ready_metadata(connection)
+                return self._query_locked(
+                    connection,
+                    metadata,
+                    keys=keys,
+                    time_range=time_range,
+                    columns=columns,
+                    filters=filters,
+                    order_by=order_by,
+                    limit=limit,
+                    require_coverage=require_coverage,
+                )
+            finally:
+                connection.close()
 
     def iter_batches(self, *, batch_size: int = 65_536, **query: Any) -> BatchReader:
         if batch_size <= 0:
@@ -102,35 +111,47 @@ class DatasetReader:
 
     def coverage(self, keys: Sequence[str] | None = None) -> pa.Table:
         with DatasetGate(self.dataset_root / "gate.lock", exclusive=False):
-            manifest = self._ready_manifest()
-            table = self._read_coverage(manifest)
-            if keys is not None:
-                table = table.filter(
-                    pc.is_in(table["key"], value_set=pa.array(list(keys), type=pa.string()))
-                )
-            return table
+            connection = self._connect()
+            try:
+                metadata = self._ready_metadata(connection)
+                return self._read_coverage(connection, metadata, keys=keys)
+            finally:
+                connection.close()
 
-    def _ready_manifest(self) -> dict[str, Any]:
+    def _connect(self) -> duckdb.DuckDBPyConnection:
+        database = self.dataset_root / DATABASE_NAME
         try:
-            manifest = load_manifest(self.dataset_root)
+            return duckdb.connect(str(database), read_only=True)
+        except duckdb.Error as exc:
+            raise DataLoaderError(f"cannot load dataset {self.name!r}") from exc
+
+    def _ready_metadata(self, connection: duckdb.DuckDBPyConnection) -> dict[str, Any]:
+        try:
+            metadata = read_metadata(connection)
         except Exception as exc:
             raise DataLoaderError(f"cannot load dataset {self.name!r}") from exc
-        if manifest.get("manifest_version") != MANIFEST_VERSION:
+        versions = (
+            ("storage adapter", metadata.get("storage_adapter_version"), STORAGE_ADAPTER_VERSION),
+            ("DuckDB storage", metadata.get("duckdb_storage_version"), DUCKDB_STORAGE_VERSION),
+            ("data layout", metadata.get("data_layout_version"), DATA_LAYOUT_VERSION),
+        )
+        for label, actual, expected in versions:
+            if actual != expected:
+                raise IncompatibleDatasetError(
+                    f"dataset {self.name!r} uses {label} version {actual!r}; expected {expected!r}"
+                )
+        if metadata.get("dataset") != self.name:
             raise IncompatibleDatasetError(
-                f"dataset {self.name!r} uses manifest version {manifest.get('manifest_version')!r}"
+                f"dataset database identifies itself as {metadata.get('dataset')!r}"
             )
-        if manifest.get("data_layout_version") != 1:
-            raise IncompatibleDatasetError(
-                f"dataset {self.name!r} uses data layout version "
-                f"{manifest.get('data_layout_version')!r}"
-            )
-        if manifest.get("state") != "ready" or not manifest.get("publication_id"):
-            raise DatasetNotReadyError(f"dataset {self.name!r} has no published snapshot")
-        return manifest
+        if metadata.get("state") != "ready" or not metadata.get("publication_id"):
+            raise DatasetNotReadyError(f"dataset {self.name!r} has no committed revision")
+        return metadata
 
     def _query_locked(
         self,
-        manifest: Mapping[str, Any],
+        connection: duckdb.DuckDBPyConnection,
+        metadata: Mapping[str, Any],
         *,
         keys: Sequence[str] | None,
         time_range: tuple[str | date, str | date] | None,
@@ -140,155 +161,139 @@ class DatasetReader:
         limit: int | None,
         require_coverage: bool,
     ) -> pa.Table:
-        schema = decode_manifest_schema(manifest)
-        normalized_range = _normalize_time_range(time_range)
-        if require_coverage:
-            self._enforce_coverage(manifest, keys=keys, time_range=normalized_range)
-        table = self._read_table(manifest, schema)
-        partition_key = manifest.get("partition_key")
-        time_field = manifest.get("time_field")
-        if keys is not None:
-            if not partition_key:
-                raise QueryError(f"dataset {self.name!r} has no partition key")
-            table = table.filter(
-                pc.is_in(
-                    table[str(partition_key)],
-                    value_set=pa.array(list(keys), type=table.schema.field(str(partition_key)).type),
-                )
-            )
-        if normalized_range is not None:
-            if not time_field:
-                raise QueryError(f"dataset {self.name!r} has no time field")
-            start, end = normalized_range
-            field = table[str(time_field)]
-            table = table.filter(
-                pc.and_(
-                    pc.greater_equal(field, pa.scalar(start, type=field.type)),
-                    pc.less(field, pa.scalar(end, type=field.type)),
-                )
-            )
-        for column, operator, value in filters or ():
-            if column not in table.schema.names:
-                raise QueryError(f"unknown filter column {column!r}")
-            table = table.filter(_filter_mask(table[column], operator, value))
-        if order_by:
-            sort_keys: list[tuple[str, str]] = []
-            for item in order_by:
-                column, direction = (item, "ascending") if isinstance(item, str) else item
-                if column not in table.schema.names:
-                    raise QueryError(f"unknown order column {column!r}")
-                normalized_direction = {"asc": "ascending", "desc": "descending"}.get(
-                    direction, direction
-                )
-                if normalized_direction not in {"ascending", "descending"}:
-                    raise QueryError(f"invalid order direction {direction!r}")
-                sort_keys.append((column, normalized_direction))
-            table = table.sort_by(sort_keys)
-        if limit is not None:
-            if not isinstance(limit, int) or limit < 0:
-                raise QueryError("limit must be a nonnegative integer")
-            table = table.slice(0, limit)
-        if columns is not None:
-            unknown = [column for column in columns if column not in table.schema.names]
-            if unknown:
-                raise QueryError(f"unknown projection columns {unknown!r}")
-            table = table.select(list(columns))
-        return table.combine_chunks()
+        sql, parameters = self._compile_query(
+            connection,
+            metadata,
+            keys=keys,
+            time_range=time_range,
+            columns=columns,
+            filters=filters,
+            order_by=order_by,
+            limit=limit,
+            require_coverage=require_coverage,
+        )
+        try:
+            return connection.execute(sql, parameters).to_arrow_table().combine_chunks()
+        except duckdb.Error as exc:
+            raise QueryError(f"dataset query failed: {exc}") from exc
 
-    def _read_table(self, manifest: Mapping[str, Any], schema: pa.Schema) -> pa.Table:
-        snapshot = self.dataset_root / "snapshots" / str(manifest["publication_id"])
-        strategy = manifest.get("strategy")
-        if strategy == "single-file-csv":
-            return pacsv.read_csv(
-                snapshot / "data.csv",
-                convert_options=pacsv.ConvertOptions(column_types=schema),
-            )
-        if strategy == "partitioned-parquet":
-            files = sorted(snapshot.glob("*/*.parquet"))
-            if not files:
-                return pa.Table.from_pylist([], schema=schema)
-            return pads.dataset(files, schema=schema, format="parquet").to_table()
-        raise IncompatibleDatasetError(f"unsupported reader strategy {strategy!r}")
-
-    def _stream_batches_locked(
+    def _compile_query(
         self,
-        manifest: Mapping[str, Any],
+        connection: duckdb.DuckDBPyConnection,
+        metadata: Mapping[str, Any],
         *,
-        batch_size: int,
         keys: Sequence[str] | None,
         time_range: tuple[str | date, str | date] | None,
         columns: Sequence[str] | None,
         filters: Sequence[tuple[str, str, Any]] | None,
+        order_by: Sequence[str | tuple[str, str]] | None,
+        limit: int | None,
         require_coverage: bool,
-    ) -> Iterator[pa.RecordBatch]:
-        schema = decode_manifest_schema(manifest)
+    ) -> tuple[str, list[Any]]:
+        schema = decode_schema(str(metadata["schema"]))
+        known = set(schema.names)
         normalized_range = _normalize_time_range(time_range)
         if require_coverage:
-            self._enforce_coverage(manifest, keys=keys, time_range=normalized_range)
-        if columns is not None:
-            unknown = [column for column in columns if column not in schema.names]
-            if unknown:
-                raise QueryError(f"unknown projection columns {unknown!r}")
-        expression: pads.Expression | None = None
-        partition_key = manifest.get("partition_key")
-        time_field = manifest.get("time_field")
+            self._enforce_coverage(
+                connection,
+                metadata,
+                keys=keys,
+                time_range=normalized_range,
+            )
+        selected = list(columns) if columns is not None else list(schema.names)
+        unknown = [column for column in selected if column not in known]
+        if unknown:
+            raise QueryError(f"unknown projection columns {unknown!r}")
+        clauses: list[str] = []
+        parameters: list[Any] = []
+        partition_key = metadata.get("partition_key")
+        time_field = metadata.get("time_field")
         if keys is not None:
             if not partition_key:
                 raise QueryError(f"dataset {self.name!r} has no partition key")
-            expression = pads.field(str(partition_key)).isin(list(keys))
+            values = list(keys)
+            clauses.append(_in_clause(_quote_identifier(str(partition_key)), values, negate=False))
+            parameters.extend(values)
         if normalized_range is not None:
             if not time_field:
                 raise QueryError(f"dataset {self.name!r} has no time field")
             start, end = normalized_range
-            range_expression = (pads.field(str(time_field)) >= start) & (
-                pads.field(str(time_field)) < end
-            )
-            expression = range_expression if expression is None else expression & range_expression
+            field = _quote_identifier(str(time_field))
+            clauses.append(f"{field} >= ? and {field} < ?")
+            parameters.extend([start, end])
         for column, operator, value in filters or ():
-            if column not in schema.names:
+            if column not in known:
                 raise QueryError(f"unknown filter column {column!r}")
-            item = _dataset_filter(pads.field(column), operator, value)
-            expression = item if expression is None else expression & item
-
-        snapshot = self.dataset_root / "snapshots" / str(manifest["publication_id"])
-        strategy = manifest.get("strategy")
-        if strategy == "single-file-csv":
-            source = pads.dataset(snapshot / "data.csv", schema=schema, format="csv")
-        elif strategy == "partitioned-parquet":
-            files = sorted(snapshot.glob("*/*.parquet"))
-            if not files:
-                empty_schema = schema if columns is None else pa.schema(
-                    [schema.field(column) for column in columns]
+            field = _quote_identifier(column)
+            if operator in {"=", "!=", "<", "<=", ">", ">="}:
+                clauses.append(f"{field} {operator} ?")
+                parameters.append(value)
+            elif operator in {"in", "not in"}:
+                if isinstance(value, (str, bytes)) or not isinstance(value, Iterable):
+                    raise QueryError(f"operator {operator!r} requires a value collection")
+                values = list(value)
+                clauses.append(_in_clause(field, values, negate=operator == "not in"))
+                parameters.extend(values)
+            else:
+                raise QueryError(f"unsupported filter operator {operator!r}")
+        sql = "select " + ", ".join(_quote_identifier(column) for column in selected) + " from data"
+        if clauses:
+            sql += " where " + " and ".join(f"({clause})" for clause in clauses)
+        if order_by:
+            terms: list[str] = []
+            for item in order_by:
+                column, direction = (item, "ascending") if isinstance(item, str) else item
+                if column not in known:
+                    raise QueryError(f"unknown order column {column!r}")
+                normalized = {"asc": "ascending", "desc": "descending"}.get(direction, direction)
+                if normalized not in {"ascending", "descending"}:
+                    raise QueryError(f"invalid order direction {direction!r}")
+                terms.append(
+                    f"{_quote_identifier(column)} {'asc' if normalized == 'ascending' else 'desc'}"
                 )
-                return iter(pa.RecordBatchReader.from_batches(empty_schema, []))
-            source = pads.dataset(files, schema=schema, format="parquet")
-        else:
-            raise IncompatibleDatasetError(f"unsupported reader strategy {strategy!r}")
-        scanner = source.scanner(
-            columns=list(columns) if columns is not None else None,
-            filter=expression,
-            batch_size=batch_size,
-        )
-        return iter(scanner.to_batches())
+            sql += " order by " + ", ".join(terms)
+        if limit is not None:
+            if not isinstance(limit, int) or isinstance(limit, bool) or limit < 0:
+                raise QueryError("limit must be a nonnegative integer")
+            sql += " limit ?"
+            parameters.append(limit)
+        return sql, parameters
 
-    def _read_coverage(self, manifest: Mapping[str, Any]) -> pa.Table:
-        if not manifest.get("coverage"):
+    def _read_coverage(
+        self,
+        connection: duckdb.DuckDBPyConnection,
+        metadata: Mapping[str, Any],
+        *,
+        keys: Sequence[str] | None = None,
+    ) -> pa.Table:
+        if not metadata.get("time_field"):
             raise UnsupportedCoverageError(f"dataset {self.name!r} has no coverage record")
-        snapshot = self.dataset_root / "snapshots" / str(manifest["publication_id"])
-        return pq.read_table(snapshot / "coverage.parquet", schema=COVERAGE_SCHEMA)
+        sql = 'select key, start, "end" from _findata_coverage'
+        parameters: list[Any] = []
+        if keys is not None:
+            values = list(keys)
+            sql += " where " + _in_clause("key", values, negate=False)
+            parameters.extend(values)
+        sql += " order by key"
+        table = connection.execute(sql, parameters).to_arrow_table()
+        return table.cast(COVERAGE_SCHEMA).combine_chunks()
 
     def _enforce_coverage(
         self,
-        manifest: Mapping[str, Any],
+        connection: duckdb.DuckDBPyConnection,
+        metadata: Mapping[str, Any],
         *,
         keys: Sequence[str] | None,
         time_range: tuple[date, date] | None,
     ) -> None:
-        if not manifest.get("coverage"):
+        if not metadata.get("time_field"):
             raise UnsupportedCoverageError(f"dataset {self.name!r} has no coverage record")
         if keys is None or time_range is None:
             raise QueryError("require_coverage needs explicit keys and time_range")
-        coverage = {row["key"]: (row["start"], row["end"]) for row in self._read_coverage(manifest).to_pylist()}
+        coverage = {
+            row["key"]: (row["start"], row["end"])
+            for row in self._read_coverage(connection, metadata, keys=keys).to_pylist()
+        }
         request_start, request_end = time_range
         missing: dict[str, list[tuple[date, date]]] = {}
         for key in keys:
@@ -310,72 +315,53 @@ class DatasetReader:
 
 
 class BatchReader(AbstractContextManager["BatchReader"]):
-    def __init__(self, dataset: DatasetReader, *, batch_size: int, query: Mapping[str, Any]) -> None:
+    def __init__(
+        self, dataset: DatasetReader, *, batch_size: int, query: Mapping[str, Any]
+    ) -> None:
         self.dataset = dataset
         self.batch_size = batch_size
         self.query = dict(query)
         self.publication_id: str | None = None
         self._gate: DatasetGate | None = None
-        self._batches: Iterator[pa.RecordBatch] | None = None
-        self._limit: int | None = None
+        self._connection: duckdb.DuckDBPyConnection | None = None
+        self._reader: pa.RecordBatchReader | None = None
 
     def __enter__(self) -> BatchReader:
         self._gate = DatasetGate(self.dataset.dataset_root / "gate.lock", exclusive=False)
         self._gate.__enter__()
         try:
-            manifest = self.dataset._ready_manifest()
-            self.publication_id = str(manifest["publication_id"])
-            order_by = self.query.get("order_by")
-            if order_by:
-                table = self.dataset._query_locked(
-                    manifest,
-                    keys=self.query.get("keys"),
-                    time_range=self.query.get("time_range"),
-                    columns=self.query.get("columns"),
-                    filters=self.query.get("filters"),
-                    order_by=order_by,
-                    limit=self.query.get("limit"),
-                    require_coverage=bool(self.query.get("require_coverage", False)),
-                )
-                self._batches = iter(table.to_batches(max_chunksize=self.batch_size))
-            else:
-                self._batches = self.dataset._stream_batches_locked(
-                    manifest,
-                    batch_size=self.batch_size,
-                    keys=self.query.get("keys"),
-                    time_range=self.query.get("time_range"),
-                    columns=self.query.get("columns"),
-                    filters=self.query.get("filters"),
-                    require_coverage=bool(self.query.get("require_coverage", False)),
-                )
-                limit = self.query.get("limit")
-                if limit is not None and (not isinstance(limit, int) or limit < 0):
-                    raise QueryError("limit must be a nonnegative integer")
-                self._limit = limit
+            self._connection = self.dataset._connect()
+            metadata = self.dataset._ready_metadata(self._connection)
+            self.publication_id = str(metadata["publication_id"])
+            sql, parameters = self.dataset._compile_query(
+                self._connection,
+                metadata,
+                keys=self.query.get("keys"),
+                time_range=self.query.get("time_range"),
+                columns=self.query.get("columns"),
+                filters=self.query.get("filters"),
+                order_by=self.query.get("order_by"),
+                limit=self.query.get("limit"),
+                require_coverage=bool(self.query.get("require_coverage", False)),
+            )
+            self._reader = self._connection.execute(sql, parameters).to_arrow_reader(
+                self.batch_size
+            )
             return self
         except BaseException:
-            self._gate.__exit__(None, None, None)
-            self._gate = None
+            self.__exit__(None, None, None)
             raise
 
     def __iter__(self) -> Iterator[pa.RecordBatch]:
-        if self._batches is None:
+        if self._reader is None:
             raise RuntimeError("batch reader must be used as a context manager")
-        if self._limit is None:
-            yield from self._batches
-            return
-        remaining = self._limit
-        for batch in self._batches:
-            if remaining <= 0:
-                break
-            emitted = batch.slice(0, min(remaining, batch.num_rows))
-            remaining -= emitted.num_rows
-            if emitted.num_rows:
-                yield emitted
+        yield from self._reader
 
     def __exit__(self, exc_type: Any, exc: Any, traceback: Any) -> None:
-        self._batches = None
-        self._limit = None
+        self._reader = None
+        if self._connection is not None:
+            self._connection.close()
+            self._connection = None
         if self._gate is not None:
             self._gate.__exit__(exc_type, exc, traceback)
             self._gate = None
@@ -399,42 +385,12 @@ def _normalize_time_range(
     return normalized[0], normalized[1]
 
 
-def _filter_mask(column: pa.ChunkedArray, operator: str, value: Any) -> pa.Array | pa.ChunkedArray:
-    scalar = pa.scalar(value, type=column.type) if operator not in {"in", "not in"} else None
-    comparisons = {
-        "=": pc.equal,
-        "!=": pc.not_equal,
-        "<": pc.less,
-        "<=": pc.less_equal,
-        ">": pc.greater,
-        ">=": pc.greater_equal,
-    }
-    if operator in comparisons:
-        return comparisons[operator](column, scalar)
-    if operator in {"in", "not in"}:
-        if isinstance(value, (str, bytes)) or not isinstance(value, Iterable):
-            raise QueryError(f"operator {operator!r} requires a value collection")
-        result = pc.is_in(column, value_set=pa.array(list(value), type=column.type))
-        return pc.invert(result) if operator == "not in" else result
-    raise QueryError(f"unsupported filter operator {operator!r}")
+def _in_clause(field: str, values: Sequence[Any], *, negate: bool) -> str:
+    if not values:
+        return "true" if negate else "false"
+    operator = "not in" if negate else "in"
+    return f"{field} {operator} ({', '.join('?' for _ in values)})"
 
 
-def _dataset_filter(field: pads.Expression, operator: str, value: Any) -> pads.Expression:
-    if operator == "=":
-        return field == value
-    if operator == "!=":
-        return field != value
-    if operator == "<":
-        return field < value
-    if operator == "<=":
-        return field <= value
-    if operator == ">":
-        return field > value
-    if operator == ">=":
-        return field >= value
-    if operator in {"in", "not in"}:
-        if isinstance(value, (str, bytes)) or not isinstance(value, Iterable):
-            raise QueryError(f"operator {operator!r} requires a value collection")
-        expression = field.isin(list(value))
-        return ~expression if operator == "not in" else expression
-    raise QueryError(f"unsupported filter operator {operator!r}")
+def _quote_identifier(value: str) -> str:
+    return '"' + value.replace('"', '""') + '"'

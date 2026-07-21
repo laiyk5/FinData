@@ -4,6 +4,7 @@ from dataclasses import asdict, dataclass
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 import re
+from time import monotonic
 from typing import Protocol
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -16,7 +17,14 @@ from findata.loader import DataLoader, DatasetNotReadyError, UnsupportedCoverage
 from findata.providers.tushare import TushareClient, TushareHTTPTransport
 from findata.publication import PublicationWindow, daily_window, monthly_window
 from findata.rate_limit import FileRateLimiter
-from findata.storage import Coverage, Workspace
+from findata.storage import (
+    DATABASE_NAME,
+    Coverage,
+    DataMutation,
+    DatasetGate,
+    Workspace,
+    load_metadata,
+)
 from findata.testing.tushare import (
     MOCK_TOKEN,
     MockTushareTransport,
@@ -189,7 +197,9 @@ class DatasetService:
         )
         return list(value) if isinstance(value, list) else []
 
-    def run(self, dataset: str, operation: str = "update", operands: dict[str, Any] | None = None) -> OperationResult:
+    def run(
+        self, dataset: str, operation: str = "update", operands: dict[str, Any] | None = None
+    ) -> OperationResult:
         before = self._request_count
         values = dict(operands or {})
         if dataset == "tushare_trade_cal":
@@ -205,7 +215,6 @@ class DatasetService:
         else:
             raise KeyError(dataset)
         return OperationResult(dataset, operation, publication, self._request_count - before)
-
 
     def _fetch(self, dataset: str, **params: Any) -> pa.Table:
         if self._reporter is not None:
@@ -247,6 +256,8 @@ class DatasetService:
         existing_coverage = self._coverage_map(spec.name)
         next_coverage = dict(existing_coverage)
         publication: str | None = None
+        mutations: list[DataMutation] = []
+        batch_started = monotonic()
         jobs = [
             (exchange, interval)
             for exchange in exchanges
@@ -264,9 +275,26 @@ class DatasetService:
             if table.num_rows == 0:
                 raise RuntimeError(f"trade_cal returned empty due interval for {exchange}")
             next_coverage[exchange] = _merge_interval(next_coverage.get(exchange), interval)
-            publication = self._publish(spec, [table], next_coverage)
+            mutations.append(
+                DataMutation.replace_range(
+                    table,
+                    partition=exchange,
+                    start=interval.start,
+                    end=interval.end,
+                )
+            )
+            if _batch_due(
+                mutations,
+                batch_started,
+                request_limit=self.client.checkpoint_request_limit or 64,
+            ):
+                publication = self._commit_mutations(spec, mutations, next_coverage)
+                mutations = []
+                batch_started = monotonic()
             self._progress(completed, len(jobs))
-        return publication or self._publish(spec, [], next_coverage)
+        if mutations:
+            publication = self._commit_mutations(spec, mutations, next_coverage)
+        return publication or self.loader.dataset(spec.name).publication_id
 
     def _stock_basic(self, operation: str, operands: dict[str, Any]) -> str:
         if operation != "update":
@@ -280,20 +308,16 @@ class DatasetService:
         ]
         self._progress(0, len(jobs))
         for completed, (status, exchange) in enumerate(jobs, start=1):
-            table = self._fetch(
-                "tushare_stock_basic", list_status=status, exchange=exchange
-            )
+            table = self._fetch("tushare_stock_basic", list_status=status, exchange=exchange)
             if table.num_rows >= 6000:
-                raise RuntimeError(
-                    f"stock_basic response may be truncated for {status}/{exchange}"
-                )
+                raise RuntimeError(f"stock_basic response may be truncated for {status}/{exchange}")
             tables.append(table)
             self._progress(completed, len(jobs))
         combined = pa.concat_tables(tables)
         if combined.num_rows == 0:
             raise RuntimeError("stock_basic merged snapshot is unexpectedly empty")
         if self._reporter is not None and hasattr(self._reporter, "stage"):
-            self._reporter.stage("publishing:tushare_stock_basic")
+            self._reporter.stage("committing:tushare_stock_basic")
         return self._publisher("tushare_stock_basic").publish(
             _merge_tables(TUSHARE_DATASETS["tushare_stock_basic"], None, combined)
         )
@@ -315,19 +339,27 @@ class DatasetService:
             raise OperandError(f"unsupported index basic operation {operation!r}")
 
         publication: str | None = None
+        mutations: list[DataMutation] = []
+        batch_started = monotonic()
         self._progress(0, len(indexes))
         for completed, reference in enumerate(indexes, start=1):
             code = _canonical_index(reference)
             table = self._fetch(spec.name, ts_code=code)
             returned = table.column("ts_code").to_pylist() if table.num_rows else []
             if returned != [code]:
-                raise RuntimeError(
-                    f"index_basic returned no exact metadata match for {reference}"
-                )
-            publication = self._publisher(spec.name).publish(
-                _merge_tables(spec, self._existing_table(spec), table)
-            )
+                raise RuntimeError(f"index_basic returned no exact metadata match for {reference}")
+            mutations.append(DataMutation.replace_primary_keys(table))
+            if _batch_due(
+                mutations,
+                batch_started,
+                request_limit=self.client.checkpoint_request_limit or 64,
+            ):
+                publication = self._commit_mutations(spec, mutations, {})
+                mutations = []
+                batch_started = monotonic()
             self._progress(completed, len(indexes))
+        if mutations:
+            publication = self._commit_mutations(spec, mutations, {})
         assert publication is not None
         return publication
 
@@ -353,14 +385,14 @@ class DatasetService:
         existing_coverage = self._coverage_map(spec.name)
         next_coverage = dict(existing_coverage)
         publication: str | None = None
+        mutations: list[DataMutation] = []
+        batch_started = monotonic()
         jobs: list[tuple[str, date]] = []
         current_month = self.today.replace(day=1)
         for index in indexes:
             months = {
                 month
-                for interval in _missing_for_continuity(
-                    existing_coverage.get(index), requested
-                )
+                for interval in _missing_for_continuity(existing_coverage.get(index), requested)
                 for month in _month_starts(interval)
             }
             if requested.start <= current_month < requested.end:
@@ -378,47 +410,27 @@ class DatasetService:
                 start_date=start,
                 end_date=end,
             )
-            next_coverage[index] = _merge_interval(
-                next_coverage.get(index), month_interval
-            )
-            publication = self._publish_index_weight_month(
-                spec, table, index=index, month=month, coverage=next_coverage
-            )
-            self._progress(completed, len(jobs))
-        return publication or self._publish(spec, [], next_coverage)
-
-    def _publish_index_weight_month(
-        self,
-        spec: DatasetSpec,
-        table: pa.Table,
-        *,
-        index: str,
-        month: date,
-        coverage: dict[str, DateRange],
-    ) -> str:
-        existing = self._existing_table(spec)
-        if table.num_rows and existing is not None:
-            rows = [
-                row
-                for row in existing.to_pylist()
-                if not (
-                    row["index_code"] == index
-                    and row["effective_month"] == month
+            next_coverage[index] = _merge_interval(next_coverage.get(index), month_interval)
+            mutations.append(
+                DataMutation.replace_range(
+                    table,
+                    partition=index,
+                    start=month_interval.start,
+                    end=month_interval.end,
                 )
-            ]
-            existing = pa.Table.from_pylist(rows, schema=spec.schema)
-        merged = _merge_tables(spec, existing, table)
-        if self._reporter is not None:
-            self._reporter.checkpoint()
-            if hasattr(self._reporter, "stage"):
-                self._reporter.stage(f"publishing:{spec.name}")
-        return self._publisher(spec.name).publish(
-            merged,
-            coverage=[
-                Coverage(key, value.start, value.end)
-                for key, value in sorted(coverage.items())
-            ],
-        )
+            )
+            if _batch_due(
+                mutations,
+                batch_started,
+                request_limit=self.client.checkpoint_request_limit or 64,
+            ):
+                publication = self._commit_mutations(spec, mutations, next_coverage)
+                mutations = []
+                batch_started = monotonic()
+            self._progress(completed, len(jobs))
+        if mutations:
+            publication = self._commit_mutations(spec, mutations, next_coverage)
+        return publication or self.loader.dataset(spec.name).publication_id
 
     def _daily_basic(self, operation: str, operands: dict[str, Any]) -> str:
         if operation == "update":
@@ -448,10 +460,16 @@ class DatasetService:
         if operation == "refresh":
             for symbol in symbols:
                 covered = existing_coverage.get(symbol)
-                if covered is None or requested.start < covered.start or requested.end > covered.end:
+                if (
+                    covered is None
+                    or requested.start < covered.start
+                    or requested.end > covered.end
+                ):
                     raise OperandError(f"refresh range is outside coverage for {symbol}")
         next_coverage = dict(existing_coverage)
         publication: str | None = None
+        mutations: list[DataMutation] = []
+        batch_started = monotonic()
         jobs = [
             (symbol, interval)
             for symbol in symbols
@@ -479,9 +497,26 @@ class DatasetService:
                         f"target is {window.value.split('-', 1)[0]} publication window"
                     )
             next_coverage[symbol] = _merge_interval(next_coverage.get(symbol), interval)
-            publication = self._publish(spec, [table], next_coverage)
+            mutations.append(
+                DataMutation.replace_range(
+                    table,
+                    partition=symbol,
+                    start=interval.start,
+                    end=interval.end,
+                )
+            )
+            if _batch_due(
+                mutations,
+                batch_started,
+                request_limit=self.client.checkpoint_request_limit or 64,
+            ):
+                publication = self._commit_mutations(spec, mutations, next_coverage)
+                mutations = []
+                batch_started = monotonic()
             self._progress(completed, len(jobs))
-        return publication or self._publish(spec, [], next_coverage)
+        if mutations:
+            publication = self._commit_mutations(spec, mutations, next_coverage)
+        return publication or self.loader.dataset(spec.name).publication_id
 
     def _resolve_symbols(self, selectors: list[str], requested: DateRange) -> list[str]:
         direct: list[str] = []
@@ -578,23 +613,23 @@ class DatasetService:
         except DatasetNotReadyError:
             return None
 
-    def _publish(
+    def _commit_mutations(
         self,
         spec: DatasetSpec,
-        new_tables: list[pa.Table],
+        mutations: list[DataMutation],
         coverage: dict[str, DateRange],
     ) -> str:
-        if not new_tables:
-            return self.loader.dataset(spec.name).publication_id
         if self._reporter is not None:
             self._reporter.checkpoint()
             if hasattr(self._reporter, "stage"):
-                self._reporter.stage(f"publishing:{spec.name}")
-        incoming = pa.concat_tables(new_tables) if len(new_tables) > 1 else new_tables[0]
-        merged = _merge_tables(spec, self._existing_table(spec), incoming)
-        return self._publisher(spec.name).publish(
-            merged,
-            coverage=[Coverage(key, value.start, value.end) for key, value in sorted(coverage.items())],
+                self._reporter.stage(f"committing:{spec.name}")
+        return self._publisher(spec.name).commit(
+            mutations,
+            coverage=(
+                [Coverage(key, value.start, value.end) for key, value in sorted(coverage.items())]
+                if spec.time_field is not None
+                else None
+            ),
         )
 
     def _publisher(self, dataset: str):
@@ -624,7 +659,9 @@ def normalize_operation(
         _require_no_operands(values)
         return {}
     if dataset == "tushare_index_basic":
-        arrays = sorted({_normalize_index_reference(value) for value in _string_array(values, "indexes")})
+        arrays = sorted(
+            {_normalize_index_reference(value) for value in _string_array(values, "indexes")}
+        )
         _require_keys(values, {"indexes"})
         return {"indexes": arrays}
     timerange = _timerange(values, today=today)
@@ -636,7 +673,9 @@ def normalize_operation(
             raise OperandError("trade calendar supports only SSE and SZSE")
         key = "exchanges"
     elif dataset == "tushare_index_weight":
-        arrays = sorted({_normalize_index_reference(value) for value in _string_array(values, "indexes")})
+        arrays = sorted(
+            {_normalize_index_reference(value) for value in _string_array(values, "indexes")}
+        )
         key = "indexes"
     else:
         arrays = sorted(set(_string_array(values, "symbols")))
@@ -645,20 +684,22 @@ def normalize_operation(
     return {key: arrays, "timerange": _format_range(timerange)}
 
 
-def dataset_description(workspace: Workspace, dataset: str, *, provider_ready: bool) -> dict[str, Any]:
+def dataset_description(
+    workspace: Workspace, dataset: str, *, provider_ready: bool
+) -> dict[str, Any]:
     try:
         spec = TUSHARE_DATASETS[dataset]
     except KeyError as exc:
         raise OperandError(f"unknown dataset {dataset!r}") from exc
-    manifest = workspace.datasets_root / dataset / "manifest.json"
+    dataset_root = workspace.datasets_root / dataset
+    database = dataset_root / DATABASE_NAME
     state = "unregistered"
     publication_id = None
-    if manifest.exists():
-        import json
-
-        content = json.loads(manifest.read_text(encoding="utf-8"))
-        state = str(content.get("state"))
-        publication_id = content.get("publication_id")
+    if database.exists():
+        with DatasetGate(dataset_root / "gate.lock", exclusive=False):
+            metadata = load_metadata(database)
+        state = str(metadata.get("state"))
+        publication_id = metadata.get("publication_id")
     return {
         "name": dataset,
         "provider": "tushare",
@@ -673,11 +714,7 @@ def dataset_description(workspace: Workspace, dataset: str, *, provider_ready: b
             "tushare_index_weight": ["tushare_index_basic"],
         }.get(dataset, []),
         "settings": _dataset_settings(workspace, dataset),
-        "storage": (
-            "partitioned-parquet"
-            if spec.time_field and dataset != "tushare_trade_cal"
-            else "single-file-csv"
-        ),
+        "storage": "duckdb",
         "state": state,
         "publication_id": publication_id,
         "operations": [operation_description(dataset, name) for name in _operation_names(dataset)],
@@ -733,6 +770,19 @@ def _merge_tables(spec: DatasetSpec, existing: pa.Table | None, incoming: pa.Tab
     return pa.Table.from_pylist(ordered, schema=spec.schema)
 
 
+def _batch_due(
+    mutations: list[DataMutation],
+    started: float,
+    *,
+    request_limit: int,
+) -> bool:
+    return (
+        len(mutations) >= request_limit
+        or sum(mutation.table.nbytes for mutation in mutations) >= 256 * 1024 * 1024
+        or monotonic() - started >= 60
+    )
+
+
 def _missing_for_continuity(existing: DateRange | None, requested: DateRange) -> list[DateRange]:
     if existing is None:
         return [requested]
@@ -767,7 +817,11 @@ def _string_array(operands: dict[str, Any], name: str) -> list[str]:
     value = operands.get(name)
     if isinstance(value, str):
         value = [value]
-    if not isinstance(value, list) or not value or any(not isinstance(item, str) or not item for item in value):
+    if (
+        not isinstance(value, list)
+        or not value
+        or any(not isinstance(item, str) or not item for item in value)
+    ):
         raise OperandError(f"{name} must be a nonempty string array")
     return list(dict.fromkeys(value))
 
