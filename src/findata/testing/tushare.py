@@ -178,13 +178,17 @@ class MockTushareTransport:
         return [
             {
                 "ts_code": code,
-                "symbol": code.split(".", 1)[0],
                 "name": names.get(code, f"Mock {code}"),
                 "fullname": names.get(code, f"Mock index {code}"),
                 "market": "CSI",
                 "publisher": "中证指数有限公司",
+                "index_type": "规模",
                 "category": "规模指数",
+                "base_date": "20041231",
+                "base_point": 1000.0,
                 "list_date": "20050408",
+                "weight_rule": "派许加权",
+                "desc": f"Mock metadata for {code}",
                 "exp_date": None,
             }
         ]

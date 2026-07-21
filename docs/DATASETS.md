@@ -91,13 +91,17 @@ enumerates Tushare markets implicitly.
 | field | Arrow type | nullable | meaning |
 | --- | --- | --- | --- |
 | `ts_code` | `utf8` | no | exact Tushare provider ID |
-| `symbol` | `utf8` | no | provider-local index symbol |
 | `name` | `utf8` | no | provider short name |
 | `fullname` | `utf8` | yes | provider full name |
 | `market` | `utf8` | no | Tushare market or service-provider category |
 | `publisher` | `utf8` | yes | reported publisher |
+| `index_type` | `utf8` | yes | reported index style |
 | `category` | `utf8` | yes | reported index category |
+| `base_date` | `date32[day]` | yes | reported base date |
+| `base_point` | `float64` | yes | reported base point |
 | `list_date` | `date32[day]` | yes | reported publication date |
+| `weight_rule` | `utf8` | yes | reported weighting method |
+| `desc` | `utf8` | yes | provider description |
 | `exp_date` | `date32[day]` | yes | reported termination date |
 
 - **provider**: `tushare`
