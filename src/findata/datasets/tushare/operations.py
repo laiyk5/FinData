@@ -23,6 +23,7 @@ from findata.testing.tushare import (
     is_mock_token,
     transport_from_mock_token,
 )
+from findata.toolkit import ConstituentRequest, resolve_constituents
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,6 +107,7 @@ class OperationWorker:
             today=current_date,
             now=current_time,
             reporter=context,
+            settings=dict(request.get("settings") or {}),
         )
         context.log(f"starting {request['dataset']} {request['operation']}")
         context.stage("starting")
@@ -121,9 +123,18 @@ class OperationWorker:
 
 
 def register_v1_datasets(workspace: Workspace) -> None:
-    from findata.plugins import discover_dataset_plugins, register_plugins
+    from findata.plugins import (
+        discover_dataset_plugins,
+        discover_provider_plugins,
+        register_plugins,
+    )
 
-    register_plugins(workspace, discover_dataset_plugins())
+    providers = discover_provider_plugins()
+    register_plugins(
+        workspace,
+        discover_dataset_plugins(providers=providers),
+        providers=providers,
+    )
 
 
 def resolve_v1_dependency(
@@ -131,10 +142,15 @@ def resolve_v1_dependency(
     target_dataset: str,
     requirement: dict[str, object],
 ) -> tuple[str, dict[str, object]]:
-    if parent_dataset != "tushare_daily_basic" or target_dataset not in {
-        "tushare_trade_cal",
-        "tushare_index_weight",
-    }:
+    allowed = {
+        "tushare_daily_basic": {
+            "tushare_trade_cal",
+            "tushare_index_basic",
+            "tushare_index_weight",
+        },
+        "tushare_index_weight": {"tushare_index_basic"},
+    }
+    if target_dataset not in allowed.get(parent_dataset, set()):
         raise ValueError(
             f"dataset {parent_dataset!r} has no declared dependency on {target_dataset!r}"
         )
@@ -152,6 +168,7 @@ class DatasetService:
         today: date,
         reporter: OperationReporter | None = None,
         now: datetime | None = None,
+        settings: dict[str, Any] | None = None,
     ) -> None:
         self.workspace = workspace
         self.client = client
@@ -160,14 +177,17 @@ class DatasetService:
         self.loader = DataLoader(workspace.root)
         self._request_count = 0
         self._reporter = reporter
+        self._settings = dict(settings) if settings is not None else None
 
-    def set_universe(self, dataset: str, selectors: list[str]) -> None:
-        if dataset not in {"tushare_index_weight", "tushare_daily_basic"}:
-            raise OperandError(f"dataset {dataset!r} has an intrinsic universe")
-        self.workspace.set_universe(dataset, selectors)
-
-    def get_universe(self, dataset: str) -> list[str]:
-        return self.workspace.get_universe(dataset)
+    def _update_setting(self, dataset: str) -> list[str]:
+        suffix = "update_indexes" if dataset == "tushare_index_weight" else "update_symbols"
+        key = f"dataset.{dataset}.{suffix}"
+        value = (
+            self._settings.get(key, [])
+            if self._settings is not None
+            else self.workspace.get_config(key, [])
+        )
+        return list(value) if isinstance(value, list) else []
 
     def run(self, dataset: str, operation: str = "update", operands: dict[str, Any] | None = None) -> OperationResult:
         before = self._request_count
@@ -176,6 +196,8 @@ class DatasetService:
             publication = self._trade_cal(operation, values)
         elif dataset == "tushare_stock_basic":
             publication = self._stock_basic(operation, values)
+        elif dataset == "tushare_index_basic":
+            publication = self._index_basic(operation, values)
         elif dataset == "tushare_index_weight":
             publication = self._index_weight(operation, values)
         elif dataset == "tushare_daily_basic":
@@ -276,15 +298,52 @@ class DatasetService:
             _merge_tables(TUSHARE_DATASETS["tushare_stock_basic"], None, combined)
         )
 
+    def _index_basic(self, operation: str, operands: dict[str, Any]) -> str:
+        spec = TUSHARE_DATASETS["tushare_index_basic"]
+        if operation == "update":
+            _require_no_operands(operands)
+            existing = self._existing_table(spec)
+            if existing is None or existing.num_rows == 0:
+                raise OperandError(
+                    "tushare_index_basic update has no tracked indexes; run complete first"
+                )
+            indexes = [f"tushare:{code}" for code in existing.column("ts_code").to_pylist()]
+        elif operation == "complete":
+            indexes = _string_array(operands, "indexes")
+            _require_keys(operands, {"indexes"})
+        else:
+            raise OperandError(f"unsupported index basic operation {operation!r}")
+
+        publication: str | None = None
+        self._progress(0, len(indexes))
+        for completed, reference in enumerate(indexes, start=1):
+            code = _canonical_index(reference)
+            table = self._fetch(spec.name, ts_code=code)
+            returned = table.column("ts_code").to_pylist() if table.num_rows else []
+            if returned != [code]:
+                raise RuntimeError(
+                    f"index_basic returned no exact metadata match for {reference}"
+                )
+            publication = self._publisher(spec.name).publish(
+                _merge_tables(spec, self._existing_table(spec), table)
+            )
+            self._progress(completed, len(indexes))
+        assert publication is not None
+        return publication
+
     def _index_weight(self, operation: str, operands: dict[str, Any]) -> str:
         if operation == "update":
             _require_no_operands(operands)
-            indexes = self.get_universe("tushare_index_weight")
-            if not indexes:
-                raise OperandError("tushare_index_weight update requires a configured universe")
+            references = self._update_setting("tushare_index_weight")
+            if not references:
+                raise OperandError("tushare_index_weight update requires update_indexes")
+            self._ensure_index_metadata(references)
+            indexes = [_canonical_index(value) for value in references]
             requested = _month_range(self.today, self.today)
         elif operation == "complete":
-            indexes = [_canonical_index(value) for value in _string_array(operands, "indexes")]
+            references = _string_array(operands, "indexes")
+            self._ensure_index_metadata(references)
+            indexes = [_canonical_index(value) for value in references]
             requested = _expand_to_months(_timerange(operands, today=self.today))
             _require_keys(operands, {"indexes", "timerange"})
         else:
@@ -324,9 +383,9 @@ class DatasetService:
     def _daily_basic(self, operation: str, operands: dict[str, Any]) -> str:
         if operation == "update":
             _require_no_operands(operands)
-            selectors = self.get_universe("tushare_daily_basic")
+            selectors = self._update_setting("tushare_daily_basic")
             if not selectors:
-                raise OperandError("tushare_daily_basic update requires a configured universe")
+                raise OperandError("tushare_daily_basic update requires update_symbols")
             requested = DateRange(self.today, self.today + timedelta(days=1))
         elif operation in {"complete", "refresh"}:
             selectors = _string_array(operands, "symbols")
@@ -388,12 +447,13 @@ class DatasetService:
         direct: list[str] = []
         index_ranges: dict[str, DateRange] = {}
         for selector in selectors:
-            if selector.startswith("CSI300"):
-                index = "000300.SH"
-                if "@" not in selector:
+            if selector.startswith("tushare:"):
+                reference, separator, suffix = selector.partition("@")
+                self._ensure_index_metadata([reference])
+                index = _canonical_index(reference)
+                if not separator:
                     interval = _expand_to_months(requested)
                 else:
-                    _, suffix = selector.split("@", 1)
                     if suffix == "latest":
                         target = requested.end - timedelta(days=1)
                         interval = _month_range(target, target)
@@ -402,24 +462,59 @@ class DatasetService:
                         interval = _month_range(target, target)
                     else:
                         raise OperandError(f"invalid constituent selector {selector!r}")
-                current = index_ranges.get(index)
-                index_ranges[index] = _merge_interval(current, interval)
+                current = index_ranges.get(reference)
+                index_ranges[reference] = _merge_interval(current, interval)
             else:
                 direct.append(selector)
-        for index, interval in index_ranges.items():
-            index_requirement = {"indexes": [index], "timerange": _format_range(interval)}
-            if self._reporter is not None and hasattr(self._reporter, "fulfill"):
-                self._reporter.fulfill("tushare_index_weight", index_requirement)
-            else:
-                self._index_weight("complete", index_requirement)
-            rows = self.loader.dataset("tushare_index_weight").query(
-                keys=[index],
-                time_range=(interval.start, interval.end),
-                columns=["con_code"],
-                require_coverage=True,
+        for reference, interval in index_ranges.items():
+            index = _canonical_index(reference)
+
+            def fulfill(request: ConstituentRequest) -> None:
+                requirement: dict[str, object] = {
+                    "indexes": [reference],
+                    "timerange": f"{request.start.isoformat()}:{request.end.isoformat()}",
+                }
+                if self._reporter is not None and hasattr(self._reporter, "fulfill"):
+                    self._reporter.fulfill("tushare_index_weight", requirement)
+                else:
+                    self._index_weight("complete", requirement)
+
+            direct.extend(
+                resolve_constituents(
+                    self.loader,
+                    ConstituentRequest(
+                        "tushare_index_weight",
+                        index,
+                        "con_code",
+                        interval.start,
+                        interval.end,
+                    ),
+                    fulfill=fulfill,
+                )
             )
-            direct.extend(rows.column("con_code").to_pylist())
         return list(dict.fromkeys(direct))
+
+    def _ensure_index_metadata(self, references: list[str]) -> None:
+        missing: list[str] = []
+        for reference in references:
+            code = _canonical_index(reference)
+            try:
+                found = (
+                    self.loader.dataset("tushare_index_basic")
+                    .query(filters=[("ts_code", "=", code)])
+                    .num_rows
+                )
+            except DatasetNotReadyError:
+                found = 0
+            if not found:
+                missing.append(reference)
+        if not missing:
+            return
+        requirement = {"indexes": missing}
+        if self._reporter is not None and hasattr(self._reporter, "fulfill"):
+            self._reporter.fulfill("tushare_index_basic", requirement)
+        else:
+            self._index_basic("complete", requirement)
 
     def _coverage_map(self, dataset: str) -> dict[str, DateRange]:
         try:
@@ -479,6 +574,10 @@ def normalize_operation(
     if operation == "update":
         _require_no_operands(values)
         return {}
+    if dataset == "tushare_index_basic":
+        arrays = sorted({_normalize_index_reference(value) for value in _string_array(values, "indexes")})
+        _require_keys(values, {"indexes"})
+        return {"indexes": arrays}
     timerange = _timerange(values, today=today)
     if dataset == "tushare_trade_cal":
         if timerange.end > today + timedelta(days=1):
@@ -488,33 +587,13 @@ def normalize_operation(
             raise OperandError("trade calendar supports only SSE and SZSE")
         key = "exchanges"
     elif dataset == "tushare_index_weight":
-        arrays = sorted({_canonical_index(value) for value in _string_array(values, "indexes")})
+        arrays = sorted({_normalize_index_reference(value) for value in _string_array(values, "indexes")})
         key = "indexes"
     else:
         arrays = sorted(set(_string_array(values, "symbols")))
         key = "symbols"
     _require_keys(values, {key, "timerange"})
     return {key: arrays, "timerange": _format_range(timerange)}
-
-
-def normalize_universe(dataset: str, selectors: list[str]) -> list[str]:
-    if dataset == "tushare_index_weight":
-        return sorted({_canonical_index(value) for value in _string_array({"value": selectors}, "value")})
-    if dataset != "tushare_daily_basic":
-        raise OperandError(f"dataset {dataset!r} has an intrinsic universe")
-    values = _string_array({"value": selectors}, "value")
-    symbol = re.compile(r"^[0-9]{6}\.(?:SH|SZ|BJ)$")
-    for value in values:
-        if value == "CSI300" or value == "CSI300@latest":
-            continue
-        if value.startswith("CSI300@"):
-            suffix = value.split("@", 1)[1]
-            if len(suffix) == 6 and suffix.isdigit() and 1 <= int(suffix[4:]) <= 12:
-                continue
-        if symbol.fullmatch(value):
-            continue
-        raise OperandError(f"invalid maintenance selector {value!r}")
-    return sorted(set(values))
 
 
 def dataset_description(workspace: Workspace, dataset: str, *, provider_ready: bool) -> dict[str, Any]:
@@ -536,12 +615,15 @@ def dataset_description(workspace: Workspace, dataset: str, *, provider_ready: b
         "provider": "tushare",
         "provider_ready": provider_ready,
         "capabilities": dict(spec.capabilities),
-        "dependencies": (
-            ["tushare_trade_cal", "tushare_index_weight"]
-            if dataset == "tushare_daily_basic"
-            else []
-        ),
-        "universe": workspace.get_universe(dataset),
+        "dependencies": {
+            "tushare_daily_basic": [
+                "tushare_trade_cal",
+                "tushare_index_basic",
+                "tushare_index_weight",
+            ],
+            "tushare_index_weight": ["tushare_index_basic"],
+        }.get(dataset, []),
+        "settings": _dataset_settings(workspace, dataset),
         "storage": (
             "partitioned-parquet"
             if spec.time_field and dataset != "tushare_trade_cal"
@@ -560,15 +642,20 @@ def operation_description(dataset: str, operation: str) -> dict[str, Any]:
         return {"name": operation, "required": [], "properties": {}}
     key = {
         "tushare_trade_cal": "exchanges",
+        "tushare_index_basic": "indexes",
         "tushare_index_weight": "indexes",
         "tushare_daily_basic": "symbols",
     }[dataset]
     return {
         "name": operation,
-        "required": [key, "timerange"],
+        "required": [key] if dataset == "tushare_index_basic" else [key, "timerange"],
         "properties": {
             key: {"type": "array", "items": {"type": "string"}, "minItems": 1},
-            "timerange": {"type": "string", "format": "half-open-date-range"},
+            **(
+                {}
+                if dataset == "tushare_index_basic"
+                else {"timerange": {"type": "string", "format": "half-open-date-range"}}
+            ),
         },
     }
 
@@ -578,6 +665,7 @@ def _operation_names(dataset: str) -> list[str]:
         return {
             "tushare_trade_cal": ["update", "complete"],
             "tushare_stock_basic": ["update"],
+            "tushare_index_basic": ["update", "complete"],
             "tushare_index_weight": ["update", "complete"],
             "tushare_daily_basic": ["update", "complete", "refresh"],
         }[dataset]
@@ -647,11 +735,31 @@ def _require_keys(operands: dict[str, Any], allowed: set[str]) -> None:
 
 
 def _canonical_index(value: str) -> str:
-    if value == "CSI300":
-        return "000300.SH"
-    if value == "000300.SH":
-        return value
-    raise OperandError(f"unknown v1 index {value!r}")
+    return _normalize_index_reference(value).split(":", 1)[1]
+
+
+def _normalize_index_reference(value: str) -> str:
+    if not value.startswith("tushare:") or "@" in value:
+        raise OperandError(f"invalid Tushare index reference {value!r}")
+    code = value.split(":", 1)[1]
+    if not re.fullmatch(r"[A-Za-z0-9]+\.[A-Za-z]+", code):
+        raise OperandError(f"invalid Tushare index reference {value!r}")
+    return f"tushare:{code}"
+
+
+def _dataset_settings(workspace: Workspace, dataset: str) -> list[dict[str, Any]]:
+    from findata.datasets.tushare import builtin_plugins
+
+    plugin = next(item for item in builtin_plugins() if item.name == dataset)
+    return [
+        {
+            "key": key,
+            "schema": dict(setting.schema),
+            "help": setting.help,
+            "configured": workspace.get_config(key) is not None,
+        }
+        for key, setting in plugin.settings.items()
+    ]
 
 
 def _expand_to_months(value: DateRange) -> DateRange:

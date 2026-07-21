@@ -7,7 +7,11 @@ import unittest
 from pathlib import Path
 
 from findata import DataLoader
-from findata.operations import OperationWorker, register_v1_datasets, resolve_v1_dependency
+from findata.datasets.tushare.operations import (
+    OperationWorker,
+    register_v1_datasets,
+    resolve_v1_dependency,
+)
 from findata.rate_limit import FileRateLimiter
 from findata.storage import Workspace
 from findata.taskrunner import QueueFullError, TaskContext, TaskNotFoundError, TaskRunner
@@ -19,6 +23,13 @@ def successful_worker(request: dict[str, object], context: TaskContext) -> dict[
     context.checkpoint()
     context.progress(2, 2)
     return {"pid": os.getpid(), "value": request["operands"]}
+
+
+def context_worker(request: dict[str, object], context: TaskContext) -> dict[str, object]:
+    return {
+        "revision": request["configuration_revision"],
+        "settings": request["settings"],
+    }
 
 
 def slow_worker(request: dict[str, object], context: TaskContext) -> dict[str, object]:
@@ -81,6 +92,24 @@ class TaskRunnerTests(unittest.TestCase):
             self.assertEqual(result.progress, {"current": 2, "total": 2})
             self.assertEqual(runner.logs(handle_id), ["worker started"])
             self.assertTrue((self.root / "tasks" / "handles" / f"{handle_id}.json").is_file())
+
+    def test_execution_receives_submission_time_settings_snapshot(self) -> None:
+        current = {
+            "configuration_revision": 4,
+            "settings": {"dataset.example.symbols": ["first"]},
+        }
+        runner = TaskRunner(
+            self.root,
+            context_worker,
+            execution_context=lambda _dataset: current,
+        )
+        with runner:
+            handle = runner.submit("example", "update", {})
+            current["configuration_revision"] = 5
+            current["settings"] = {"dataset.example.symbols": ["second"]}
+            result = runner.wait(handle, timeout=5)
+        self.assertEqual(result.result["revision"], 4)
+        self.assertEqual(result.result["settings"], {"dataset.example.symbols": ["first"]})
 
     def test_identical_complete_submissions_coalesce_but_handles_cancel_independently(self) -> None:
         operands = {"duration": 0.15, "symbols": ["000001.SZ"], "timerange": "2026-07-01:2026-07-02"}
@@ -167,7 +196,10 @@ class TaskRunnerTests(unittest.TestCase):
             handle = runner.submit(
                 "tushare_daily_basic",
                 "complete",
-                {"symbols": ["CSI300"], "timerange": "2026-06-29:2026-07-04"},
+                {
+                    "symbols": ["tushare:000300.SH"],
+                    "timerange": "2026-06-29:2026-07-04",
+                },
             )
             status = runner.wait(handle, timeout=10)
 
@@ -177,7 +209,12 @@ class TaskRunnerTests(unittest.TestCase):
         self.assertEqual(status.progress, {"current": 3, "total": 3})
         self.assertEqual(
             {item.dataset for item in handles},
-            {"tushare_daily_basic", "tushare_trade_cal", "tushare_index_weight"},
+            {
+                "tushare_daily_basic",
+                "tushare_trade_cal",
+                "tushare_index_basic",
+                "tushare_index_weight",
+            },
         )
         self.assertTrue(all(item.owner.startswith("trigger:") for item in handles if item.handle_id != handle))
         table = DataLoader(self.root).dataset("tushare_daily_basic").query(

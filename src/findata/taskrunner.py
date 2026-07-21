@@ -72,6 +72,8 @@ class ExecutionRecord:
     created_at: float
     updated_at: float
     coalescing_key: str | None
+    configuration_revision: int = 0
+    settings: dict[str, Any] = field(default_factory=dict)
     handle_ids: list[str] = field(default_factory=list)
     pid: int | None = None
     process_start: str | None = None
@@ -222,6 +224,7 @@ class TaskRunner:
         event_sink: Callable[..., Any] | None = None,
         dependency_resolver: DependencyResolver | None = None,
         max_trigger_depth: int = 8,
+        execution_context: Callable[[str], Mapping[str, Any]] | None = None,
     ) -> None:
         if global_concurrency <= 0:
             raise ValueError("global_concurrency must be positive")
@@ -237,6 +240,7 @@ class TaskRunner:
         self.event_sink = event_sink
         self.dependency_resolver = dependency_resolver
         self.max_trigger_depth = max_trigger_depth
+        self.execution_context = execution_context
         self.tasks_root = self.workspace / "tasks"
         self.handles_root = self.tasks_root / "handles"
         self.executions_root = self.tasks_root / "executions"
@@ -330,6 +334,11 @@ class TaskRunner:
                         f"dataset {dataset!r} already has {self.per_dataset_queue_limit} queued executions"
                     )
                 execution_id = uuid.uuid4().hex
+                context = (
+                    dict(self.execution_context(dataset))
+                    if self.execution_context is not None
+                    else {}
+                )
                 execution = ExecutionRecord(
                     execution_id=execution_id,
                     dataset=dataset,
@@ -339,6 +348,8 @@ class TaskRunner:
                     created_at=now,
                     updated_at=now,
                     coalescing_key=key,
+                    configuration_revision=int(context.get("configuration_revision", 0)),
+                    settings=dict(context.get("settings") or {}),
                     trigger_depth=_trigger_depth,
                 )
                 self._executions[execution_id] = execution
@@ -676,6 +687,8 @@ class TaskRunner:
                     "dataset": execution.dataset,
                     "operation": execution.operation,
                     "operands": execution.operands,
+                    "configuration_revision": execution.configuration_revision,
+                    "settings": execution.settings,
                 }
             authkey = secrets.token_bytes(32)
             listener = Listener(("127.0.0.1", 0), authkey=authkey)

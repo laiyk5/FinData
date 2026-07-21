@@ -29,12 +29,13 @@ class DateRangeTests(unittest.TestCase):
 
 
 class DatasetContractTests(unittest.TestCase):
-    def test_registers_the_four_v1_tushare_datasets(self) -> None:
+    def test_registers_the_five_v1_tushare_datasets(self) -> None:
         self.assertEqual(
             set(TUSHARE_DATASETS),
             {
                 "tushare_trade_cal",
                 "tushare_stock_basic",
+                "tushare_index_basic",
                 "tushare_index_weight",
                 "tushare_daily_basic",
             },
@@ -70,7 +71,7 @@ class DatasetContractTests(unittest.TestCase):
         self.assertEqual(spec.partition_key, "index_code")
         self.assertEqual(spec.secondary_key, "con_code")
         self.assertEqual(spec.time_field, "effective_month")
-        self.assertEqual(spec.aliases, {"CSI300": "000300.SH"})
+        self.assertEqual(spec.aliases, {})
 
     def test_daily_basic_schema_matches_declared_logical_contract(self) -> None:
         spec = TUSHARE_DATASETS["tushare_daily_basic"]
@@ -86,4 +87,3 @@ class DatasetContractTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

@@ -103,6 +103,7 @@ class MockTushareTransport:
         generators = {
             "trade_cal": self._trade_cal,
             "stock_basic": self._stock_basic,
+            "index_basic": self._index_basic,
             "index_weight": self._index_weight,
             "daily_basic": self._daily_basic,
         }
@@ -168,6 +169,25 @@ class MockTushareTransport:
                     }
                 )
         return result
+
+    def _index_basic(self, params: Mapping[str, Any]) -> list[dict[str, Any]]:
+        code = str(params.get("ts_code") or "")
+        if not code:
+            return []
+        names = {"000300.SH": "沪深300", "000905.SH": "中证500"}
+        return [
+            {
+                "ts_code": code,
+                "symbol": code.split(".", 1)[0],
+                "name": names.get(code, f"Mock {code}"),
+                "fullname": names.get(code, f"Mock index {code}"),
+                "market": "CSI",
+                "publisher": "中证指数有限公司",
+                "category": "规模指数",
+                "list_date": "20050408",
+                "exp_date": None,
+            }
+        ]
 
     def _daily_basic(self, params: Mapping[str, Any]) -> list[dict[str, Any]]:
         symbols = [str(params["ts_code"])] if params.get("ts_code") else ["000001.SZ", "600000.SH"]

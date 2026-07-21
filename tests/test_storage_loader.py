@@ -11,6 +11,7 @@ from pathlib import Path
 import pyarrow as pa
 
 from findata import DataLoader
+from findata.datasets.tushare import TUSHARE_DATASETS
 from findata.loader import (
     CoverageError,
     DatasetNotReadyError,
@@ -35,14 +36,19 @@ class StorageLoaderTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.tempdir.cleanup()
 
+    def register(self, name: str, strategy: str) -> None:
+        self.workspace.register_dataset(
+            name, strategy=strategy, spec=TUSHARE_DATASETS[name]
+        )
+
     def test_registered_but_unpublished_dataset_is_not_ready(self) -> None:
-        self.workspace.register_dataset("tushare_trade_cal", strategy="single-file-csv")
+        self.register("tushare_trade_cal", "single-file-csv")
 
         with self.assertRaises(DatasetNotReadyError):
             DataLoader(self.root).dataset("tushare_trade_cal").query()
 
     def test_single_file_publication_queries_with_uniform_semantics(self) -> None:
-        self.workspace.register_dataset("tushare_trade_cal", strategy="single-file-csv")
+        self.register("tushare_trade_cal", "single-file-csv")
         table = self.client.query(
             "tushare_trade_cal",
             exchange="SSE",
@@ -68,7 +74,7 @@ class StorageLoaderTests(unittest.TestCase):
         self.assertTrue((self.root / "datasets" / "tushare_trade_cal" / "snapshots" / publication / "data.csv").is_file())
 
     def test_partitioned_publication_uses_symbol_and_month_paths(self) -> None:
-        self.workspace.register_dataset("tushare_daily_basic", strategy="partitioned-parquet")
+        self.register("tushare_daily_basic", "partitioned-parquet")
         table = self.client.query(
             "tushare_daily_basic",
             ts_code="000001.SZ",
@@ -93,7 +99,7 @@ class StorageLoaderTests(unittest.TestCase):
         self.assertEqual(result.num_rows, 2)
 
     def test_coverage_error_identifies_exact_left_and_right_gaps(self) -> None:
-        self.workspace.register_dataset("tushare_trade_cal", strategy="single-file-csv")
+        self.register("tushare_trade_cal", "single-file-csv")
         table = self.client.query(
             "tushare_trade_cal",
             exchange="SSE",
@@ -123,7 +129,7 @@ class StorageLoaderTests(unittest.TestCase):
         )
 
     def test_snapshot_dataset_rejects_coverage_enforcement(self) -> None:
-        self.workspace.register_dataset("tushare_stock_basic", strategy="single-file-csv")
+        self.register("tushare_stock_basic", "single-file-csv")
         table = self.client.query("tushare_stock_basic", list_status="L", exchange="SSE")
         self.workspace.publisher("tushare_stock_basic").publish(table)
 
@@ -135,7 +141,7 @@ class StorageLoaderTests(unittest.TestCase):
             )
 
     def test_failure_before_commit_keeps_previous_snapshot_visible(self) -> None:
-        self.workspace.register_dataset("tushare_stock_basic", strategy="single-file-csv")
+        self.register("tushare_stock_basic", "single-file-csv")
         first = self.client.query("tushare_stock_basic", list_status="L", exchange="SSE")
         publisher = self.workspace.publisher("tushare_stock_basic")
         first_id = publisher.publish(first)
@@ -162,7 +168,11 @@ class StorageLoaderTests(unittest.TestCase):
             with self.subTest(point=point), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 workspace = Workspace.init(root)
-                workspace.register_dataset("tushare_stock_basic", strategy="single-file-csv")
+                workspace.register_dataset(
+                    "tushare_stock_basic",
+                    strategy="single-file-csv",
+                    spec=TUSHARE_DATASETS["tushare_stock_basic"],
+                )
                 first = self.client.query(
                     "tushare_stock_basic", list_status="L", exchange="SSE"
                 )
@@ -189,7 +199,7 @@ class StorageLoaderTests(unittest.TestCase):
                     self.assertEqual(reader.query().column("exchange").to_pylist(), ["SSE"])
 
     def test_batch_reader_holds_snapshot_while_writer_waits(self) -> None:
-        self.workspace.register_dataset("tushare_stock_basic", strategy="single-file-csv")
+        self.register("tushare_stock_basic", "single-file-csv")
         first = self.client.query("tushare_stock_basic", list_status="L", exchange="SSE")
         publisher = self.workspace.publisher("tushare_stock_basic")
         first_id = publisher.publish(first)
@@ -213,7 +223,7 @@ class StorageLoaderTests(unittest.TestCase):
         self.assertEqual(DataLoader(self.root).dataset("tushare_stock_basic").query().column("exchange").to_pylist(), ["SZSE"])
 
     def test_batch_reader_streams_without_using_eager_query_path(self) -> None:
-        self.workspace.register_dataset("tushare_daily_basic", strategy="partitioned-parquet")
+        self.register("tushare_daily_basic", "partitioned-parquet")
         table = self.client.query(
             "tushare_daily_basic",
             ts_code="000001.SZ",
@@ -246,7 +256,7 @@ class StorageLoaderTests(unittest.TestCase):
         self.assertEqual(materialized[0].schema.names, ["ts_code", "trade_date", "pe"])
 
     def test_recovery_removes_only_abandoned_and_unreachable_storage(self) -> None:
-        self.workspace.register_dataset("tushare_stock_basic", strategy="single-file-csv")
+        self.register("tushare_stock_basic", "single-file-csv")
         table = self.client.query("tushare_stock_basic", list_status="L", exchange="SSE")
         publication = self.workspace.publisher("tushare_stock_basic").publish(table)
         dataset_root = self.root / "datasets" / "tushare_stock_basic"
@@ -265,7 +275,7 @@ class StorageLoaderTests(unittest.TestCase):
         self.assertEqual(DataLoader(self.root).dataset("tushare_stock_basic").query().num_rows, table.num_rows)
 
     def test_write_gate_wait_is_cancelable_before_commit(self) -> None:
-        self.workspace.register_dataset("tushare_stock_basic", strategy="single-file-csv")
+        self.register("tushare_stock_basic", "single-file-csv")
         first = self.client.query("tushare_stock_basic", list_status="L", exchange="SSE")
         publisher = self.workspace.publisher("tushare_stock_basic")
         publication = publisher.publish(first)
@@ -290,7 +300,7 @@ class StorageLoaderTests(unittest.TestCase):
         self.assertEqual(DataLoader(self.root).dataset("tushare_stock_basic").publication_id, publication)
 
     def test_incompatible_manifest_is_read_only_failure(self) -> None:
-        self.workspace.register_dataset("tushare_stock_basic", strategy="single-file-csv")
+        self.register("tushare_stock_basic", "single-file-csv")
         manifest_path = self.root / "datasets" / "tushare_stock_basic" / "manifest.json"
         before = manifest_path.read_bytes()
         manifest = json.loads(before)
@@ -304,7 +314,7 @@ class StorageLoaderTests(unittest.TestCase):
         self.assertEqual(manifest_path.read_bytes(), incompatible)
 
     def test_incompatible_data_layout_is_read_only_failure(self) -> None:
-        self.workspace.register_dataset("tushare_stock_basic", strategy="single-file-csv")
+        self.register("tushare_stock_basic", "single-file-csv")
         manifest_path = self.root / "datasets" / "tushare_stock_basic" / "manifest.json"
         manifest = json.loads(manifest_path.read_bytes())
         manifest["data_layout_version"] = 999

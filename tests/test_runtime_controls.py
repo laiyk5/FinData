@@ -98,7 +98,7 @@ class CronManagerTests(unittest.TestCase):
                 (dataset, operation, operands)
             ),
             provider_ready=lambda _dataset: True,
-            universe_ready=lambda _dataset: True,
+            update_ready=lambda _dataset: True,
         )
 
     def test_defaults_are_disabled_and_enabled_job_fires_update(self) -> None:
@@ -115,7 +115,7 @@ class CronManagerTests(unittest.TestCase):
             self.events,
             submit=lambda *_args: self.fail("must not submit"),
             provider_ready=lambda _dataset: False,
-            universe_ready=lambda _dataset: True,
+            update_ready=lambda _dataset: True,
         )
         with self.assertRaises(ValueError):
             manager.enable("tushare_daily_basic", now=datetime(2026, 7, 20, tzinfo=UTC))

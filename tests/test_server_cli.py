@@ -60,11 +60,15 @@ class ServerCLITests(unittest.TestCase):
         self.assertTrue(json.loads(provider)["ready"])
         self.assertEqual(
             self.run_cli(
-                "dataset",
-                "universe",
-                "set",
-                "tushare_daily_basic",
-                "CSI300@latest",
+                "--json", "task", "run", "tushare_index_basic", "complete",
+                "--param", "indexes=tushare:000300.SH", "--wait",
+            )[0],
+            0,
+        )
+        self.assertEqual(
+            self.run_cli(
+                "config", "set", "dataset.tushare_daily_basic.update_symbols",
+                "--value-json", '["tushare:000300.SH@latest"]',
             )[0],
             0,
         )
@@ -75,7 +79,7 @@ class ServerCLITests(unittest.TestCase):
             "tushare_daily_basic",
             "complete",
             "--param",
-            "symbols=CSI300",
+            "symbols=tushare:000300.SH",
             "--param",
             "timerange=2026-06-29:2026-07-04",
             "--wait",
@@ -101,7 +105,10 @@ class ServerCLITests(unittest.TestCase):
             {
                 "dataset": "tushare_daily_basic",
                 "operation": "complete",
-                "operands": {"symbols": ["CSI300"], "timerange": "2026-06-29:2026-07-04"},
+                "operands": {
+                    "symbols": ["tushare:000300.SH"],
+                    "timerange": "2026-06-29:2026-07-04",
+                },
             },
         )
         handle = submitted["handle_id"]
@@ -126,7 +133,12 @@ class ServerCLITests(unittest.TestCase):
         self.assertEqual(config["value"], "<redacted>")
 
         self.run_cli(
-            "dataset", "universe", "set", "tushare_daily_basic", "CSI300@latest"
+            "--json", "task", "run", "tushare_index_basic", "complete",
+            "--param", "indexes=tushare:000300.SH", "--wait",
+        )
+        self.run_cli(
+            "config", "set", "dataset.tushare_daily_basic.update_symbols",
+            "--value-json", '["tushare:000300.SH@latest"]',
         )
         enabled = json.loads(
             self.run_cli("--json", "cron", "enable", "tushare_daily_basic")[1]
@@ -145,7 +157,7 @@ class ServerCLITests(unittest.TestCase):
 
     def test_dataset_and_provider_discovery_commands_report_registered_contracts(self) -> None:
         datasets = json.loads(self.run_cli("--json", "dataset", "ls")[1])
-        self.assertEqual(len(datasets["items"]), 4)
+        self.assertEqual(len(datasets["items"]), 5)
         described = json.loads(
             self.run_cli("--json", "dataset", "describe", "tushare_daily_basic")[1]
         )
@@ -163,7 +175,7 @@ class ServerCLITests(unittest.TestCase):
         providers = json.loads(self.run_cli("--json", "provider", "ls")[1])
         self.assertEqual(providers["items"][0]["name"], "tushare")
         statuses = json.loads(self.run_cli("--json", "dataset", "status", "--all")[1])
-        self.assertEqual(len(statuses["items"]), 4)
+        self.assertEqual(len(statuses["items"]), 5)
 
     def test_invalid_operation_is_rejected_without_creating_a_handle(self) -> None:
         with self.assertRaises(HTTPError) as caught:
@@ -176,16 +188,26 @@ class ServerCLITests(unittest.TestCase):
         caught.exception.close()
         self.assertEqual(self.request("GET", "/v1/tasks")["items"], [])
 
-    def test_structured_params_and_universe_clear_cli_forms(self) -> None:
-        self.run_cli("dataset", "universe", "set", "tushare_daily_basic", "CSI300@latest")
+    def test_structured_params_and_typed_config_cli_forms(self) -> None:
+        configured = json.loads(
+            self.run_cli(
+                "--json", "config", "set", "dataset.tushare_daily_basic.update_symbols",
+                "--value-json", '["000001.SZ"]',
+            )[1]
+        )
+        self.assertEqual(configured["value"], ["000001.SZ"])
         direct = json.loads(
-            self.run_cli("--json", "dataset", "universe", "tushare_daily_basic")[1]
+            self.run_cli(
+                "--json", "config", "get", "dataset.tushare_daily_basic.update_symbols"
+            )[1]
         )
-        self.assertEqual(direct["selectors"], ["CSI300@latest"])
+        self.assertEqual(direct["value"], ["000001.SZ"])
         cleared = json.loads(
-            self.run_cli("--json", "dataset", "universe", "clear", "tushare_daily_basic")[1]
+            self.run_cli(
+                "--json", "config", "unset", "dataset.tushare_daily_basic.update_symbols"
+            )[1]
         )
-        self.assertEqual(cleared["selectors"], [])
+        self.assertTrue(cleared["removed"])
         code, output = self.run_cli(
             "--json",
             "task",
@@ -241,12 +263,17 @@ class ServerCLITests(unittest.TestCase):
         self.assertTrue(provider["ready"])
         self.assertEqual(provider["mode"], "mock")
         self.run_cli(
-            "dataset", "universe", "set", "tushare_daily_basic", "CSI300@latest"
+            "--json", "task", "run", "tushare_index_basic", "complete",
+            "--param", "indexes=tushare:000300.SH", "--wait",
+        )
+        self.run_cli(
+            "config", "set", "dataset.tushare_daily_basic.update_symbols",
+            "--value-json", '["tushare:000300.SH@latest"]',
         )
         code, failed = self.run_cli(
             "--json",
             "task", "run", "tushare_daily_basic", "complete",
-            "--param", "symbols=CSI300",
+            "--param", "symbols=tushare:000300.SH",
             "--param", "timerange=2026-06-29:2026-07-04",
             "--wait",
         )
@@ -271,27 +298,30 @@ class ServerCLITests(unittest.TestCase):
         code, resumed = self.run_cli(
             "--json",
             "task", "run", "tushare_daily_basic", "complete",
-            "--param", "symbols=CSI300",
+            "--param", "symbols=tushare:000300.SH",
             "--param", "timerange=2026-06-29:2026-07-04",
             "--wait",
         )
         self.assertEqual(code, 0, resumed)
         self.assertEqual(json.loads(resumed)["result"]["fetched_requests"], 2)
 
-    def test_universe_validation_and_system_queue_status(self) -> None:
+    def test_removed_universe_route_and_setting_validation(self) -> None:
         with self.assertRaises(HTTPError) as caught:
             self.request(
                 "PUT",
                 "/v1/datasets/tushare_stock_basic/universe",
                 {"selectors": ["600000.SH"]},
             )
-        self.assertEqual(caught.exception.code, 400)
+        self.assertEqual(caught.exception.code, 404)
         caught.exception.close()
         with self.assertRaises(HTTPError) as caught:
             self.request(
-                "PUT",
-                "/v1/datasets/tushare_daily_basic/universe",
-                {"selectors": ["NOT-A-SYMBOL"]},
+                "POST",
+                "/v1/config",
+                {
+                    "key": "dataset.tushare_daily_basic.update_symbols",
+                    "value": ["NOT-A-SYMBOL"],
+                },
             )
         self.assertEqual(caught.exception.code, 400)
         caught.exception.close()

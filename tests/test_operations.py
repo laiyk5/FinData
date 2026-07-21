@@ -6,7 +6,7 @@ from datetime import date
 from pathlib import Path
 
 from findata import DataLoader
-from findata.operations import DatasetService, register_v1_datasets
+from findata.datasets.tushare.operations import DatasetService, register_v1_datasets
 from findata.providers.tushare import TushareClient
 from findata.storage import Workspace
 from findata.testing.tushare import MockTushareTransport
@@ -64,7 +64,7 @@ class DatasetOperationTests(unittest.TestCase):
         result = self.service.run(
             "tushare_daily_basic",
             "complete",
-            {"symbols": ["CSI300"], "timerange": "2026-06-29:2026-07-04"},
+            {"symbols": ["tushare:000300.SH"], "timerange": "2026-06-29:2026-07-04"},
         )
 
         self.assertGreaterEqual(result.fetched_requests, 3)
@@ -89,26 +89,38 @@ class DatasetOperationTests(unittest.TestCase):
         resumed = self.service.run(
             "tushare_daily_basic",
             "complete",
-            {"symbols": ["CSI300"], "timerange": "2026-06-29:2026-07-04"},
+            {
+                "symbols": ["tushare:000300.SH"],
+                "timerange": "2026-06-29:2026-07-04",
+            },
         )
         self.assertEqual(resumed.fetched_requests, 0)
         self.assertEqual(len(self.transport.requests), request_count)
 
-    def test_daily_update_uses_configured_latest_universe(self) -> None:
-        self.service.set_universe("tushare_daily_basic", ["CSI300@latest"])
+    def test_daily_update_uses_plugin_owned_update_symbols(self) -> None:
+        self.service.run(
+            "tushare_index_basic", "complete", {"indexes": ["tushare:000300.SH"]}
+        )
+        self.workspace.set_config(
+            "dataset.tushare_daily_basic.update_symbols",
+            ["tushare:000300.SH@latest"],
+        )
 
         result = self.service.run("tushare_daily_basic", "update", {})
 
         self.assertGreater(result.fetched_requests, 0)
-        status = self.service.get_universe("tushare_daily_basic")
-        self.assertEqual(status, ["CSI300@latest"])
+        status = self.workspace.get_config("dataset.tushare_daily_basic.update_symbols")
+        self.assertEqual(status, ["tushare:000300.SH@latest"])
         coverage = DataLoader(self.root).dataset("tushare_daily_basic").coverage()
         self.assertEqual(set(coverage.column("key").to_pylist()), {"000001.SZ", "600000.SH", "600519.SH"})
 
     def test_mid_backfill_failure_keeps_checkpoints_and_rerun_fetches_only_missing_work(self) -> None:
         # calendar (2), two index months (2), first daily symbol (1), then fail.
-        self.transport.fail_on_call(6, code=-1, message="injected terminal failure")
-        operands = {"symbols": ["CSI300"], "timerange": "2026-06-29:2026-07-04"}
+        self.transport.fail_on_call(7, code=-1, message="injected terminal failure")
+        operands = {
+            "symbols": ["tushare:000300.SH"],
+            "timerange": "2026-06-29:2026-07-04",
+        }
 
         with self.assertRaisesRegex(RuntimeError, "injected terminal failure"):
             self.service.run("tushare_daily_basic", "complete", operands)
@@ -150,7 +162,7 @@ class DatasetOperationTests(unittest.TestCase):
         self.service.run(
             "tushare_index_weight",
             "complete",
-            {"indexes": ["CSI300"], "timerange": "2026-06-01:2026-07-01"},
+            {"indexes": ["tushare:000300.SH"], "timerange": "2026-06-01:2026-07-01"},
         )
         self.transport.empty_next("index_weight")
 
@@ -158,7 +170,10 @@ class DatasetOperationTests(unittest.TestCase):
             self.service.run(
                 "tushare_daily_basic",
                 "complete",
-                {"symbols": ["CSI300@latest"], "timerange": "2026-07-20:2026-07-21"},
+                {
+                    "symbols": ["tushare:000300.SH@latest"],
+                    "timerange": "2026-07-20:2026-07-21",
+                },
             )
 
 

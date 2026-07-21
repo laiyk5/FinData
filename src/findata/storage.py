@@ -21,7 +21,6 @@ import pyarrow.csv as pacsv
 import pyarrow.parquet as pq
 
 from findata.contracts import DatasetSpec
-from findata.datasets.tushare import TUSHARE_DATASETS
 
 
 WORKSPACE_VERSION = 1
@@ -128,7 +127,28 @@ class Workspace:
                 raise StorageError("unsupported workspace version")
         config = root / "config.json"
         if not config.exists():
-            _atomic_json(config, {"universes": {}}, mode=0o600)
+            _atomic_json(
+                config,
+                {"config_version": 1, "revision": 0, "values": {}},
+                mode=0o600,
+            )
+        else:
+            current = _read_json(config)
+            if "config_version" not in current:
+                values = dict(current.get("values") or {})
+                universes = current.get("universes") or {}
+                if isinstance(universes, Mapping):
+                    for dataset, setting in {
+                        "tushare_daily_basic": "update_symbols",
+                        "tushare_index_weight": "update_indexes",
+                    }.items():
+                        if dataset in universes:
+                            values[f"dataset.{dataset}.{setting}"] = universes[dataset]
+                _atomic_json(
+                    config,
+                    {"config_version": 1, "revision": 0, "values": values},
+                    mode=0o600,
+                )
         (root / "config.lock").touch(mode=0o600, exist_ok=True)
         return workspace
 
@@ -141,7 +161,8 @@ class Workspace:
     ) -> None:
         if strategy not in {"single-file-csv", "partitioned-parquet"}:
             raise ValueError(f"unsupported storage strategy: {strategy}")
-        spec = spec or TUSHARE_DATASETS[name]
+        if spec is None:
+            raise ValueError("dataset registration requires a declared DatasetSpec")
         dataset_root = self.datasets_root / name
         dataset_root.mkdir(parents=True, exist_ok=True)
         (dataset_root / "snapshots").mkdir(exist_ok=True)
@@ -195,32 +216,6 @@ class Workspace:
             acquired=acquired,
         )
 
-    def set_universe(self, dataset: str, selectors: Iterable[str]) -> None:
-        values = list(dict.fromkeys(selectors))
-        if not values or any(not isinstance(value, str) or not value for value in values):
-            raise ValueError("maintenance universe must contain nonempty selectors")
-        with DatasetGate(self.root / "config.lock", exclusive=True):
-            config = _read_json(self.root / "config.json")
-            universes = dict(config.get("universes") or {})
-            universes[dataset] = values
-            config["universes"] = universes
-            _atomic_json(self.root / "config.json", config, mode=0o600)
-
-    def get_universe(self, dataset: str) -> list[str]:
-        with DatasetGate(self.root / "config.lock", exclusive=False):
-            config = _read_json(self.root / "config.json")
-            universes = config.get("universes") or {}
-            values = universes.get(dataset, []) if isinstance(universes, Mapping) else []
-            return list(values) if isinstance(values, list) else []
-
-    def clear_universe(self, dataset: str) -> None:
-        with DatasetGate(self.root / "config.lock", exclusive=True):
-            config = _read_json(self.root / "config.json")
-            universes = dict(config.get("universes") or {})
-            universes.pop(dataset, None)
-            config["universes"] = universes
-            _atomic_json(self.root / "config.json", config, mode=0o600)
-
     def set_config(self, key: str, value: Any) -> None:
         if not key or key in {"universes", "workspace_version"}:
             raise ValueError("invalid configuration key")
@@ -229,7 +224,17 @@ class Workspace:
             values = dict(config.get("values") or {})
             values[key] = value
             config["values"] = values
+            config["revision"] = int(config.get("revision", 0)) + 1
             _atomic_json(self.root / "config.json", config, mode=0o600)
+
+    def config_snapshot(self) -> dict[str, Any]:
+        with DatasetGate(self.root / "config.lock", exclusive=False):
+            config = _read_json(self.root / "config.json")
+            return {
+                "config_version": int(config.get("config_version", 1)),
+                "revision": int(config.get("revision", 0)),
+                "values": dict(config.get("values") or {}),
+            }
 
     def get_config(self, key: str, default: Any = None) -> Any:
         with DatasetGate(self.root / "config.lock", exclusive=False):
@@ -250,6 +255,7 @@ class Workspace:
             existed = key in values
             values.pop(key, None)
             config["values"] = values
+            config["revision"] = int(config.get("revision", 0)) + 1
             _atomic_json(self.root / "config.json", config, mode=0o600)
             return existed
 

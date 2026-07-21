@@ -18,8 +18,12 @@ findata-server = "findata.server_cli:main"
 [project.entry-points."findata.datasets"]
 tushare_trade_cal = "findata.datasets.tushare:trade_cal_plugin"
 tushare_stock_basic = "findata.datasets.tushare:stock_basic_plugin"
+tushare_index_basic = "findata.datasets.tushare:index_basic_plugin"
 tushare_index_weight = "findata.datasets.tushare:index_weight_plugin"
 tushare_daily_basic = "findata.datasets.tushare:daily_basic_plugin"
+
+[project.entry-points."findata.providers"]
+tushare = "findata.providers.tushare:tushare_provider_plugin"
 
 [project.optional-dependencies]
 dev = [

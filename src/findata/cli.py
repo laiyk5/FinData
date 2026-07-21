@@ -109,10 +109,14 @@ def _execute(
             value: object = {"env": args.env}
         elif args.stdin:
             value = stdin.readline().rstrip("\n")
+        elif args.value_json is not None:
+            value = _json_value(args.value_json, stdin=stdin)
         elif args.value is not None:
             value = args.value
         else:
-            raise ValueError("config set requires a value, --env, or --stdin")
+            raise ValueError(
+                "config set requires a value, --value-json, --env, or --stdin"
+            )
         return client.request("POST", "/v1/config", {"key": args.key, "value": value})
     if args.group == "config" and args.action in {"get", "ls"}:
         suffix = f"?{urlencode({'key': args.key})}" if getattr(args, "key", None) else ""
@@ -138,14 +142,6 @@ def _execute(
         return client.request(
             "GET", f"/v1/datasets/{args.dataset}/operations/{args.operation}"
         )
-    if args.group == "dataset" and args.action == "universe":
-        if args.universe_action == "set":
-            return client.request(
-                "PUT", f"/v1/datasets/{args.dataset}/universe", {"selectors": args.selectors}
-            )
-        if args.universe_action == "clear":
-            return client.request("DELETE", f"/v1/datasets/{args.dataset}/universe")
-        return client.request("GET", f"/v1/datasets/{args.dataset}/universe")
     if args.group == "task" and args.action == "run":
         operands = _params(args.param, args.params, stdin=stdin)
         submitted = client.request(
@@ -371,6 +367,7 @@ def _parser() -> argparse.ArgumentParser:
     config_set = config.add_parser("set")
     config_set.add_argument("key")
     config_set.add_argument("value", nargs="?")
+    config_set.add_argument("--value-json")
     config_set.add_argument("--env")
     config_set.add_argument("--stdin", action="store_true")
     config_get = config.add_parser("get")
@@ -397,15 +394,6 @@ def _parser() -> argparse.ArgumentParser:
     dataset_operation = dataset.add_parser("operation")
     dataset_operation.add_argument("dataset")
     dataset_operation.add_argument("operation")
-    universe = dataset.add_parser("universe")
-    universe_actions = universe.add_subparsers(dest="universe_action", required=True)
-    universe_set = universe_actions.add_parser("set")
-    universe_set.add_argument("dataset")
-    universe_set.add_argument("selectors", nargs="+")
-    universe_get = universe_actions.add_parser("get")
-    universe_get.add_argument("dataset")
-    universe_clear = universe_actions.add_parser("clear")
-    universe_clear.add_argument("dataset")
 
     task = groups.add_parser("task").add_subparsers(dest="action", required=True)
     run = task.add_parser("run")
@@ -497,12 +485,7 @@ def _completion_script(shell: str) -> str:
 
 
 def _normalize_aliases(arguments: list[str]) -> None:
-    for index in range(len(arguments) - 2):
-        if arguments[index : index + 2] != ["dataset", "universe"]:
-            continue
-        if arguments[index + 2] not in {"get", "set", "clear"}:
-            arguments.insert(index + 2, "get")
-        return
+    return
 
 
 def _validate_cli_args(args: argparse.Namespace, *, output_format: str = "human") -> None:
@@ -518,13 +501,33 @@ def _validate_cli_args(args: argparse.Namespace, *, output_format: str = "human"
         if getattr(args, "follow", False) and output_format == "json":
             raise CLIUsageError("--follow is a stream; use --format JSONL instead of JSON")
     if args.group == "config" and args.action == "set":
-        sources = sum((args.value is not None, bool(args.env), bool(args.stdin)))
+        sources = sum(
+            (
+                args.value is not None,
+                args.value_json is not None,
+                bool(args.env),
+                bool(args.stdin),
+            )
+        )
         if sources != 1:
             raise ValueError("config set requires exactly one value source")
         lowered = args.key.lower()
         secret = any(word in lowered for word in ("token", "secret", "password", "credential"))
-        if secret and args.value is not None:
+        if secret and (args.value is not None or args.value_json is not None):
             raise ValueError("secret configuration must use --stdin or --env")
+
+
+def _json_value(source: str, *, stdin: TextIO) -> object:
+    if source == "-":
+        text = stdin.read()
+    elif source.startswith("@"):
+        text = Path(source[1:]).read_text(encoding="utf-8")
+    else:
+        text = source
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"invalid configuration JSON: {exc.msg}") from exc
 
 
 def _result_record_type(args: argparse.Namespace) -> str:
