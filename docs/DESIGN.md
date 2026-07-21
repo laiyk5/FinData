@@ -162,9 +162,11 @@ their explicit operands and never mutate plugin settings implicitly.
 
 ## Transactional dataset storage
 
-Solution B is the sole v1 storage architecture: one DuckDB file per dataset, owned by the core
-storage adapter. Dataset plugins never open the database, issue SQL, choose a query engine, or
-define a private physical layout. They provide validated Arrow batches plus a declarative mutation
+Solution B is the sole v1 storage architecture for every registered tabular dataset: one DuckDB
+file per dataset, owned by the core storage adapter. Dataset structure changes the logical schema,
+keys, coverage contract, and allowed mutation scopes, but never selects another storage engine,
+private physical layout, or query implementation. Dataset plugins never open the database, issue
+SQL, or choose a query engine. They provide validated Arrow batches plus a declarative mutation
 scope such as complete replacement or key/time-range replacement.
 
 This decision trades immutable historical views and file-format transparency for bounded storage,
@@ -175,6 +177,10 @@ database adds a pinned runtime dependency, opaque internal files, explicit conne
 and benchmark obligations; the following contracts accept and contain those costs. Historical
 revisions, backup/export, and cross-host database service are separate future features rather than
 implicit side effects of ordinary updates.
+
+This is a v1 tabular boundary, not a claim that DuckDB must store every future kind of data. A
+fundamentally non-tabular dataset or a second storage backend requires an architectural revision and
+core adapter contract; a dataset plugin cannot introduce either as a private exception.
 
 The adapter stages provider work and validation before opening the database for writing. Under the
 exclusive dataset gate it opens one read/write connection, begins a transaction, applies data and

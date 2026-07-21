@@ -99,7 +99,8 @@ Toolkit components are opt-in plugin helpers. The core DuckDB adapter is not a t
 
 ## Storage and reader development
 
-Solution B uses one DuckDB file and one cross-process gate per dataset. Core owns database creation,
+Every v1 tabular dataset uses Solution B: one DuckDB file and one cross-process gate per dataset.
+Plugins cannot select a storage engine or private reader. Core owns database creation,
 metadata tables, parameterized SQL, transactions, coverage mutation, revision assignment, Arrow
 results, checkpointing, and recovery. Plugins provide only registered mutation scopes and validated
 Arrow input.
