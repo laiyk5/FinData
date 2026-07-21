@@ -14,6 +14,11 @@ Every component is documented as:
 
 Toolkit components are plugin-side helpers. DataLoader reader adapters and query-engine selection belong to the core read layer, not to this toolkit.
 
+Toolkit implementations live under the `findata.toolkit` package. Core modules never import that
+package. Dataset plugins opt into individual toolkit components and remain responsible for adapting
+their public operands and settings to dataset-neutral toolkit inputs. Toolkit code may depend on
+stable public core contracts, but never on a concrete dataset or provider implementation.
+
 ## Storage writers
 
 - **purpose**: implement reusable physical write layouts while producing the declarative metadata required by the corresponding core reader strategy
@@ -67,12 +72,17 @@ Toolkit components are plugin-side helpers. DataLoader reader adapters and query
 
 ## Constituent-set resolver
 
-- **purpose**: let operation arguments and configured maintenance universes reference index constituents symbolically
+- **purpose**: resolve a dataset plugin's already-parsed request for index constituents
 - **requires**: a constituent dataset declared in `dependencies`
-- **interface**:
-  - `CSI300@202606` — constituents at 2026-06
-  - `CSI300@latest` — constituents for the month containing the consuming operation's latest due date; older covered data is not a silent fallback
-  - `CSI300` — the union over the operation's time range
+- **interface**: accept a semantic request containing the dependency key and one of:
+  - an explicit membership month;
+  - `latest-due`, resolved against the consuming operation's latest due date; or
+  - `range-union`, resolved over the consuming operation's time range
+- **boundary**: the toolkit never parses a CLI string, configuration value, provider reference, or
+  friendly alias. The consuming dataset plugin owns those syntaxes, validates them against any
+  provider catalog it uses, and passes the exact dependency key to the resolver.
+- **identity rule**: preserve the exact dependency key supplied by the plugin; never infer or
+  transform it
 - **fulfillment**: query the dependency with required coverage; on `CoverageError`, convert the missing index and intervals into its declared coverage requirement, request fulfillment through the TaskRunner, and retry once
 
 ## Mock API

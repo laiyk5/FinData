@@ -23,6 +23,12 @@ Define and document:
 6. an optional lightweight authenticated readiness probe;
 7. mock behavior for success, empties, rate limiting, and failures.
 
+If a provider exposes an instrument-reference catalog, preserve its identifiers as opaque values,
+record the catalog source and synchronization behavior, and keep endpoint-capability checks
+separate from catalog membership. Do not implement cross-provider identity by transforming codes or
+matching names. Catalog synchronization and lookup belong to provider-specific dataset plugins, not
+to core findata.
+
 Provider code never logs or returns credentials. Every external request, including readiness probes, goes through the shared provider limiter.
 
 ## Adding a dataset plugin
@@ -30,7 +36,7 @@ Provider code never logs or returns credentials. Every external request, includi
 Before implementation, add its canonical entry to [DATASETS.md](DATASETS.md). Then define:
 
 1. provider, logical Arrow schema, and keys;
-2. capabilities and maintenance-universe mode;
+2. capabilities and any typed plugin settings, including defaults, normalization, help, and update-readiness rules;
 3. publication window, schedule, and missing-data policy;
 4. dependencies and optional fulfillment requirement schema;
 5. operation entry points and operand JSON schemas;
@@ -39,6 +45,36 @@ Before implementation, add its canonical entry to [DATASETS.md](DATASETS.md). Th
 8. mock generator and dataset-specific tests.
 
 The plugin performs provider fetch, transformation, validation, and staged writing. It does not define public DataLoader query semantics or import itself on the read path.
+
+Dataset settings use keys under `dataset.<dataset-name>.*`. The generic configuration service
+routes such a key and candidate JSON value to the registered owner plugin, then commits the returned
+normalized value atomically. Unknown keys or invalid values leave configuration unchanged. Core
+configuration, CLI, cron, and task code never parses a symbol, selector, provider reference, or
+other dataset-specific value. Each task receives one immutable snapshot of its plugin settings and
+their revision; the plugin alone derives parameterless `update` work and readiness from it.
+Normalization must be deterministic and side-effect-free. It may read the committed data of a
+declared dependency through the public DataLoader, but must not call a provider, fulfill the
+dependency, submit a task, or import that dependency's plugin. If required validation data is not
+initialized, return an error with the ordinary dataset operation the user should run first.
+
+## Module organization and import boundaries
+
+Use the following package-level separation as the codebase grows:
+
+- core services, public contracts, the DataLoader, server, CLI, storage reader adapters, tasks,
+  configuration, cron, and events live outside concrete provider and dataset packages;
+- built-in concrete dataset plugins live under `findata.datasets.<provider>`;
+- built-in provider transports and clients live under `findata.providers.<provider>`;
+- reusable opt-in plugin helpers live under `findata.toolkit`; and
+- provider mocks and test-only helpers live under `findata.testing` and are loaded only by an
+  explicitly selected mock adapter.
+
+Core modules must not import `findata.toolkit`, a concrete dataset package, or a concrete provider
+package. Discovery crosses that boundary through entry points and declared contracts. A dataset
+plugin may import public core contracts, its provider adapter, and selected toolkit components. A
+toolkit component may import public core contracts but never a concrete dataset or provider. Keep
+dataset-specific setting schemas, parsers, selector syntax, and orchestration inside its plugin
+package even when they use a toolkit resolver after parsing.
 
 ## Adding a toolkit component
 

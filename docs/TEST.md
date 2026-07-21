@@ -24,6 +24,7 @@ Cover small components and boundary cases, especially:
 - rate-limit accounting;
 - cron/timezone calculation;
 - manifest and configuration validation;
+- plugin-setting schema validation, normalization, immutable task snapshots, and update readiness;
 - query-filter translation;
 - task and handle state transitions.
 
@@ -37,7 +38,11 @@ Every dataset has a deterministic mock generator matching its schema and respons
 - rate limiting and retries;
 - transformation and validation failures;
 - partial backfills and reruns;
-- index-selector month expansion, including failure rather than stale fallback for unavailable `@latest` coverage.
+- dataset-owned index-selector parsing and month expansion, including failure rather than stale
+  fallback for unavailable `@latest` coverage;
+- provider index-catalog synchronization across declared markets, exact provider-ID preservation,
+  unknown references, and the distinction between catalog membership and confirmed
+  `index_weight` availability;
 
 A provider-family harness may share envelope and failure simulation, but row generation remains dataset-specific.
 
@@ -50,6 +55,10 @@ Exercise real component boundaries:
 - dependency fulfillment and parent retry;
 - provider limiter shared by concurrent tasks;
 - CLI to authenticated HTTP API;
+- generic configuration routing to the owning plugin, including atomic rejection without mutation;
+- local setting validation through a declared dependency's committed DataLoader snapshot, with no
+  provider call, task submission, plugin import, or implicit fulfillment;
+- cron readiness derived by the plugin from an immutable settings snapshot;
 - cron to TaskRunner submission;
 - event persistence and acknowledgement;
 - DataLoader reader/writer locking.
@@ -62,7 +71,10 @@ After a change appears complete, run a minimal representative operation and quer
 
 E2E tests use real user surfaces. CLI tests execute commands and inspect stdout, stderr, exit codes, and structured output. A future web UI must be tested by opening it and exercising the relevant controls.
 
-The primary required E2E scenario is the workflow in [USER.md](USER.md#quick-start): configure a mocked Tushare provider, set a CSI 300 universe, backfill `tushare_daily_basic`, fulfill dependencies, query covered data, enable cron, inject a failure, and verify that rerunning resumes unresolved intervals.
+The primary required E2E scenario is the workflow in [USER.md](USER.md#quick-start): configure a
+mocked Tushare provider, synchronize its index catalog, backfill `tushare_daily_basic`, configure
+the plugin's `update_symbols`, fulfill dependencies, query covered data, enable cron, inject a
+failure, and verify that rerunning resumes unresolved intervals.
 
 The reserved token `findata-mock` selects the deterministic Tushare mock without contacting the
 provider. `findata-mock:fail=<api>@<call>` injects one terminal failure at the numbered call to that
@@ -164,6 +176,15 @@ Every supported reader strategy is tested for equivalent behavior across:
 - unsupported key/time queries;
 - low-memory batch reads;
 - reader-adapter errors without importing dataset plugins.
+
+## Package-boundary checks
+
+Automated import checks reject dependencies from core modules to `findata.toolkit`, built-in
+dataset packages, built-in provider packages, or `findata.testing`. They also reject toolkit
+imports of concrete datasets or providers and read-path imports of maintenance plugins. Positive
+fixtures prove that entry-point discovery works and that a dataset plugin can use public core
+contracts, its provider adapter, and selected toolkit components. Explicit mock mode is the only
+runtime path allowed to load `findata.testing`.
 
 ## Test ordering
 

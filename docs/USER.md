@@ -18,25 +18,41 @@ The representative workflow below configures Tushare, backfills CSI 300 daily va
 
 ```bash
 # Terminal 1
-export TUSHARE_API_TOKEN=...
 findata-server init ~/market-data
 findata-server start ~/market-data
 
 # Terminal 2
 cd ~/market-data
-findata config set provider.tushare.token --env TUSHARE_API_TOKEN
+# Paste the token and press Enter; it is not placed in shell history.
+findata config set provider.tushare.token --stdin
 findata provider check tushare
 
-findata dataset universe set tushare_daily_basic CSI300@latest
+findata task run tushare_index_basic update --wait
 findata task run tushare_daily_basic complete \
-  --param symbols=CSI300 \
-  --param timerange=2020-01-01:today \
+  --param symbols=tushare:000300.SH \
+  --param timerange=2026-06-29:2026-07-04 \
   --follow
 
+findata config set dataset.tushare_daily_basic.update_symbols \
+  --value-json '["tushare:000300.SH@latest"]'
 findata cron enable tushare_daily_basic
 ```
 
-The half-open backfill ends before today and uses the historical union of CSI 300 constituents over its requested range. Recurring `update` operations catch subsequent due dates and require the constituent month containing each latest due trading date. Rerunning a failed backfill skips resolved coverage and resumes its remaining intervals.
+The half-open sample backfill uses the historical union of CSI 300 constituents over its requested
+range. Rerunning a failed backfill skips resolved coverage and resumes its remaining intervals.
+The separate `update_symbols` setting belongs to `tushare_daily_basic`; its plugin parses the
+constituent selector and uses it only for later parameterless `update` operations. Recurring updates
+therefore resolve the constituent month containing each latest due trading date.
+
+Within the Tushare plugins, `tushare:000300.SH` preserves an exact provider index reference from the
+`tushare_index_basic` catalog. The bare reference in `complete` means the historical constituent
+union over that backfill range; `@latest` is a plugin-defined suffix for future updates. Core
+findata configuration and CLI code treat both values as opaque strings.
+
+For another Tushare index, query the synchronized `tushare_index_basic` dataset through DataLoader
+and copy its exact `ts_code` into the same plugin-owned `tushare:<ts_code>` form. A catalog match
+identifies the provider object but does not guarantee index-weight permission or historical
+coverage.
 
 ## Workspace selection
 
@@ -150,7 +166,10 @@ Help, version, and shell-completion generation are not subject to structured out
 
 Dataset-specific operands are defined in [DATASETS.md](DATASETS.md). CLI date ranges use `start:end` and are half-open: the start is included and the end is excluded. Dates use `YYYY-MM-DD`; `today` is resolved once in the dataset timezone to the current date, so it excludes the current date when used as the end. For example, `2026-06-01:2026-07-01` covers all of June.
 
-A scalar passed for an array operand is coerced to one element, so `--param symbols=CSI300` is equivalent to `{"symbols":["CSI300"]}` in structured operands. Repeated values are deduplicated after validation. Empty or reversed ranges and empty required arrays are rejected.
+A scalar passed for an array operand is coerced to one element, so
+`--param symbols=tushare:000300.SH` is equivalent to
+`{"symbols":["tushare:000300.SH"]}` in structured operands. Repeated values are deduplicated after
+validation. Empty or reversed ranges and empty required arrays are rejected.
 
 ### Task lifecycle
 
@@ -184,13 +203,11 @@ Canceling one coalesced handle makes that handle `canceled` immediately while an
 ### Datasets
 
 - `dataset ls`
-- `dataset describe <name>` — show provider readiness, capabilities, dependencies, universe, timing, storage, and status metadata.
+- `dataset describe <name>` — show provider readiness, capabilities, dependencies, declared
+  settings, timing, storage, and status metadata.
 - `dataset operations <name>`
 - `dataset operation <name> <operation>` — show operand schema, defaults, syntax, and examples.
 - `dataset status <name>` / `dataset status --all`
-- `dataset universe <name>` — show configured selectors.
-- `dataset universe set <name> <selector>...` — replace selectors after validation; this does not fetch data.
-- `dataset universe clear <name>` — clear selectors and prevent a configured-universe `update` from running.
 
 ### Providers
 
@@ -207,7 +224,8 @@ Provider commands never display credentials.
 - `cron set <dataset> --expression CRON --timezone IANA_ZONE`
 - `cron reset <dataset>` — restore the plugin's suggested schedule without changing enabled state.
 
-Automatic maintenance is opt-in. A job must have a ready provider and, when required, a nonempty maintenance universe.
+Automatic maintenance is opt-in. A job must have a ready provider and its dataset plugin must report
+that the configured settings are sufficient for `update`.
 
 Cron expressions are evaluated in the job's IANA timezone. A local wall time that does not exist because of a daylight-saving jump is skipped and records a warning event. A wall time that occurs twice runs once, at its first occurrence. Jobs missed while the server is down record a missed-job event after restart and are not submitted automatically.
 
@@ -223,11 +241,18 @@ Events include task failures, queue rejections, liveness escalations, and skippe
 
 - `config ls` / `config get [key]` — secret values are always redacted.
 - `config set <key> <value>` — set a non-secret value.
+- `config set <key> --value-json JSON|@file|-` — set a typed JSON value.
 - `config set <key> --stdin` — store a literal secret without placing it in shell history.
 - `config set <key> --env <variable>` — store an environment-variable reference; recommended for provider tokens.
 - `config unset <key>`
 
 v1 intentionally has no command for revealing a stored secret.
+
+Keys under `dataset.<dataset-name>.*` are owned by that dataset plugin. Core findata transports and
+stores the value but does not interpret it. The plugin declares its setting names and schemas,
+normalizes values, reports update readiness, and provides setting-specific help through
+`dataset describe`. Unknown dataset settings and invalid values are rejected before configuration
+is changed.
 
 ### Completion
 

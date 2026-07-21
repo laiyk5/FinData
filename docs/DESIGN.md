@@ -49,17 +49,20 @@ Features that do not materially support this story may be deferred from v1.
 - **Resolved coverage** — one continuous half-open `[start, end)` interval per partition key
 - **Coverage record** — the materialized per-key resolved coverage
 - **Publication snapshot** — one immutable, self-consistent view of data and, when applicable, coverage
-- **Maintenance universe** — the partition keys currently maintained by parameterless `update`
+- **Dataset setting** — a typed, plugin-owned configuration value used by that dataset's operations
 - **Coverage requirement** — a target-dataset-defined declaration of data needed by a dependent task
 
 ## Architectural boundaries
 
 - The server owns orchestration, writes, configuration mutation, cron, events, and task state.
-- Dataset plugins own provider fetch, transformation, validation, operation behavior, and staged writes.
+- Dataset plugins own provider fetch, transformation, validation, settings schemas and parsing,
+  operation behavior, and staged writes.
 - Toolkit components are optional plugin-side helpers; the server does not depend on them.
 - Manifests are the read-side boundary. DataLoader never imports dataset maintenance plugins.
 - DataLoader owns uniform query semantics, coverage checks, snapshot locking, Arrow results, reader adapters, and query-engine selection.
 - The CLI is a thin HTTP client. It collects syntax and formats output; the server owns validation and policy.
+- Core modules load concrete providers and datasets only through registered contracts. They never
+  import concrete plugin modules or the optional toolkit package.
 
 ## Workspace and server
 
@@ -81,9 +84,22 @@ The server owns one token bucket per provider. A task obtains a permit through t
 
 ## Dataset registration and manifests
 
-Dataset plugins are discovered through the `findata.datasets` entry-point group. Registration validates providers, dependencies, operation/operand schemas, storage strategy, manifest compatibility, and dependency cycles.
+Dataset plugins are discovered through the `findata.datasets` entry-point group. Registration validates providers, dependencies, operation/operand schemas, optional settings schemas, storage strategy, manifest compatibility, and dependency cycles.
 
 Every dataset exposes a parameterless `update` operation. Additional operations may include `complete` for explicit backfill and `refresh` for re-fetching strictly inside existing coverage. Datasets also declare plain read-side status queries; an uninitialized dataset reports that state without executing them.
+
+A plugin may declare typed settings under `dataset.<dataset-name>.*`. The generic configuration API
+stores values atomically but delegates schema validation, normalization, readiness, and meaning to
+the owning plugin. Core configuration and CLI code never parses selectors, symbols, constituent
+references, or another dataset-specific value. An operation receives one immutable settings
+snapshot for its execution; changing a setting affects later submissions only.
+
+Setting normalization is deterministic, local, and side-effect-free. A plugin may inspect a
+committed snapshot of a declared dependency for validation, but configuration never performs a
+provider request, fulfills a dependency, submits a task, or imports the dependency's plugin.
+Unavailable validation data produces an actionable error naming the dataset operation that can
+create it. Removing a recognized setting is allowed and may make `update` unready; it never deletes
+published data.
 
 A new dataset receives an `uninitialized` manifest with no publication snapshot. Its first successful publication—including a legitimately empty snapshot—changes it to `ready`. This distinguishes absent data from a resolved empty result.
 
@@ -102,7 +118,7 @@ Online data-layout migration is outside v1. An installed plugin or core reader i
 
 Canonical per-plugin contracts live in [DATASETS.md](DATASETS.md).
 
-## Update timing, coverage, and universe
+## Update timing, coverage, and settings
 
 For each target interval, publication timing classifies data as:
 
@@ -114,12 +130,11 @@ Under `strict`, an after-window empty is a failure. Under `accept-empty`, it res
 
 Time-accumulating datasets using `strict` or `accept-empty` keep one continuous coverage interval per partition key. New resolved intervals must abut or overlap existing coverage. Coverage means that every due observation in the dataset's declared observation domain within that civil-time interval is resolved; a non-due weekend, holiday, or non-observation month does not create a gap or imply that a row exists. Snapshot datasets have no coverage record.
 
-A maintenance universe is either:
-
-- **intrinsic** — the operation naturally fetches the complete dataset or has no configurable key set;
-- **configured** — validated selectors are stored in workspace configuration and resolved for the latest due interval using only declared dependencies.
-
-Keys leaving a configured universe remain queryable but stop extending. Newly selected keys begin at the latest due interval; historical data requires an explicit backfill. A configured dataset with an empty universe rejects `update`, and one-time operations never mutate the universe implicitly.
+Each plugin defines how parameterless `update` selects its work. A complete-snapshot dataset may
+need no settings; another dataset may require plugin-defined symbols, selectors, or other values.
+The plugin reports update readiness from its settings and returns an actionable validation error
+when required configuration is missing. One-time operations use their explicit operands and never
+mutate plugin settings implicitly.
 
 ## Storage publication
 
@@ -169,7 +184,7 @@ One task execution holds the dataset mutex. Additional executions wait in that d
 
 ## crond and events
 
-Every suggested dataset schedule appears as a disabled default job; automatic maintenance is opt-in. Workspace configuration owns enabled state and schedule/timezone overrides. Schedules are evaluated in their declared IANA timezone using the daylight-saving behavior defined in [USER.md](USER.md#cron). Market jobs should use the exchange timezone. Enabling and firing validate the operation, provider readiness, and configured universe. A failed precondition skips submission and records an actionable event.
+Every suggested dataset schedule appears as a disabled default job; automatic maintenance is opt-in. Workspace configuration owns enabled state and schedule/timezone overrides. Schedules are evaluated in their declared IANA timezone using the daylight-saving behavior defined in [USER.md](USER.md#cron). Market jobs should use the exchange timezone. Enabling and firing validate the operation, provider readiness, and plugin-reported update readiness. A failed precondition skips submission and records an actionable event.
 
 Enabled jobs missed during downtime are recorded but not run automatically. The user decides whether to submit the corresponding update.
 
@@ -208,7 +223,7 @@ Workspace configuration is the single source of truth for:
 
 - display timezone;
 - provider credentials and rate limits;
-- dataset maintenance-universe selectors;
+- plugin-declared dataset settings;
 - cron enabled state and schedule overrides;
 - HTTP port, task concurrency, and dependency-depth limits.
 
