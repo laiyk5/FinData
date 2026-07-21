@@ -338,6 +338,10 @@ class CLIOutput:
         if self.output_format == "jsonl":
             self._jsonl({"message": message}, "task.log")
         elif self.output_format == "human":
+            # Follow logs and Rich progress use separate Python streams but share
+            # one physical terminal. Close the live region before writing a
+            # persistent line so Rich can erase it from the correct cursor row.
+            self.finish_progress()
             self.stdout.write(f"{message}\n")
             self.stdout.flush()
 

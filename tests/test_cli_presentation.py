@@ -281,6 +281,27 @@ class ProgressPresentationTests(unittest.TestCase):
         self.assertEqual(stderr.getvalue(), "... fetching data\n")
         self.assertIsNone(output._progress)
 
+    @patch("findata.presentation.Progress")
+    def test_persistent_follow_log_stops_live_progress_first(self, progress_type) -> None:
+        output = CLIOutput(
+            output_format="human",
+            color_mode="auto",
+            stdout=TTYBuffer(),
+            stderr=TTYBuffer(),
+            environ={},
+        )
+        progress = progress_type.return_value
+        progress.add_task.return_value = 7
+        output._accepted_at = 0
+
+        with patch("findata.presentation.time.monotonic", return_value=1):
+            output.state({"status": "running", "stage": "fetching:data"})
+        output.log("provider request completed")
+
+        progress.stop.assert_called_once_with()
+        self.assertIsNone(output._progress)
+        self.assertEqual(output.stdout.getvalue(), "provider request completed\n")
+
 
 if __name__ == "__main__":
     unittest.main()
