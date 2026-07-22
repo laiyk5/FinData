@@ -44,6 +44,11 @@ class TushareProviderRuntime:
 
         return operation_description(*args, **kwargs)
 
+    def plan_operation(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        from findata.datasets.tushare.operations import plan_operation
+
+        return plan_operation(*args, **kwargs)
+
     def resolve_dependency(self, *args: Any, **kwargs: Any) -> tuple[str, dict[str, object]]:
         from findata.datasets.tushare.operations import resolve_v1_dependency
 

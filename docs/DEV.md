@@ -208,6 +208,11 @@ printing a diagnostic, detachment notice, error, or terminal summary. Redirected
 the existing newline-delimited plain-text fallback. Rich never renders JSON or JSONL. Rendering
 failures must not change task execution or corrupt a structured result.
 
+Dataset operation shortcuts and shell completion are generated from provider/plugin metadata; core
+CLI code must not contain a dataset-name switch or parse selector syntax. The generic task transport
+remains canonical. Quiet, verbose, and no-progress modes are presentation policies and must not
+alter requests, task execution, or structured records.
+
 Identifier-prefix resolution belongs to the server-side resource store, not the CLI. The CLI sends
 the operand unchanged. Under the same lock used to access retained resources, the resolver gives an
 exact match precedence, validates the minimum prefix length, and returns either one full identifier

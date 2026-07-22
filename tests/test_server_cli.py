@@ -396,6 +396,66 @@ class ServerCLITests(unittest.TestCase):
         self.assertEqual(status["running_tasks"], 0)
         self.assertEqual(status["queue_lengths"], {})
 
+    def test_dataset_shortcut_dry_run_is_side_effect_free(self) -> None:
+        before = self.request("GET", "/v1/tasks")["items"]
+
+        code, rendered = self.run_cli(
+            "--json",
+            "dataset",
+            "complete",
+            "tushare_daily_basic",
+            "--symbols",
+            "000001.SZ",
+            "--from",
+            "2026-07-17",
+            "--to",
+            "2026-07-20",
+            "--dry-run",
+        )
+
+        self.assertEqual(code, 0, rendered)
+        plan = json.loads(rendered)
+        self.assertTrue(plan["dry_run"])
+        self.assertEqual(plan["dataset"], "tushare_daily_basic")
+        self.assertEqual(plan["operation"], "complete")
+        self.assertEqual(plan["operands"]["symbols"], ["000001.SZ"])
+        self.assertEqual(plan["operands"]["timerange"], "2026-07-17:2026-07-20")
+        self.assertEqual(self.request("GET", "/v1/tasks")["items"], before)
+
+    def test_retry_and_explain_use_retained_normalized_request(self) -> None:
+        submitted = self.request(
+            "POST",
+            "/v1/tasks",
+            {
+                "dataset": "tushare_trade_cal",
+                "operation": "complete",
+                "operands": {
+                    "exchanges": ["SSE"],
+                    "timerange": "2026-07-17:2026-07-20",
+                },
+            },
+        )
+        original = self.wait_http(str(submitted["handle_id"]))
+
+        explained = self.request("GET", f"/v1/tasks/{original['handle_id']}/explain")
+        self.assertEqual(explained["handle_id"], original["handle_id"])
+        self.assertEqual(explained["status"], "succeeded")
+        self.assertIn("inspection", explained)
+
+        code, rendered = self.run_cli(
+            "--json", "task", "retry", str(original["handle_id"])[:8], "--wait"
+        )
+        self.assertEqual(code, 0, rendered)
+        terminal = json.loads(rendered)
+        self.assertNotEqual(terminal["handle_id"], original["handle_id"])
+        self.assertEqual(terminal["status"], "succeeded")
+
+    def test_dynamic_completion_reads_live_server_metadata(self) -> None:
+        code, output = self.run_cli("_complete", "dataset", "complete", "")
+
+        self.assertEqual(code, 0)
+        self.assertIn("tushare_daily_basic", output.splitlines())
+
     def run_cli(self, *arguments: str, stdin_text: str = "") -> tuple[int, str]:
         stdout = io.StringIO()
         stderr = io.StringIO()

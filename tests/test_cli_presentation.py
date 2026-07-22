@@ -302,6 +302,57 @@ class ProgressPresentationTests(unittest.TestCase):
         self.assertIsNone(output._progress)
         self.assertEqual(output.stdout.getvalue(), "provider request completed\n")
 
+    @patch("findata.presentation.Progress")
+    def test_progress_includes_server_metrics_elapsed_and_eta(self, progress_type) -> None:
+        output = CLIOutput(
+            output_format="human",
+            color_mode="auto",
+            stdout=TTYBuffer(),
+            stderr=TTYBuffer(),
+            environ={},
+        )
+        progress_type.return_value.add_task.return_value = 1
+        output._accepted_at = 1
+
+        with patch("findata.presentation.time.monotonic", return_value=3):
+            output.state(
+                {
+                    "status": "running",
+                    "stage": "fetching:data",
+                    "progress": {
+                        "current": 2,
+                        "total": 4,
+                        "provider_requests": 2,
+                        "rows_fetched": 12000,
+                        "checkpoints": 1,
+                    },
+                }
+            )
+
+        description = progress_type.return_value.add_task.call_args.args[0]
+        self.assertIn("2 requests", description)
+        self.assertIn("12,000 rows", description)
+        self.assertIn("1 checkpoint", description)
+        self.assertIn("2 s elapsed", description)
+        self.assertIn("ETA 2 s", description)
+
+    @patch("findata.presentation.Progress")
+    def test_no_progress_uses_plain_status_without_rich(self, progress_type) -> None:
+        stderr = TTYBuffer()
+        output = CLIOutput(
+            output_format="human",
+            color_mode="auto",
+            stdout=TTYBuffer(),
+            stderr=stderr,
+            environ={},
+            progress_enabled=False,
+        )
+
+        output.state({"status": "running", "stage": "fetching:data"})
+
+        progress_type.assert_not_called()
+        self.assertIn("fetching data", stderr.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()

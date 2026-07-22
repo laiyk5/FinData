@@ -141,6 +141,14 @@ Snapshot tests normalize nondeterministic timestamps, durations, paths, and iden
 their labels and shapes. Semantic assertions accompany snapshots so a cosmetically accepted update
 cannot hide a missing status, result, or recovery instruction.
 
+CLI workflow tests cover schema-derived dataset operation flags and their generic `task run`
+equivalence; side-effect-free dry runs with complete and incomplete local dependencies; retry using
+normalized historical operands and current configuration; read-only explanation of nested failures;
+watch attachment; dynamic completion and offline fallback; quiet, verbose, and no-progress policies;
+and progress metrics for provider requests, rows, checkpoints, elapsed time, and ETA. Tests assert
+that dry-run creates no task record, provider request, event, configuration revision, dataset
+revision, or publication.
+
 ## Crash and concurrency matrix
 
 Crash-safety claims require deterministic fault injection at least at:

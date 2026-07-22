@@ -301,6 +301,33 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                         },
                     )
                     return
+                if (
+                    method == "POST"
+                    and len(parts) == 6
+                    and parts[:2] == ["v1", "datasets"]
+                    and parts[3] == "operations"
+                    and parts[5] == "plan"
+                ):
+                    dataset, operation = parts[2], parts[4]
+                    body = self._body()
+                    runtime = app._runtime_for_dataset(dataset)
+                    operands = runtime.normalize_operation(
+                        dataset,
+                        operation,
+                        dict(body.get("operands") or {}),
+                        today=app.today,
+                    )
+                    self._send(
+                        HTTPStatus.OK,
+                        runtime.plan_operation(
+                            app.workspace,
+                            dataset,
+                            operation,
+                            operands,
+                            today=app.today,
+                        ),
+                    )
+                    return
                 if method == "GET" and parts == ["v1", "tasks"]:
                     items = app.taskrunner.list_handles(
                         dataset=_query_one(query, "dataset"),
@@ -347,6 +374,49 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                         else:
                             result = app.taskrunner.cancel(current.handle_id)
                             self._send(HTTPStatus.OK, asdict(result))
+                        return
+                    if method == "POST" and parts[3:] == ["retry"]:
+                        retained = app.taskrunner.retained_request(handle_id)
+                        handle = app.taskrunner.submit(
+                            str(retained["dataset"]),
+                            str(retained["operation"]),
+                            dict(retained["operands"]),
+                            owner="retry",
+                        )
+                        self._send(
+                            HTTPStatus.ACCEPTED,
+                            {
+                                "handle_id": handle,
+                                "execution_id": app.taskrunner.status(handle).execution_id,
+                                "retried_from": retained["handle_id"],
+                            },
+                        )
+                        return
+                    if method == "GET" and parts[3:] == ["explain"]:
+                        record, subscribers = app.taskrunner.status_with_subscriber_count(handle_id)
+                        logs = app.taskrunner.logs(record.handle_id)
+                        diagnostics = [
+                            item
+                            for item in logs
+                            if isinstance(item, dict) and item.get("type") == "task.diagnostic"
+                        ]
+                        self._send(
+                            HTTPStatus.OK,
+                            {
+                                "handle_id": record.handle_id,
+                                "dataset": record.dataset,
+                                "operation": record.operation,
+                                "status": record.status,
+                                "reason": record.reason or record.error,
+                                "diagnostics": diagnostics,
+                                "subscriber_count": subscribers,
+                                "inspection": {
+                                    "status": f"findata task status {record.handle_id}",
+                                    "logs": f"findata task logs {record.handle_id}",
+                                    "retry": f"findata task retry {record.handle_id}",
+                                },
+                            },
+                        )
                         return
                 if method == "POST" and parts == ["v1", "config"]:
                     body = self._body()

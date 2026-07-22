@@ -30,9 +30,7 @@ class OperationNormalizationTests(unittest.TestCase):
         with self.assertRaises(OperandError):
             normalize_operation("unknown", "update", {}, today=date(2026, 7, 20))
         with self.assertRaises(OperandError):
-            normalize_operation(
-                "tushare_stock_basic", "complete", {}, today=date(2026, 7, 20)
-            )
+            normalize_operation("tushare_stock_basic", "complete", {}, today=date(2026, 7, 20))
         with self.assertRaises(OperandError):
             normalize_operation(
                 "tushare_trade_cal",
@@ -62,11 +60,15 @@ class WorkspaceResolutionTests(unittest.TestCase):
             nested.mkdir(parents=True)
 
             self.assertEqual(
-                resolve_workspace(explicit, environ={"FINDATA_WORKSPACE": str(environment)}, cwd=nested),
+                resolve_workspace(
+                    explicit, environ={"FINDATA_WORKSPACE": str(environment)}, cwd=nested
+                ),
                 explicit.resolve(),
             )
             self.assertEqual(
-                resolve_workspace(None, environ={"FINDATA_WORKSPACE": str(environment)}, cwd=nested),
+                resolve_workspace(
+                    None, environ={"FINDATA_WORKSPACE": str(environment)}, cwd=nested
+                ),
                 environment.resolve(),
             )
             self.assertEqual(resolve_workspace(None, environ={}, cwd=nested), parent.resolve())
@@ -82,6 +84,16 @@ class WorkspaceResolutionTests(unittest.TestCase):
         code = cli_main(["completion", "bash"], stdout=stdout, stderr=stderr)
         self.assertEqual(code, 0)
         self.assertIn("complete", stdout.getvalue())
+        self.assertEqual(stderr.getvalue(), "")
+
+    def test_dynamic_completion_falls_back_without_workspace_or_server(self) -> None:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+
+        code = cli_main(["_complete", "d"], stdout=stdout, stderr=stderr, environ={})
+
+        self.assertEqual(code, 0)
+        self.assertEqual(stdout.getvalue(), "dataset\n")
         self.assertEqual(stderr.getvalue(), "")
 
     def test_event_ack_requires_an_id_or_all(self) -> None:

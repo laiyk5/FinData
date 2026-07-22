@@ -88,10 +88,16 @@ class CLIOutput:
         stderr: TextIO,
         environ: Mapping[str, str] | None = None,
         display_timezone: str = "UTC",
+        quiet: bool = False,
+        verbose: bool = False,
+        progress_enabled: bool = True,
     ) -> None:
         self.output_format = output_format
         self.stdout = stdout
         self.stderr = stderr
+        self.quiet = quiet
+        self.verbose = verbose
+        self.progress_enabled = progress_enabled
         try:
             self.display_timezone = ZoneInfo(display_timezone)
         except ZoneInfoNotFoundError as exc:
@@ -144,7 +150,7 @@ class CLIOutput:
         handle = str(task.get("handle_id", ""))
         if self.output_format == "jsonl":
             self._jsonl(dict(task), "task.accepted")
-        elif self.output_format == "human":
+        elif self.output_format == "human" and not self.quiet:
             marker = "✓" if self.err_terminal.unicode else "OK"
             label = self._style(f"{marker} Accepted", ANSI_GREEN, terminal=self.err_terminal)
             self.stderr.write(f"{label} task {handle}\n")
@@ -157,7 +163,9 @@ class CLIOutput:
         progress = task.get("progress")
         key = (status, reason, stage, json.dumps(progress, sort_keys=True, default=str))
         if key == self._last_state and not (
-            self.output_format == "human" and self.err_terminal.interactive
+            self.output_format == "human"
+            and self.err_terminal.interactive
+            and self.progress_enabled
         ):
             return
         self._last_state = key
@@ -171,13 +179,38 @@ class CLIOutput:
             }
             self._jsonl(event, "task.progress")
         elif self.output_format == "human":
+            if self.quiet:
+                return
+            now = time.monotonic()
+            if self._accepted_at is None:
+                self._accepted_at = now
             detail = str(stage or status or "working").replace(":", " ")
             if reason:
                 detail += f" — {reason}"
             if isinstance(progress, Mapping) and progress.get("total") is not None:
                 detail += f" [{progress.get('current', 0)}/{progress['total']}]"
-            if self.err_terminal.interactive:
-                if self._accepted_at is not None and time.monotonic() - self._accepted_at < 0.25:
+                for key, label in (
+                    ("provider_requests", "requests"),
+                    ("rows_fetched", "rows"),
+                    ("checkpoints", "checkpoints"),
+                ):
+                    value = progress.get(key)
+                    if isinstance(value, (int, float)):
+                        unit = label[:-1] if value == 1 else label
+                        detail += f" · {_format_count(value)} {unit}"
+                elapsed = max(0.0, now - self._accepted_at)
+                detail += f" · {_format_duration(elapsed)} elapsed"
+                current = progress.get("current")
+                total = progress.get("total")
+                if (
+                    isinstance(current, (int, float))
+                    and isinstance(total, (int, float))
+                    and 0 < current < total
+                ):
+                    eta = elapsed * (total - current) / current
+                    detail += f" · ETA {_format_duration(eta)}"
+            if self.err_terminal.interactive and self.progress_enabled:
+                if now - self._accepted_at < 0.25:
                     return
                 current = progress.get("current", 0) if isinstance(progress, Mapping) else 0
                 total = progress.get("total") if isinstance(progress, Mapping) else None
@@ -338,6 +371,8 @@ class CLIOutput:
         if self.output_format == "jsonl":
             self._jsonl({"message": message}, "task.log")
         elif self.output_format == "human":
+            if self.quiet:
+                return
             # Follow logs and Rich progress use separate Python streams but share
             # one physical terminal. Close the live region before writing a
             # persistent line so Rich can erase it from the correct cursor row.
@@ -522,6 +557,10 @@ def _progress_number(value: object, *, fallback: int | None) -> int | float | No
     if isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 0:
         return value
     return fallback
+
+
+def _format_count(value: int | float) -> str:
+    return f"{value:,.0f}"
 
 
 def _display(

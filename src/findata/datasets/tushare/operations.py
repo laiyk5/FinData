@@ -57,7 +57,9 @@ class OperationReporter(Protocol):
 
     def running(self) -> None: ...
 
-    def progress(self, current: int | float, total: int | float) -> None: ...
+    def progress(
+        self, current: int | float, total: int | float, **metrics: int | float
+    ) -> None: ...
 
     def stage(self, value: str) -> None: ...
 
@@ -184,6 +186,8 @@ class DatasetService:
         self.now = now or datetime.combine(today, time(16), ZoneInfo("Asia/Shanghai"))
         self.loader = DataLoader(workspace.root)
         self._request_count = 0
+        self._row_count = 0
+        self._checkpoint_count = 0
         self._reporter = reporter
         self._settings = dict(settings) if settings is not None else None
 
@@ -202,6 +206,9 @@ class DatasetService:
     ) -> OperationResult:
         before = self._request_count
         values = dict(operands or {})
+        # Execution and dry-run share validation and planning. Mutable state is
+        # read again here so a previous preview is never treated as a reservation.
+        plan_operation(self.workspace, dataset, operation, values, today=self.today)
         if dataset == "tushare_trade_cal":
             publication = self._trade_cal(operation, values)
         elif dataset == "tushare_stock_basic":
@@ -227,6 +234,7 @@ class DatasetService:
         self._request_count += 1
         try:
             table = self.client.query(dataset, **params)
+            self._row_count += table.num_rows
             if self._reporter is not None:
                 self._reporter.checkpoint()
             return table
@@ -236,7 +244,13 @@ class DatasetService:
 
     def _progress(self, current: int, total: int) -> None:
         if self._reporter is not None and hasattr(self._reporter, "progress"):
-            self._reporter.progress(current, total)
+            self._reporter.progress(
+                current,
+                total,
+                provider_requests=self._request_count,
+                rows_fetched=self._row_count,
+                checkpoints=self._checkpoint_count,
+            )
 
     def _trade_cal(self, operation: str, operands: dict[str, Any]) -> str:
         if operation == "update":
@@ -294,6 +308,7 @@ class DatasetService:
             self._progress(completed, len(jobs))
         if mutations:
             publication = self._commit_mutations(spec, mutations, next_coverage)
+            self._progress(len(jobs), len(jobs))
         return publication or self.loader.dataset(spec.name).publication_id
 
     def _stock_basic(self, operation: str, operands: dict[str, Any]) -> str:
@@ -360,6 +375,7 @@ class DatasetService:
             self._progress(completed, len(indexes))
         if mutations:
             publication = self._commit_mutations(spec, mutations, {})
+            self._progress(len(indexes), len(indexes))
         assert publication is not None
         return publication
 
@@ -430,6 +446,7 @@ class DatasetService:
             self._progress(completed, len(jobs))
         if mutations:
             publication = self._commit_mutations(spec, mutations, next_coverage)
+            self._progress(len(jobs), len(jobs))
         return publication or self.loader.dataset(spec.name).publication_id
 
     def _daily_basic(self, operation: str, operands: dict[str, Any]) -> str:
@@ -516,6 +533,7 @@ class DatasetService:
             self._progress(completed, len(jobs))
         if mutations:
             publication = self._commit_mutations(spec, mutations, next_coverage)
+            self._progress(len(jobs), len(jobs))
         return publication or self.loader.dataset(spec.name).publication_id
 
     def _resolve_symbols(self, selectors: list[str], requested: DateRange) -> list[str]:
@@ -623,7 +641,7 @@ class DatasetService:
             self._reporter.checkpoint()
             if hasattr(self._reporter, "stage"):
                 self._reporter.stage(f"committing:{spec.name}")
-        return self._publisher(spec.name).commit(
+        publication = self._publisher(spec.name).commit(
             mutations,
             coverage=(
                 [Coverage(key, value.start, value.end) for key, value in sorted(coverage.items())]
@@ -631,6 +649,8 @@ class DatasetService:
                 else None
             ),
         )
+        self._checkpoint_count += 1
+        return publication
 
     def _publisher(self, dataset: str):
         if self._reporter is None:
@@ -743,6 +763,56 @@ def operation_description(dataset: str, operation: str) -> dict[str, Any]:
                 else {"timerange": {"type": "string", "format": "half-open-date-range"}}
             ),
         },
+    }
+
+
+def plan_operation(
+    workspace: Workspace,
+    dataset: str,
+    operation: str,
+    operands: dict[str, Any],
+    *,
+    today: date,
+) -> dict[str, Any]:
+    """Build a read-only preview from normalized operands and committed local state."""
+    normalized = normalize_operation(dataset, operation, operands, today=today)
+    description = dataset_description(workspace, dataset, provider_ready=True)
+    dependencies = [
+        {
+            "dataset": name,
+            "state": dataset_description(workspace, name, provider_ready=True)["state"],
+        }
+        for name in description["dependencies"]
+    ]
+    strategy = "plugin operation"
+    estimated_requests: int | None = None
+    if operation == "update":
+        strategy = "configured update"
+    elif dataset == "tushare_daily_basic":
+        symbols = list(normalized["symbols"])
+        if all(not value.startswith("tushare:") for value in symbols):
+            strategy = "per-symbol bounded range"
+            estimated_requests = len(symbols)
+        else:
+            strategy = "selector resolution required"
+    elif dataset == "tushare_trade_cal":
+        strategy = "one request per exchange"
+        estimated_requests = len(normalized["exchanges"])
+    elif dataset == "tushare_index_basic":
+        strategy = "one request per index"
+        estimated_requests = len(normalized["indexes"])
+    elif dataset == "tushare_index_weight":
+        strategy = "one request per uncovered index-month"
+
+    return {
+        "dry_run": True,
+        "dataset": dataset,
+        "operation": operation,
+        "operands": normalized,
+        "strategy": strategy,
+        "estimated_provider_requests": estimated_requests,
+        "dependencies": dependencies,
+        "side_effects": False,
     }
 
 
