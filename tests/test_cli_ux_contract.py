@@ -217,7 +217,7 @@ class DiagnosticPresentationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with TaskRunner(Path(directory), diagnostic_worker) as runner:
                 handle = runner.submit("example", "update", {})
-                result = runner.wait(handle, timeout=5)
+                result = runner.wait(handle, timeout=15)
                 logs = runner.logs(handle)
 
         self.assertEqual(result.diagnostic_counts, {"warning": 3, "error": 0})

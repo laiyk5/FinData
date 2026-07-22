@@ -84,6 +84,11 @@ class TaskRunnerTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.tempdir.cleanup()
 
+    def test_default_launch_budget_accommodates_a_cold_installed_worker(self) -> None:
+        runner = TaskRunner(self.root, successful_worker)
+
+        self.assertGreaterEqual(runner.launch_timeout, 30)
+
     def test_execution_runs_in_child_process_and_persists_progress_and_logs(self) -> None:
         with TaskRunner(self.root, successful_worker, global_concurrency=2) as runner:
             handle_id = runner.submit(

@@ -228,7 +228,7 @@ class TaskRunner:
         per_dataset_queue_limit: int = 5,
         cancel_grace: float = 5.0,
         terminal_history: int = 1_000,
-        launch_timeout: float = 5.0,
+        launch_timeout: float = 30.0,
         event_sink: Callable[..., Any] | None = None,
         dependency_resolver: DependencyResolver | None = None,
         max_trigger_depth: int = 8,

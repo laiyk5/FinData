@@ -169,6 +169,10 @@ command and explanatory help on every positional argument and option. Representa
 tests verify that the command purpose, Arguments section, option descriptions, accepted forms, and
 defaults are visible without a workspace.
 
+Task-process tests allow for cold interpreter and dependency imports from an isolated installed
+wheel. The production authenticated-channel launch budget is at least 30 seconds; focused test waits
+must not impose a shorter five-second deadline that can expire under multi-version release load.
+
 Completion tests exercise both forms emitted by shells at a token boundary: an explicit empty
 current word and no trailing word. Root completion must return command families, an exact family
 must return its actions, and `data coverage` must return registered dataset names with or without a
