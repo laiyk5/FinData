@@ -104,8 +104,7 @@ class DatasetGate(AbstractContextManager["DatasetGate"]):
         self._file: Any = None
 
     def __enter__(self) -> DatasetGate:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._file = self.path.open("a+b")
+        self._file = self.path.open("r+b" if self.exclusive else "rb")
         try:
             if not self.exclusive or self.checkpoint is None:
                 fcntl.flock(self._file.fileno(), fcntl.LOCK_EX if self.exclusive else fcntl.LOCK_SH)
@@ -185,7 +184,7 @@ class Workspace:
             raise ValueError("dataset registration requires a declared DatasetSpec")
         if spec.name != name:
             raise ValueError("dataset registration name must match its DatasetSpec")
-        dataset_root = self.datasets_root / name
+        dataset_root = dataset_root_path(self.datasets_root, name)
         dataset_root.mkdir(parents=True, exist_ok=True)
         gate_path = dataset_root / "gate.lock"
         gate_path.touch(mode=0o600, exist_ok=True)
@@ -212,7 +211,7 @@ class Workspace:
             temporary.unlink(missing_ok=True)
 
     def reset_dataset(self, name: str, *, spec: DatasetSpec) -> None:
-        dataset_root = self.datasets_root / name
+        dataset_root = dataset_root_path(self.datasets_root, name)
         if not dataset_root.is_dir():
             raise StorageError(f"unknown dataset {name!r}")
         temporary = _create_database(dataset_root, spec)
@@ -241,7 +240,7 @@ class Workspace:
         acquired: Callable[[], None] | None = None,
     ) -> Publisher:
         return Publisher(
-            self.datasets_root / name,
+            dataset_root_path(self.datasets_root, name),
             fault_injector=fault_injector,
             checkpoint=checkpoint,
             waiting=waiting,
@@ -341,6 +340,10 @@ class Publisher:
         if coverage_rows is not None:
             _validate_coverage(coverage_rows)
         publication_id = uuid.uuid4().hex
+        if not (self.dataset_root / DATABASE_NAME).is_file():
+            raise StorageError(f"unknown dataset {self.dataset_root.name!r}")
+        if not (self.dataset_root / "gate.lock").is_file():
+            raise StorageError(f"dataset {self.dataset_root.name!r} is missing its storage gate")
         self._fault("before_gate")
         with DatasetGate(
             self.dataset_root / "gate.lock",
@@ -414,6 +417,14 @@ def decode_schema(value: str) -> pa.Schema:
         return pa.ipc.read_schema(pa.BufferReader(base64.b64decode(value)))
     except (ValueError, pa.ArrowException) as exc:
         raise StorageError("database metadata contains an invalid Arrow schema") from exc
+
+
+def dataset_root_path(datasets_root: Path, name: str) -> Path:
+    """Resolve one dataset directory without permitting traversal outside its owner root."""
+    value = str(name)
+    if not value or value in {".", ".."} or Path(value).name != value:
+        raise ValueError(f"invalid dataset name {value!r}")
+    return Path(datasets_root) / value
 
 
 def _create_database(dataset_root: Path, spec: DatasetSpec) -> Path:

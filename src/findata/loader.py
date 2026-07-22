@@ -17,6 +17,7 @@ from findata.storage import (
     STORAGE_ADAPTER_VERSION,
     DatasetGate,
     decode_schema,
+    dataset_root_path,
     read_metadata,
 )
 
@@ -26,6 +27,10 @@ class DataLoaderError(RuntimeError):
 
 
 class DatasetNotReadyError(DataLoaderError):
+    pass
+
+
+class DatasetNotFoundError(DataLoaderError):
     pass
 
 
@@ -61,7 +66,8 @@ class DataLoader:
         self.workspace = Path(workspace)
 
     def dataset(self, name: str) -> DatasetReader:
-        return DatasetReader(self.workspace / "datasets" / name, name=name)
+        dataset_root = dataset_root_path(self.workspace / "datasets", name)
+        return DatasetReader(dataset_root, name=name)
 
 
 class DatasetReader:
@@ -71,7 +77,7 @@ class DatasetReader:
 
     @property
     def publication_id(self) -> str:
-        with DatasetGate(self.dataset_root / "gate.lock", exclusive=False):
+        with self._shared_gate():
             connection = self._connect()
             try:
                 metadata = self._ready_metadata(connection)
@@ -81,7 +87,7 @@ class DatasetReader:
 
     def describe(self) -> dict[str, Any]:
         """Return storage-neutral schema and key metadata for one committed revision."""
-        with DatasetGate(self.dataset_root / "gate.lock", exclusive=False):
+        with self._shared_gate():
             connection = self._connect()
             try:
                 metadata = self._ready_metadata(connection)
@@ -116,7 +122,7 @@ class DatasetReader:
         limit: int | None = None,
         require_coverage: bool = False,
     ) -> pa.Table:
-        with DatasetGate(self.dataset_root / "gate.lock", exclusive=False):
+        with self._shared_gate():
             connection = self._connect()
             try:
                 metadata = self._ready_metadata(connection)
@@ -140,7 +146,7 @@ class DatasetReader:
         return BatchReader(self, batch_size=batch_size, query=query)
 
     def coverage(self, keys: Sequence[str] | None = None) -> pa.Table:
-        with DatasetGate(self.dataset_root / "gate.lock", exclusive=False):
+        with self._shared_gate():
             connection = self._connect()
             try:
                 metadata = self._ready_metadata(connection)
@@ -154,6 +160,14 @@ class DatasetReader:
             return duckdb.connect(str(database), read_only=True)
         except duckdb.Error as exc:
             raise DataLoaderError(f"cannot load dataset {self.name!r}") from exc
+
+    def _shared_gate(self) -> DatasetGate:
+        if not (self.dataset_root / DATABASE_NAME).is_file():
+            raise DatasetNotFoundError(f"unknown dataset {self.name!r}")
+        gate = self.dataset_root / "gate.lock"
+        if not gate.is_file():
+            raise DataLoaderError(f"dataset {self.name!r} is missing its storage gate")
+        return DatasetGate(gate, exclusive=False)
 
     def _ready_metadata(self, connection: duckdb.DuckDBPyConnection) -> dict[str, Any]:
         try:
@@ -357,7 +371,7 @@ class BatchReader(AbstractContextManager["BatchReader"]):
         self._reader: pa.RecordBatchReader | None = None
 
     def __enter__(self) -> BatchReader:
-        self._gate = DatasetGate(self.dataset.dataset_root / "gate.lock", exclusive=False)
+        self._gate = self.dataset._shared_gate()
         self._gate.__enter__()
         try:
             self._connection = self.dataset._connect()

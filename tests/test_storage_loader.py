@@ -4,6 +4,7 @@ import tempfile
 import threading
 import time
 import unittest
+from dataclasses import replace
 from datetime import date
 from pathlib import Path
 
@@ -14,6 +15,7 @@ from findata import DataLoader
 from findata.datasets.tushare import TUSHARE_DATASETS
 from findata.loader import (
     CoverageError,
+    DatasetNotFoundError,
     DatasetNotReadyError,
     IncompatibleDatasetError,
     UnsupportedCoverageError,
@@ -57,6 +59,36 @@ class StorageLoaderTests(unittest.TestCase):
             self.assertEqual(metadata, ("uninitialized", 0, None, expected_policy))
             with self.assertRaises(DatasetNotReadyError):
                 DataLoader(self.root).dataset(name).query()
+
+    def test_invalid_or_unknown_dataset_paths_have_no_filesystem_side_effect(self) -> None:
+        outside = self.root / "outside"
+        with self.assertRaises(ValueError):
+            DataLoader(self.root).dataset("../outside")
+        self.assertFalse(outside.exists())
+
+        reader = DataLoader(self.root).dataset("not_registered")
+        for read in (reader.describe, reader.coverage, reader.query):
+            with self.subTest(read=read.__name__), self.assertRaises(DatasetNotFoundError):
+                read()
+        with self.assertRaises(DatasetNotFoundError):
+            with reader.iter_batches():
+                pass
+        self.assertFalse((self.root / "datasets" / "not_registered").exists())
+
+        unsafe_spec = replace(TUSHARE_DATASETS["tushare_stock_basic"], name="../outside")
+        with self.assertRaises(ValueError):
+            self.workspace.register_dataset("../outside", spec=unsafe_spec)
+        self.assertFalse(outside.exists())
+
+    def test_read_does_not_repair_a_missing_registered_gate(self) -> None:
+        database = self.register("tushare_stock_basic")
+        gate = database.parent / "gate.lock"
+        gate.unlink()
+
+        with self.assertRaisesRegex(RuntimeError, "missing its storage gate"):
+            DataLoader(self.root).dataset("tushare_stock_basic").describe()
+
+        self.assertFalse(gate.exists())
 
     def test_complete_replacement_queries_with_uniform_sql_semantics(self) -> None:
         database = self.register("tushare_trade_cal")

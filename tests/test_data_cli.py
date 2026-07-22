@@ -140,6 +140,37 @@ class DataCLITests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(completion.getvalue(), "tushare_daily_basic\n")
 
+    def test_unknown_dataset_reads_never_create_directories(self) -> None:
+        datasets = self.root / "datasets"
+        before = {path.name for path in datasets.iterdir()}
+        commands = [
+            ["data", "schema", "NOT_EXIST_DATASET"],
+            ["data", "coverage", "NOT_EXIST_DATASET"],
+            ["data", "preview", "NOT_EXIST_DATASET"],
+            [
+                "data",
+                "export",
+                "NOT_EXIST_DATASET",
+                "--output-format",
+                "csv",
+                "--output",
+                str(self.root / "unexpected.csv"),
+            ],
+        ]
+        for command in commands:
+            with self.subTest(command=command[1]):
+                stderr = io.StringIO()
+                code = cli_main(
+                    ["--workspace", str(self.root), *command],
+                    stdout=io.StringIO(),
+                    stderr=stderr,
+                    environ={},
+                )
+                self.assertEqual(code, 1)
+                self.assertIn("unknown dataset 'NOT_EXIST_DATASET'", stderr.getvalue())
+                self.assertEqual({path.name for path in datasets.iterdir()}, before)
+                self.assertFalse((self.root / "unexpected.csv").exists())
+
     def test_export_streams_every_supported_file_format(self) -> None:
         readers = {
             "csv": lambda path: pacsv.read_csv(path),

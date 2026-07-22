@@ -166,6 +166,12 @@ cleanup after failure. Spies assert no HTTP client, task record, provider transp
 dataset revision, or publication change. Stdout exports assert byte-for-byte data-only output with
 all diagnostics on stderr.
 
+Side-effect tests invoke schema, preview, coverage, export, and each DataLoader read against unknown
+and path-traversing dataset names. They compare the workspace tree before and after failure and prove
+that no dataset directory, gate, DuckDB file, or export target appears. A missing registered gate is
+an error rather than something a read repairs. Registration tests separately prove that only valid
+single-component dataset names may create dataset storage.
+
 ## Crash and concurrency matrix
 
 Crash-safety claims require deterministic fault injection at least at:

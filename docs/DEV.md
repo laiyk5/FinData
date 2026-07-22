@@ -111,6 +111,12 @@ batch readers retain both for their context lifetime. Provider calls and transfo
 exclusive-gate acquisition so database commits remain bounded.
 
 The writer accepts complete replacement and registered key/time-range replacement, not plugin SQL.
+
+Directory creation belongs to the component that initializes the owned resource: `Workspace.init`
+for workspace state and dataset registration for a dataset directory, gate, and database. Generic
+lock helpers and read paths must never call `mkdir`, touch a lock, or let DuckDB create a database.
+Resolve dataset names as one path component before filesystem access, and check required registered
+artifacts before acquiring a read gate.
 Validate the resulting affected scope for logical primary-key uniqueness. A plugin exposes only
 deterministic, independently committable work items; a complete-table replacement is necessarily one
 indivisible item. Benchmark whether a

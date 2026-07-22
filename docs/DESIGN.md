@@ -74,6 +74,13 @@ v1 supports Linux and macOS on local POSIX filesystems providing `flock`, signal
 
 The server exposes a versioned localhost HTTP API on `127.0.0.1`. `findata-server init` creates the workspace with `0700` permissions and a cryptographically random bearer token in a `0600` file. Every request, including streams, requires the token in the `Authorization` header. Tokens never appear in URLs or logs.
 
+Filesystem creation has explicit ownership. Workspace initialization alone creates the workspace
+root and workspace-level files; dataset registration alone creates a dataset directory, its gate,
+and its initial database. Dataset names are single safe path components. Lock acquisition, lookup,
+schema discovery, coverage inspection, preview, export, and every DataLoader read must not create or
+repair directories or files. Unknown, malformed, or incomplete dataset storage fails without a
+filesystem side effect.
+
 The OS user is the trust boundary. The token protects callers that can reach localhost but cannot read the workspace; a malicious process with the same user's filesystem privileges is out of scope.
 
 ## Providers
