@@ -9,7 +9,7 @@ import time
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, TextIO
-from urllib.error import HTTPError, URLError
+from urllib.error import HTTPError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
@@ -73,7 +73,6 @@ def main(
             progress_enabled=progress_enabled,
             pager=lambda text, color: _page_output(text, color=color, stdout=stdout),
         )
-        _normalize_aliases(arguments)
         try:
             with redirect_stdout(stdout), redirect_stderr(stderr):
                 args = command_tree(version=__version__).main(
@@ -94,9 +93,11 @@ def main(
             return 0
         if args.group == "_complete":
             try:
-                completion_client = _Client(resolve_workspace(args.workspace, environ=environment))
+                completion_client = _Client(
+                    resolve_workspace(args.workspace, environ=environment), timeout=2
+                )
                 items = _dynamic_completion(completion_client, list(args.words))
-            except (RuntimeError, HTTPError, URLError, ValueError):
+            except (OSError, RuntimeError, ValueError):
                 items = _local_data_completion(
                     args.workspace,
                     list(args.words),
@@ -148,7 +149,7 @@ def main(
         renderer.finish_progress()
         renderer.error(str(exc))
         return 2
-    except (ValueError, RuntimeError, HTTPError, URLError) as exc:
+    except (OSError, ValueError, RuntimeError) as exc:
         renderer = output or fallback_output()
         renderer.finish_progress()
         renderer.error(str(exc))
@@ -320,13 +321,14 @@ class ServerError(RuntimeError):
 
 
 class _Client:
-    def __init__(self, workspace: Path) -> None:
+    def __init__(self, workspace: Path, *, timeout: float = 30) -> None:
         try:
             server = json.loads((workspace / "server.json").read_text(encoding="utf-8"))
             self.token = (workspace / "token").read_text(encoding="utf-8").strip()
         except (OSError, json.JSONDecodeError) as exc:
             raise RuntimeError(f"no running server for workspace {workspace}") from exc
         self.base_url = f"http://{server['host']}:{server['port']}"
+        self.timeout = timeout
 
     def request(self, method: str, path: str, body: object | None = None) -> dict[str, object]:
         data = None if body is None else json.dumps(body).encode("utf-8")
@@ -337,7 +339,7 @@ class _Client:
             headers={"Authorization": f"Bearer {self.token}", "Content-Type": "application/json"},
         )
         try:
-            with urlopen(request, timeout=30) as response:
+            with urlopen(request, timeout=self.timeout) as response:
                 result = json.loads(response.read().decode("utf-8"))
         except HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
@@ -445,7 +447,8 @@ def _dynamic_completion(client: _Client, words: list[str]) -> list[str]:
     candidates: list[str]
     prefix: str
     if not words:
-        candidates = "task dataset data provider cron events config system completion".split()
+        tree = command_tree(version=__version__)
+        candidates = [name for name, command in tree.commands.items() if not command.hidden]
         prefix = ""
     elif (
         words[0] == "dataset"
@@ -510,18 +513,13 @@ def _dynamic_completion(client: _Client, words: list[str]) -> list[str]:
 
 
 def _static_completion(words: list[str]) -> list[str]:
-    groups = "task dataset data provider cron events config system completion".split()
-    actions = {
-        "task": "run ls status logs cancel watch retry explain".split(),
-        "dataset": "ls describe operations operation status reset update complete refresh".split(),
-        "data": "schema preview coverage export".split(),
-        "provider": "ls status check".split(),
-        "cron": "ls enable disable set reset".split(),
-        "events": "ls ack".split(),
-        "config": "ls get set unset".split(),
-        "system": ["status"],
-    }
     tree = command_tree(version=__version__)
+    groups = [name for name, command in tree.commands.items() if not command.hidden]
+    actions = {
+        name: list(command.commands)
+        for name, command in tree.commands.items()
+        if isinstance(command, click.Group)
+    }
     if len(words) == 1 and words[0].startswith("-"):
         return _option_candidates(tree, words[0])
     if len(words) >= 3:
@@ -718,10 +716,6 @@ def _completion_script(shell: str) -> str:
             "compdef _findata_complete findata\n"
         )
     return "complete -c findata -f -a '(findata _complete (commandline -opc)[2..-1] 2>/dev/null)'\n"
-
-
-def _normalize_aliases(arguments: list[str]) -> None:
-    return
 
 
 def _validate_cli_args(args: Any, *, output_format: str = "human") -> None:

@@ -123,7 +123,7 @@ OPTION_HELP = {
     "expression": "Five-field cron expression.",
     "timezone": "IANA timezone used to evaluate the schedule.",
     "unread": "Show only unacknowledged events.",
-    "since": "Show events at or after this timestamp.",
+    "since": "Show only events newer than this duration, for example 30m, 12h, or 7d.",
     "severity": "Filter events by severity.",
     "yes": "Confirm the destructive reset without prompting.",
 }
@@ -254,18 +254,6 @@ def command_tree(*, version: str) -> click.Group:
 
     data = DocumentedGroup("data", help=GROUP_HELP["data"])
     root.add_command(data)
-    attach(data, "data", "schema", [click.Argument(["dataset"])])
-    attach(
-        data,
-        "data",
-        "coverage",
-        [
-            click.Argument(["dataset"]),
-            click.Option(["--keys"], multiple=True),
-            click.Option(["--from", "range_start"]),
-            click.Option(["--to", "range_end"]),
-        ],
-    )
 
     def query_options() -> list[click.Parameter]:
         return [
@@ -278,11 +266,23 @@ def command_tree(*, version: str) -> click.Group:
             click.Option(["--allow-partial", "allow_partial"], is_flag=True),
         ]
 
+    attach(data, "data", "schema", [click.Argument(["dataset"])])
     attach(
         data,
         "data",
         "preview",
         [*query_options(), click.Option(["--limit"], type=click.IntRange(0), default=20)],
+    )
+    attach(
+        data,
+        "data",
+        "coverage",
+        [
+            click.Argument(["dataset"]),
+            click.Option(["--keys"], multiple=True),
+            click.Option(["--from", "range_start"]),
+            click.Option(["--to", "range_end"]),
+        ],
     )
     attach(
         data,
