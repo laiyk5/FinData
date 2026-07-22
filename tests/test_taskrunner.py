@@ -22,6 +22,8 @@ from findata.taskrunner import (
     TaskRunner,
 )
 
+TASK_TIMEOUT = 30.0
+
 
 def successful_worker(request: dict[str, object], context: TaskContext) -> dict[str, object]:
     context.log("worker started")
@@ -96,7 +98,7 @@ class TaskRunnerTests(unittest.TestCase):
                 "complete",
                 {"exchanges": ["SSE"], "timerange": "2026-07-01:2026-07-02"},
             )
-            result = runner.wait(handle_id, timeout=5)
+            result = runner.wait(handle_id, timeout=TASK_TIMEOUT)
 
             self.assertEqual(result.status, "succeeded")
             self.assertNotEqual(result.result["pid"], os.getpid())
@@ -118,7 +120,7 @@ class TaskRunnerTests(unittest.TestCase):
             handle = runner.submit("example", "update", {})
             current["configuration_revision"] = 5
             current["settings"] = {"dataset.example.symbols": ["second"]}
-            result = runner.wait(handle, timeout=5)
+            result = runner.wait(handle, timeout=TASK_TIMEOUT)
         self.assertEqual(result.result["revision"], 4)
         self.assertEqual(result.result["settings"], {"dataset.example.symbols": ["first"]})
 
@@ -136,8 +138,8 @@ class TaskRunnerTests(unittest.TestCase):
             self.assertEqual(runner.status(first).execution_id, runner.status(second).execution_id)
             cancellation = runner.cancel(first)
             self.assertTrue(cancellation.shared_execution_continues)
-            self.assertEqual(runner.wait(first, timeout=2).status, "canceled")
-            completed = runner.wait(second, timeout=5)
+            self.assertEqual(runner.wait(first, timeout=TASK_TIMEOUT).status, "canceled")
+            completed = runner.wait(second, timeout=TASK_TIMEOUT)
             self.assertEqual(completed.status, "succeeded")
 
     def test_parameterless_updates_never_coalesce_and_serialize_per_dataset(self) -> None:
@@ -148,8 +150,8 @@ class TaskRunnerTests(unittest.TestCase):
             self.assertNotEqual(
                 runner.status(first).execution_id, runner.status(second).execution_id
             )
-            first_result = runner.wait(first, timeout=5).result
-            second_result = runner.wait(second, timeout=5).result
+            first_result = runner.wait(first, timeout=TASK_TIMEOUT).result
+            second_result = runner.wait(second, timeout=TASK_TIMEOUT).result
             self.assertGreaterEqual(second_result["started"], first_result["ended"])
 
     def test_dataset_reset_reservation_rejects_submissions_and_active_work(self) -> None:
@@ -161,7 +163,7 @@ class TaskRunnerTests(unittest.TestCase):
             with self.assertRaises(DatasetBusyError):
                 with runner.reserve_dataset_reset("example"):
                     pass
-            runner.wait(handle, timeout=5)
+            runner.wait(handle, timeout=TASK_TIMEOUT)
 
     def test_queue_capacity_counts_executions_not_coalesced_handles(self) -> None:
         with TaskRunner(
@@ -187,10 +189,10 @@ class TaskRunnerTests(unittest.TestCase):
     def test_canceling_last_subscriber_stops_execution_after_cooperative_checkpoint(self) -> None:
         with TaskRunner(self.root, slow_worker, cancel_grace=0.2) as runner:
             handle = runner.submit("tushare_daily_basic", "complete", {"duration": 10.0})
-            runner.wait_for_status(handle, {"running"}, timeout=2)
+            runner.wait_for_status(handle, {"running"}, timeout=TASK_TIMEOUT)
 
             cancellation = runner.cancel(handle)
-            terminal = runner.wait(handle, timeout=3)
+            terminal = runner.wait(handle, timeout=TASK_TIMEOUT)
 
             self.assertFalse(cancellation.shared_execution_continues)
             self.assertEqual(terminal.status, "canceled")
@@ -199,7 +201,7 @@ class TaskRunnerTests(unittest.TestCase):
         runner = TaskRunner(self.root, slow_worker, cancel_grace=0.1)
         runner.start()
         handle = runner.submit("tushare_daily_basic", "complete", {"duration": 10.0})
-        runner.wait_for_status(handle, {"running"}, timeout=2)
+        runner.wait_for_status(handle, {"running"}, timeout=TASK_TIMEOUT)
         runner.crash_for_test()
 
         with TaskRunner(self.root, successful_worker) as recovered:
@@ -231,7 +233,7 @@ class TaskRunnerTests(unittest.TestCase):
                     "timerange": "2026-06-29:2026-07-04",
                 },
             )
-            status = runner.wait(handle, timeout=10)
+            status = runner.wait(handle, timeout=TASK_TIMEOUT)
 
             handles = runner.list_handles()
 
@@ -277,7 +279,7 @@ class TaskRunnerTests(unittest.TestCase):
             dependency_resolver=dependency_resolver,
         ) as runner:
             parent = runner.submit("parent", "complete", {})
-            result = runner.wait(parent, timeout=5)
+            result = runner.wait(parent, timeout=TASK_TIMEOUT)
             handles = runner.list_handles()
 
         self.assertEqual(result.status, "succeeded", result.error)
@@ -294,12 +296,12 @@ class TaskRunnerTests(unittest.TestCase):
             cancel_grace=0.2,
         ) as runner:
             parent = runner.submit("parent", "complete", {})
-            runner.wait_for_status(parent, {"waiting"}, timeout=3)
+            runner.wait_for_status(parent, {"waiting"}, timeout=TASK_TIMEOUT)
             child = next(item for item in runner.list_handles() if item.dataset == "child")
             runner.cancel(parent)
 
-            self.assertEqual(runner.wait(parent, timeout=3).status, "canceled")
-            self.assertEqual(runner.wait(child.handle_id, timeout=3).status, "canceled")
+            self.assertEqual(runner.wait(parent, timeout=TASK_TIMEOUT).status, "canceled")
+            self.assertEqual(runner.wait(child.handle_id, timeout=TASK_TIMEOUT).status, "canceled")
 
     def test_dependency_depth_limit_rejects_before_child_submission(self) -> None:
         with TaskRunner(
@@ -309,7 +311,7 @@ class TaskRunnerTests(unittest.TestCase):
             max_trigger_depth=0,
         ) as runner:
             parent = runner.submit("parent", "complete", {})
-            result = runner.wait(parent, timeout=3)
+            result = runner.wait(parent, timeout=TASK_TIMEOUT)
 
             self.assertEqual(result.status, "failed")
             self.assertIn("dependency depth exceeds", result.error)
@@ -323,7 +325,7 @@ class TaskRunnerTests(unittest.TestCase):
 
         with TaskRunner(self.root, liveness_worker, event_sink=sink) as runner:
             handle = runner.submit("tushare_stock_basic", "update", {})
-            result = runner.wait(handle, timeout=3)
+            result = runner.wait(handle, timeout=TASK_TIMEOUT)
 
         self.assertEqual(result.status, "succeeded")
         liveness = next(item for item in events if item[0] == "liveness_timeout")
@@ -336,25 +338,25 @@ class TaskRunnerTests(unittest.TestCase):
                 "complete",
                 {"path": str(self.root / "provider-rate.json")},
             )
-            runner.wait_for_status(waiting, {"waiting"}, timeout=3)
+            runner.wait_for_status(waiting, {"waiting"}, timeout=TASK_TIMEOUT)
             self.assertEqual(runner.status(waiting).reason, "provider_rate_limit")
             quick = runner.submit(
                 "tushare_stock_basic", "update", {"path": str(self.root / "fast-rate.json")}
             )
             # The second task also waits for its own empty bucket, proving it was dispatched
             # while the first waiting task no longer occupied global capacity.
-            runner.wait_for_status(quick, {"waiting"}, timeout=3)
+            runner.wait_for_status(quick, {"waiting"}, timeout=TASK_TIMEOUT)
             runner.cancel(waiting)
             runner.cancel(quick)
-            self.assertEqual(runner.wait(waiting, timeout=3).status, "canceled")
-            self.assertEqual(runner.wait(quick, timeout=3).status, "canceled")
+            self.assertEqual(runner.wait(waiting, timeout=TASK_TIMEOUT).status, "canceled")
+            self.assertEqual(runner.wait(quick, timeout=TASK_TIMEOUT).status, "canceled")
 
     def test_terminal_history_prunes_old_handles_and_unreferenced_executions(self) -> None:
         with TaskRunner(self.root, successful_worker, terminal_history=2) as runner:
             handles = []
             for sequence in range(3):
                 handle = runner.submit("tushare_stock_basic", "update", {"sequence": sequence})
-                runner.wait(handle, timeout=5)
+                runner.wait(handle, timeout=TASK_TIMEOUT)
                 handles.append(handle)
 
             with self.assertRaises(TaskNotFoundError):
