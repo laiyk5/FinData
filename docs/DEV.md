@@ -194,6 +194,13 @@ and do not merge while required tests or documentation updates are incomplete.
 
 ## CLI presentation development
 
+Click owns command grouping, argument and option parsing, validation, help, and the embeddable
+command invocation boundary. Command callbacks return semantic invocation objects to the existing
+execution layer; they do not perform HTTP requests or render results. `main()` invokes Click without
+standalone process exits and preserves injected stdin, stdout, stderr, and environment mappings for
+tests and embedding. Live plugin metadata may extend completion and operation help without importing
+dataset implementations into the core CLI.
+
 Keep presentation separate from command execution. Commands produce semantic result or event
 objects; centralized human, JSON, and JSONL renderers decide how to display them. A shared terminal
 capability detector owns TTY, width, Unicode, color, and `NO_COLOR` handling. Command handlers must
@@ -207,6 +214,11 @@ stderr, uses a transient Rich display only on an interactive terminal, and stops
 printing a diagnostic, detachment notice, error, or terminal summary. Redirected human output keeps
 the existing newline-delimited plain-text fallback. Rich never renders JSON or JSONL. Rendering
 failures must not change task execution or corrupt a structured result.
+
+Dataset operation shortcuts and shell completion are generated from provider/plugin metadata; core
+CLI code must not contain a dataset-name switch or parse selector syntax. The generic task transport
+remains canonical. Quiet, verbose, and no-progress modes are presentation policies and must not
+alter requests, task execution, or structured records.
 
 Identifier-prefix resolution belongs to the server-side resource store, not the CLI. The CLI sends
 the operand unchanged. Under the same lock used to access retained resources, the resolver gives an

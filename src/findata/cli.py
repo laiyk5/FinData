@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import argparse
+from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import dataclass
 import json
 import os
@@ -8,22 +8,20 @@ import sys
 import time
 from collections.abc import Mapping
 from pathlib import Path
-from typing import TextIO
+from typing import Any, TextIO
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+import click
+
 from findata import __version__
+from findata.click_parser import command_tree
 from findata.presentation import CLIOutput
 
 
 class CLIUsageError(ValueError):
     pass
-
-
-class _ArgumentParser(argparse.ArgumentParser):
-    def error(self, message: str) -> None:
-        raise CLIUsageError(message)
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,18 +44,43 @@ def main(
     try:
         output_format = _extract_format(arguments)
         color_mode = _extract_color(arguments)
+        quiet, verbose, progress_enabled = _extract_presentation(arguments)
         output = CLIOutput(
             output_format=output_format,
             color_mode=color_mode,
             stdout=stdout,
             stderr=stderr,
             environ=environment,
+            quiet=quiet,
+            verbose=verbose,
+            progress_enabled=progress_enabled,
         )
         _normalize_aliases(arguments)
-        parser = _parser()
-        args = parser.parse_args(arguments)
+        try:
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                args = command_tree(version=__version__).main(
+                    args=arguments,
+                    prog_name="findata",
+                    standalone_mode=False,
+                )
+        except click.exceptions.Exit as exc:
+            return exc.exit_code
+        except click.UsageError as exc:
+            raise CLIUsageError(exc.format_message()) from exc
+        if isinstance(args, int):
+            return args
+        if args is None:
+            raise CLIUsageError("a command is required")
         if args.group == "completion":
             stdout.write(_completion_script(args.shell))
+            return 0
+        if args.group == "_complete":
+            try:
+                completion_client = _Client(resolve_workspace(args.workspace, environ=environment))
+                items = _dynamic_completion(completion_client, list(args.words))
+            except (RuntimeError, HTTPError, URLError, ValueError):
+                items = _static_completion(list(args.words))
+            stdout.write("".join(f"{item}\n" for item in items))
             return 0
         _validate_cli_args(args, output_format=output_format)
         client = _Client(resolve_workspace(args.workspace, environ=environment))
@@ -95,6 +118,9 @@ def main(
             stdout=stdout,
             stderr=stderr,
             environ=environment,
+            quiet=locals().get("quiet", False),
+            verbose=locals().get("verbose", False),
+            progress_enabled=locals().get("progress_enabled", True),
         )
         output.finish_progress()
         output.error(str(exc))
@@ -103,7 +129,7 @@ def main(
 
 def _execute(
     client: _Client,
-    args: argparse.Namespace,
+    args: Any,
     *,
     output: CLIOutput,
     stdin: TextIO = sys.stdin,
@@ -155,8 +181,31 @@ def _execute(
             if stdin.readline().strip().lower() not in {"y", "yes"}:
                 raise CLIUsageError("dataset reset canceled")
         return client.request("POST", f"/v1/datasets/{args.dataset}/reset", {"confirm": True})
+    if args.group == "dataset" and args.action in {"update", "complete", "refresh"}:
+        operands = _dataset_operands(args)
+        plan_path = f"/v1/datasets/{args.dataset}/operations/{args.action}/plan"
+        if args.dry_run:
+            return client.request("POST", plan_path, {"operands": operands})
+        if output.verbose and output.output_format == "human":
+            _render_plan_preview(output, client.request("POST", plan_path, {"operands": operands}))
+        submitted = client.request(
+            "POST",
+            "/v1/tasks",
+            {"dataset": args.dataset, "operation": args.action, "operands": operands},
+        )
+        if not (args.wait or args.follow):
+            return submitted
+        output.accepted(submitted)
+        return _wait_for_task(
+            client, str(submitted["handle_id"]), output=output, follow=args.follow
+        )
     if args.group == "task" and args.action == "run":
         operands = _params(args.param, args.params, stdin=stdin)
+        plan_path = f"/v1/datasets/{args.dataset}/operations/{args.operation}/plan"
+        if args.dry_run:
+            return client.request("POST", plan_path, {"operands": operands})
+        if output.verbose and output.output_format == "human":
+            _render_plan_preview(output, client.request("POST", plan_path, {"operands": operands}))
         submitted = client.request(
             "POST",
             "/v1/tasks",
@@ -181,6 +230,18 @@ def _execute(
                 time.sleep(0.05)
         except KeyboardInterrupt as exc:
             raise TaskDetached(handle) from exc
+    if args.group == "task" and args.action == "retry":
+        submitted = client.request("POST", f"/v1/tasks/{args.handle}/retry", {})
+        if not (args.wait or args.follow):
+            return submitted
+        output.accepted(submitted)
+        return _wait_for_task(
+            client, str(submitted["handle_id"]), output=output, follow=args.follow
+        )
+    if args.group == "task" and args.action == "explain":
+        return client.request("GET", f"/v1/tasks/{args.handle}/explain")
+    if args.group == "task" and args.action == "watch":
+        return _wait_for_task(client, str(args.handle), output=output, follow=True)
     if args.group == "task" and args.action == "ls":
         query = {
             key: value
@@ -288,7 +349,7 @@ def _render_task_log(output: CLIOutput, item: object, *, handle_id: str) -> None
 
 
 def _render_nonfollowing_task_logs(
-    args: argparse.Namespace,
+    args: Any,
     result: object,
     *,
     output: CLIOutput,
@@ -307,6 +368,130 @@ def _render_nonfollowing_task_logs(
         _render_task_log(output, item, handle_id=handle_id)
     output.finish_diagnostics(handle_id)
     return True
+
+
+def _wait_for_task(
+    client: _Client,
+    handle: str,
+    *,
+    output: CLIOutput,
+    follow: bool,
+) -> dict[str, object]:
+    emitted_logs = 0
+    try:
+        while True:
+            if follow:
+                logs = client.request("GET", f"/v1/tasks/{handle}/logs")["items"]
+                for message in logs[emitted_logs:]:
+                    _render_task_log(output, message, handle_id=handle)
+                emitted_logs = len(logs)
+            status = client.request("GET", f"/v1/tasks/{handle}")
+            if status["status"] in {"succeeded", "failed", "canceled"}:
+                return status
+            output.state(status)
+            time.sleep(0.05)
+    except KeyboardInterrupt as exc:
+        raise TaskDetached(handle) from exc
+
+
+def _dataset_operands(args: Any) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for name in ("symbols", "indexes", "exchanges"):
+        values = getattr(args, name, None)
+        if values:
+            result[name] = values
+    if args.timerange and (args.range_start or args.range_end):
+        raise CLIUsageError("--timerange cannot be combined with --from or --to")
+    if bool(args.range_start) != bool(args.range_end):
+        raise CLIUsageError("--from and --to must be supplied together")
+    if args.timerange:
+        result["timerange"] = args.timerange
+    elif args.range_start and args.range_end:
+        result["timerange"] = f"{args.range_start}:{args.range_end}"
+    return result
+
+
+def _render_plan_preview(output: CLIOutput, plan: Mapping[str, object]) -> None:
+    requests = plan.get("estimated_provider_requests")
+    request_text = "unknown" if requests is None else str(requests)
+    output.log(
+        f"Plan: {plan.get('strategy', 'plugin operation')}; "
+        f"estimated provider requests: {request_text}"
+    )
+    for dependency in plan.get("dependencies", []):
+        if isinstance(dependency, Mapping):
+            output.log(
+                f"Dependency: {dependency.get('dataset')} ({dependency.get('state', 'unknown')})"
+            )
+
+
+def _dynamic_completion(client: _Client, words: list[str]) -> list[str]:
+    candidates: list[str]
+    if not words:
+        candidates = "task dataset provider cron events config system completion".split()
+    elif (
+        words[0] == "dataset"
+        and len(words) >= 2
+        and len(words) <= 3
+        and words[1]
+        in {
+            "update",
+            "complete",
+            "refresh",
+            "describe",
+            "operations",
+            "status",
+        }
+    ):
+        candidates = [str(item["name"]) for item in client.request("GET", "/v1/datasets")["items"]]
+    elif words[0] == "provider" and len(words) >= 2:
+        candidates = [str(item["name"]) for item in client.request("GET", "/v1/providers")["items"]]
+    elif (
+        words[0] == "task"
+        and len(words) >= 2
+        and words[1]
+        in {
+            "status",
+            "logs",
+            "cancel",
+            "watch",
+            "retry",
+            "explain",
+        }
+    ):
+        candidates = [
+            str(item["handle_id"]) for item in client.request("GET", "/v1/tasks?all=true")["items"]
+        ]
+    elif words[0] == "config" and len(words) >= 2:
+        values = client.request("GET", "/v1/config").get("values", {})
+        candidates = list(values) if isinstance(values, Mapping) else []
+    elif (
+        words[0] == "dataset" and len(words) >= 4 and words[1] in {"update", "complete", "refresh"}
+    ):
+        description = client.request("GET", f"/v1/datasets/{words[2]}/operations/{words[1]}")
+        properties = description.get("properties", {})
+        candidates = [f"--{name}" for name in properties] if isinstance(properties, Mapping) else []
+        candidates.extend(["--from", "--to", "--wait", "--follow", "--dry-run"])
+    else:
+        return _static_completion(words)
+    prefix = words[-1] if words else ""
+    return [item for item in candidates if item.startswith(prefix)]
+
+
+def _static_completion(words: list[str]) -> list[str]:
+    groups = "task dataset provider cron events config system completion".split()
+    actions = {
+        "task": "run ls status logs cancel watch retry explain".split(),
+        "dataset": "ls describe operations operation status reset update complete refresh".split(),
+        "provider": "ls status check".split(),
+        "cron": "ls enable disable set reset".split(),
+        "events": "ls ack".split(),
+        "config": "ls get set unset".split(),
+        "system": ["status"],
+    }
+    candidates = groups if len(words) <= 1 else actions.get(words[0], []) if len(words) == 2 else []
+    prefix = words[-1] if words else ""
+    return [item for item in candidates if item.startswith(prefix)]
 
 
 def _params(
@@ -374,91 +559,16 @@ def _extract_color(arguments: list[str]) -> str:
     return value
 
 
-def _parser() -> argparse.ArgumentParser:
-    parser = _ArgumentParser(prog="findata")
-    parser.add_argument("--version", action="version", version=f"findata {__version__}")
-    parser.add_argument("--workspace", type=Path)
-    groups = parser.add_subparsers(dest="group", required=True)
-
-    config = groups.add_parser("config").add_subparsers(dest="action", required=True)
-    config_set = config.add_parser("set")
-    config_set.add_argument("key")
-    config_set.add_argument("value", nargs="?")
-    config_set.add_argument("--value-json")
-    config_set.add_argument("--env")
-    config_set.add_argument("--stdin", action="store_true")
-    config_get = config.add_parser("get")
-    config_get.add_argument("key", nargs="?")
-    config.add_parser("ls")
-    config_unset = config.add_parser("unset")
-    config_unset.add_argument("key")
-
-    provider = groups.add_parser("provider").add_subparsers(dest="action", required=True)
-    provider.add_parser("ls")
-    provider_status = provider.add_parser("status")
-    provider_status.add_argument("name")
-    provider_check = provider.add_parser("check")
-    provider_check.add_argument("name")
-
-    dataset = groups.add_parser("dataset").add_subparsers(dest="action", required=True)
-    dataset.add_parser("ls")
-    for action in ("describe", "operations"):
-        command = dataset.add_parser(action)
-        command.add_argument("dataset")
-    dataset_status = dataset.add_parser("status")
-    dataset_status.add_argument("dataset", nargs="?")
-    dataset_status.add_argument("--all", action="store_true")
-    dataset_operation = dataset.add_parser("operation")
-    dataset_operation.add_argument("dataset")
-    dataset_operation.add_argument("operation")
-    dataset_reset = dataset.add_parser("reset")
-    dataset_reset.add_argument("dataset")
-    dataset_reset.add_argument("--yes", action="store_true")
-
-    task = groups.add_parser("task").add_subparsers(dest="action", required=True)
-    run = task.add_parser("run")
-    run.add_argument("dataset")
-    run.add_argument("operation", nargs="?", default="update")
-    run.add_argument("--param", action="append", default=[])
-    run.add_argument("--params")
-    run.add_argument("--wait", action="store_true")
-    run.add_argument("--follow", action="store_true")
-    listing = task.add_parser("ls")
-    listing.add_argument("--dataset")
-    listing.add_argument("--status")
-    listing.add_argument("--all", action="store_true")
-    for action in ("status", "cancel"):
-        command = task.add_parser(action)
-        command.add_argument("handle")
-    logs = task.add_parser("logs")
-    logs.add_argument("handle")
-    logs.add_argument("--follow", "-f", action="store_true")
-
-    cron = groups.add_parser("cron").add_subparsers(dest="action", required=True)
-    cron.add_parser("ls")
-    for action in ("enable", "disable", "reset"):
-        command = cron.add_parser(action)
-        command.add_argument("dataset")
-    cron_set = cron.add_parser("set")
-    cron_set.add_argument("dataset")
-    cron_set.add_argument("--expression", required=True)
-    cron_set.add_argument("--timezone", required=True)
-
-    events = groups.add_parser("events").add_subparsers(dest="action", required=True)
-    events_ls = events.add_parser("ls")
-    events_ls.add_argument("--unread", action="store_true")
-    events_ls.add_argument("--since")
-    events_ls.add_argument("--severity", choices=("info", "warning", "error"))
-    events_ack = events.add_parser("ack")
-    events_ack.add_argument("event_id", nargs="?")
-    events_ack.add_argument("--all", action="store_true")
-
-    system = groups.add_parser("system").add_subparsers(dest="action", required=True)
-    system.add_parser("status")
-
-    completion = groups.add_parser("completion")
-    completion.add_argument("shell", choices=("bash", "zsh", "fish"))
-    return parser
+def _extract_presentation(arguments: list[str]) -> tuple[bool, bool, bool]:
+    quiet = "--quiet" in arguments
+    verbose = "--verbose" in arguments
+    progress_enabled = "--no-progress" not in arguments
+    for flag in ("--quiet", "--verbose", "--no-progress"):
+        while flag in arguments:
+            arguments.remove(flag)
+    if quiet and verbose:
+        raise CLIUsageError("--quiet and --verbose are mutually exclusive")
+    return quiet, verbose, progress_enabled
 
 
 def _duration_seconds(value: str) -> float:
@@ -496,19 +606,26 @@ def resolve_workspace(
 
 
 def _completion_script(shell: str) -> str:
-    commands = "task dataset provider cron events config system completion"
     if shell == "bash":
-        return f"complete -W '{commands}' findata\n"
+        return (
+            "_findata_complete() { COMPREPLY=( $(findata _complete "
+            '"${COMP_WORDS[@]:1:$COMP_CWORD}" 2>/dev/null) ); }\n'
+            "complete -F _findata_complete findata\n"
+        )
     if shell == "zsh":
-        return f"#compdef findata\n_arguments '1:command:({commands})'\n"
-    return f"complete -c findata -f -a '{commands}'\n"
+        return (
+            "#compdef findata\n_findata_complete() { compadd -- "
+            '${(f)"$(findata _complete ${words[2,-1]} 2>/dev/null)"}; }\n'
+            "compdef _findata_complete findata\n"
+        )
+    return "complete -c findata -f -a '(findata _complete (commandline -opc)[2..-1] 2>/dev/null)'\n"
 
 
 def _normalize_aliases(arguments: list[str]) -> None:
     return
 
 
-def _validate_cli_args(args: argparse.Namespace, *, output_format: str = "human") -> None:
+def _validate_cli_args(args: Any, *, output_format: str = "human") -> None:
     if args.group == "events" and args.action == "ack":
         if bool(args.event_id) == bool(args.all):
             raise ValueError("events ack requires an event ID or --all")
@@ -517,9 +634,16 @@ def _validate_cli_args(args: argparse.Namespace, *, output_format: str = "human"
             raise ValueError("dataset status requires a dataset or --all")
     if args.group == "task" and args.action == "run" and args.param and args.params:
         raise ValueError("--param and --params are mutually exclusive")
-    if args.group == "task" and args.action in {"run", "logs"}:
-        if getattr(args, "follow", False) and output_format == "json":
+    if args.group == "task" and args.action in {"run", "logs", "retry", "watch"}:
+        if (getattr(args, "follow", False) or args.action == "watch") and output_format == "json":
             raise CLIUsageError("--follow is a stream; use --format JSONL instead of JSON")
+    if (
+        args.group == "dataset"
+        and args.action in {"update", "complete", "refresh"}
+        and args.follow
+        and output_format == "json"
+    ):
+        raise CLIUsageError("--follow is a stream; use --format JSONL instead of JSON")
     if args.group == "config" and args.action == "set":
         sources = sum(
             (
@@ -550,7 +674,7 @@ def _json_value(source: str, *, stdin: TextIO) -> object:
         raise ValueError(f"invalid configuration JSON: {exc.msg}") from exc
 
 
-def _result_record_type(args: argparse.Namespace) -> str:
+def _result_record_type(args: Any) -> str:
     if args.group == "task" and args.action in {"run", "logs"}:
         return "task.result"
     return f"{args.group}.{getattr(args, 'action', 'result')}.result"

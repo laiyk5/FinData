@@ -141,10 +141,17 @@ class TaskContext:
             }
         )
 
-    def progress(self, current: int | float, total: int | float) -> None:
+    def progress(
+        self,
+        current: int | float,
+        total: int | float,
+        **metrics: int | float,
+    ) -> None:
         if total < 0 or current < 0:
             raise ValueError("progress values cannot be negative")
-        self._send({"type": "progress", "current": current, "total": total})
+        if any(value < 0 for value in metrics.values()):
+            raise ValueError("progress metrics cannot be negative")
+        self._send({"type": "progress", "current": current, "total": total, **metrics})
 
     def stage(self, value: str) -> None:
         self._send({"type": "stage", "stage": str(value)})
@@ -579,6 +586,19 @@ class TaskRunner:
                 result.append(item["message"])
         return result
 
+    def retained_request(self, handle_id: str) -> dict[str, Any]:
+        """Return the immutable normalized request behind a retained handle."""
+        with self._condition:
+            resolved = self._resolve_handle(handle_id)
+            handle = self._handles[resolved]
+            execution = self._executions[handle.execution_id]
+            return {
+                "handle_id": resolved,
+                "dataset": execution.dataset,
+                "operation": execution.operation,
+                "operands": _canonical_value(execution.operands),
+            }
+
     def _resolve_handle(self, operand: str) -> str:
         try:
             return resolve_identifier(operand, self._handles)
@@ -833,8 +853,9 @@ class TaskRunner:
                 return
             if kind == "progress":
                 execution.progress = {
-                    "current": message.get("current", 0),
-                    "total": message.get("total", 0),
+                    key: value
+                    for key, value in message.items()
+                    if key != "type" and isinstance(value, (int, float))
                 }
                 self._update_active_handles(execution, progress=execution.progress)
             elif kind == "stage":

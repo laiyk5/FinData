@@ -1,11 +1,14 @@
 from __future__ import annotations
 
-import argparse
+from contextlib import redirect_stderr, redirect_stdout
 import signal
 import sys
 import threading
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TextIO
+
+import click
 
 from findata import __version__
 from findata.server import FindataServer, initialize_workspace
@@ -17,16 +20,25 @@ def main(
     stdout: TextIO = sys.stdout,
     stderr: TextIO = sys.stderr,
 ) -> int:
-    parser = argparse.ArgumentParser(prog="findata-server")
-    commands = parser.add_subparsers(dest="command", required=True)
-    init = commands.add_parser("init")
-    init.add_argument("workspace")
-    start = commands.add_parser("start")
-    start.add_argument("workspace")
-    start.add_argument("--host", default="127.0.0.1")
-    start.add_argument("--port", type=int, default=8765)
-    start.add_argument("--provider-mode", choices=("real", "mock"), default="real")
-    args = parser.parse_args(argv)
+    try:
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            args = _command_tree().main(
+                args=argv,
+                prog_name="findata-server",
+                standalone_mode=False,
+            )
+    except click.exceptions.Exit as exc:
+        return exc.exit_code
+    except click.UsageError as exc:
+        stderr.write(f"Error: {exc.format_message()}\n")
+        stderr.flush()
+        return 2
+    if isinstance(args, int):
+        return args
+    if args is None:
+        stderr.write("Error: a command is required\n")
+        stderr.flush()
+        return 2
     if args.command == "init":
         workspace = Path(args.workspace).expanduser().resolve()
         initialize_workspace(workspace)
@@ -68,6 +80,34 @@ def main(
     finally:
         server.shutdown()
     return 0
+
+
+def _command_tree() -> click.Group:
+    @click.group(name="findata-server")
+    @click.version_option(version=__version__, prog_name="findata-server")
+    def root() -> None:
+        """Initialize and run a local FinData server."""
+
+    @root.command("init")
+    @click.argument("workspace", type=click.Path(path_type=Path))
+    def initialize(workspace: Path) -> SimpleNamespace:
+        return SimpleNamespace(command="init", workspace=workspace)
+
+    @root.command("start")
+    @click.argument("workspace", type=click.Path(path_type=Path))
+    @click.option("--host", default="127.0.0.1", show_default=True)
+    @click.option("--port", type=click.IntRange(0, 65535), default=8765, show_default=True)
+    @click.option("--provider-mode", type=click.Choice(["real", "mock"]), default="real")
+    def start(workspace: Path, host: str, port: int, provider_mode: str) -> SimpleNamespace:
+        return SimpleNamespace(
+            command="start",
+            workspace=workspace,
+            host=host,
+            port=port,
+            provider_mode=provider_mode,
+        )
+
+    return root
 
 
 if __name__ == "__main__":

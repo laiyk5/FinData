@@ -118,6 +118,11 @@ spinner or replace a progress line in place. Redirected diagnostics use ordinary
 updates. A terminal summary removes any transient animation and reports status, elapsed time, task
 ID, and available result identifiers. Waiting states name their reported reason, such as a rate
 permit, dependency, or write gate; the CLI does not invent progress the server did not report.
+When available, the live region also reports provider requests, fetched rows, committed checkpoints,
+elapsed time, and a conservative ETA. Unknown values are omitted rather than guessed. `--no-progress`
+disables the live region, `--quiet` suppresses nonterminal human output, and `--verbose` includes
+dependency and request-planning detail. `--quiet` and `--verbose` cannot be combined. Structured
+output is unaffected by verbosity flags.
 
 Pressing Ctrl-C while waiting or following detaches the client and leaves the accepted server task
 running. Use `findata task cancel <id>` when cancellation is intended. A temporary connection loss
@@ -172,6 +177,8 @@ an aggregated record is lossless only when its count preserves the total. JSON a
 apply the human visibility limit.
 
 Help, version, and shell-completion generation are not subject to structured output and do not require a workspace. Dynamic completion is best-effort and falls back to static command completion if a workspace or server is unavailable.
+Click provides the command hierarchy, validation, and help pages; invoking help or version from an
+embedded Python caller returns normally rather than terminating the host process.
 
 ### Operand conventions
 
@@ -210,6 +217,11 @@ Canceling one coalesced handle makes that handle `canceled` immediately while an
 - `task status <id>` — show status and progress. If work was coalesced, indicate whether other requesters remain.
 - `task logs <id> [--follow]` — print logs; `-f` aliases `--follow`.
 - `task cancel <id>` — cancel this request and report whether shared execution continued for another requester.
+- `task watch <id>` — follow a retained task's progress and logs without submitting work.
+- `task retry <id> [--wait|--follow]` — submit a new handle using the retained task's normalized
+  dataset, operation, and operands. Configuration is snapshotted again; the old record is unchanged.
+- `task explain <id>` — show the current or terminal reason, dependency-failure chain, diagnostics,
+  and concrete inspection or retry commands without changing task state.
 
 ### Datasets
 
@@ -223,6 +235,17 @@ Canceling one coalesced handle makes that handle `canceled` immediately while an
   preserving its settings and task history. Human interactive mode requires confirmation;
   structured or non-interactive use requires `--yes`. Reset is rejected while that dataset has
   queued or active work and never affects another dataset.
+- `dataset update|complete|refresh <name> [operation operands] [--wait|--follow] [--dry-run]` —
+  ergonomic operation commands generated from the plugin's operation schema. Array operands use
+  repeatable plural flags such as `--symbols`; half-open date ranges use either `--timerange` or
+  `--from` plus `--to`. The generic `task run` form remains available for automation.
+
+`--dry-run` uses the same server-side operation planner as execution but submits no task, performs
+no provider request, acquires no write gate, and changes no data, coverage, configuration, events,
+or task history. It validates normalized operands, reads current local state, reports dependencies,
+coverage expansion, request strategy and estimated request/checkpoint counts when determinable, and
+marks values unknown when required dependency data is absent. A later execution revalidates mutable
+state, so a preview is informative rather than a reservation or guarantee.
 
 ### Providers
 
@@ -272,6 +295,9 @@ is changed.
 ### Completion
 
 `completion <bash|zsh|fish>` generates a shell-completion script. The installed script obtains dynamic dataset, operation, and operand candidates when the resolved workspace and server are available.
+Completion uses a credentialed hidden CLI query rather than putting a workspace token in the shell
+script. It completes dataset/provider names, operations, configuration keys, retained task IDs, and
+schema-declared operand flags, and falls back to static commands when no server is available.
 
 ## DataLoader
 

@@ -231,7 +231,16 @@ class TaskRunnerTests(unittest.TestCase):
             handles = runner.list_handles()
 
         self.assertEqual(status.status, "succeeded", status.error)
-        self.assertEqual(status.progress, {"current": 3, "total": 3})
+        self.assertEqual(
+            status.progress,
+            {
+                "current": 3,
+                "total": 3,
+                "provider_requests": 3,
+                "rows_fetched": 15,
+                "checkpoints": 1,
+            },
+        )
         self.assertEqual(
             {item.dataset for item in handles},
             {

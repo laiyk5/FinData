@@ -224,6 +224,14 @@ Progress distinguishes processed work from durably checkpointed work.
 
 Execution records contain state, progress, logs, PID, and process start time. Separate handle records contain each submission's subscriber, execution, and public handle state. Active records persist; after completion, the newest 1,000 terminal handles per dataset and every execution they still reference are retained. Public task states and listing behavior are defined in [USER.md](USER.md#task-lifecycle).
 
+Each dataset operation exposes a pure planning entry point. Planning consumes normalized operands,
+captured configuration, capabilities, coverage, publication time, and locally committed dependency
+data and returns a serializable plan. It performs no provider request or mutation. Execution invokes
+the same planner and revalidates its inputs before consuming the plan. Dry-run is an HTTP/CLI
+projection of this entry point, not a task lifecycle state and not a retained task. Retry creates a
+new handle and execution from a retained handle's normalized request; explain is a read-only
+projection of retained state, logs, diagnostics, and dependency error chains.
+
 The internal execution-state machine, message schema, framing, and persistence transactions belong in implementation specs before TaskRunner code is considered stable; they may not add or reinterpret public handle states.
 
 ### Cancellation and liveness

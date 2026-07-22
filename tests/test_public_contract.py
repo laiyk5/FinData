@@ -9,6 +9,7 @@ from pathlib import Path
 from findata.cli import main as cli_main, resolve_workspace
 from findata.contracts import OperandError
 from findata.datasets.tushare.operations import normalize_operation
+from findata.server_cli import main as server_cli_main
 from findata.storage import Workspace
 
 
@@ -30,9 +31,7 @@ class OperationNormalizationTests(unittest.TestCase):
         with self.assertRaises(OperandError):
             normalize_operation("unknown", "update", {}, today=date(2026, 7, 20))
         with self.assertRaises(OperandError):
-            normalize_operation(
-                "tushare_stock_basic", "complete", {}, today=date(2026, 7, 20)
-            )
+            normalize_operation("tushare_stock_basic", "complete", {}, today=date(2026, 7, 20))
         with self.assertRaises(OperandError):
             normalize_operation(
                 "tushare_trade_cal",
@@ -50,6 +49,44 @@ class OperationNormalizationTests(unittest.TestCase):
 
 
 class WorkspaceResolutionTests(unittest.TestCase):
+    def test_click_help_is_embeddable_and_lists_global_presentation_options(self) -> None:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+
+        code = cli_main(["--help"], stdout=stdout, stderr=stderr, environ={})
+
+        self.assertEqual(code, 0)
+        self.assertIn("--format", stdout.getvalue())
+        self.assertIn("--quiet", stdout.getvalue())
+        self.assertIn("--no-progress", stdout.getvalue())
+        self.assertEqual(stderr.getvalue(), "")
+
+    def test_click_nested_help_does_not_require_workspace(self) -> None:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+
+        code = cli_main(
+            ["dataset", "complete", "--help"],
+            stdout=stdout,
+            stderr=stderr,
+            environ={},
+        )
+
+        self.assertEqual(code, 0)
+        self.assertIn("--dry-run", stdout.getvalue())
+        self.assertIn("--symbols", stdout.getvalue())
+        self.assertEqual(stderr.getvalue(), "")
+
+    def test_server_click_help_is_embeddable(self) -> None:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+
+        code = server_cli_main(["start", "--help"], stdout=stdout, stderr=stderr)
+
+        self.assertEqual(code, 0)
+        self.assertIn("--provider-mode", stdout.getvalue())
+        self.assertEqual(stderr.getvalue(), "")
+
     def test_explicit_then_environment_then_nearest_parent(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -62,11 +99,15 @@ class WorkspaceResolutionTests(unittest.TestCase):
             nested.mkdir(parents=True)
 
             self.assertEqual(
-                resolve_workspace(explicit, environ={"FINDATA_WORKSPACE": str(environment)}, cwd=nested),
+                resolve_workspace(
+                    explicit, environ={"FINDATA_WORKSPACE": str(environment)}, cwd=nested
+                ),
                 explicit.resolve(),
             )
             self.assertEqual(
-                resolve_workspace(None, environ={"FINDATA_WORKSPACE": str(environment)}, cwd=nested),
+                resolve_workspace(
+                    None, environ={"FINDATA_WORKSPACE": str(environment)}, cwd=nested
+                ),
                 environment.resolve(),
             )
             self.assertEqual(resolve_workspace(None, environ={}, cwd=nested), parent.resolve())
@@ -82,6 +123,16 @@ class WorkspaceResolutionTests(unittest.TestCase):
         code = cli_main(["completion", "bash"], stdout=stdout, stderr=stderr)
         self.assertEqual(code, 0)
         self.assertIn("complete", stdout.getvalue())
+        self.assertEqual(stderr.getvalue(), "")
+
+    def test_dynamic_completion_falls_back_without_workspace_or_server(self) -> None:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+
+        code = cli_main(["_complete", "d"], stdout=stdout, stderr=stderr, environ={})
+
+        self.assertEqual(code, 0)
+        self.assertEqual(stdout.getvalue(), "dataset\n")
         self.assertEqual(stderr.getvalue(), "")
 
     def test_event_ack_requires_an_id_or_all(self) -> None:
