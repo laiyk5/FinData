@@ -11,7 +11,7 @@ from datetime import date, datetime, time
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 from urllib.parse import parse_qs, urlparse
 from zoneinfo import ZoneInfo
 
@@ -63,6 +63,7 @@ class FindataServer:
         self.plugins = {
             item.name: item for item in discover_dataset_plugins(providers=self.providers.values())
         }
+        self._secret_keys = secret_config_keys(self.providers.values())
         self.host = host
         self.port = port
         self.provider_mode = provider_mode
@@ -100,7 +101,7 @@ class FindataServer:
             submit=lambda dataset, operation, operands: self.taskrunner.submit(
                 dataset, operation, operands, owner="cron"
             ),
-            provider_ready=lambda _dataset: self._provider_ready(),
+            provider_ready=lambda dataset: self._provider_ready(self.plugins[dataset].provider),
             update_ready=self._update_ready,
         )
 
@@ -167,15 +168,26 @@ class FindataServer:
             except Exception as exc:
                 self.events.record("cron_loop_error", "error", f"cron scheduler tick failed: {exc}")
 
-    def _provider_ready(self) -> bool:
-        runtime = self.providers["tushare"].runtime
+    def _provider_ready(self, provider_id: str) -> bool:
+        runtime = self.providers[provider_id].runtime
         assert runtime is not None
         return bool(runtime.ready(self.workspace, self.provider_mode))
 
-    def _provider_is_mock(self) -> bool:
-        runtime = self.providers["tushare"].runtime
+    def _provider_is_mock(self, provider_id: str) -> bool:
+        runtime = self.providers[provider_id].runtime
         assert runtime is not None
         return bool(runtime.is_mock(self.workspace, self.provider_mode))
+
+    def provider_summaries(self) -> list[dict[str, object]]:
+        """Credential-free readiness for every registered provider."""
+        return [
+            {
+                "name": provider_id,
+                "ready": self._provider_ready(provider_id),
+                "mode": "mock" if self._provider_is_mock(provider_id) else "real",
+            }
+            for provider_id in self.providers
+        ]
 
     def _update_ready(self, dataset: str) -> bool:
         if dataset == "tushare_index_weight":
@@ -277,9 +289,13 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                     return
                 if method == "POST" and parts == ["v1", "tasks"]:
                     body = self._body()
-                    if not app._provider_ready():
-                        raise ValueError("provider tushare is not ready")
                     dataset = str(body["dataset"])
+                    try:
+                        provider_id = app.plugins[dataset].provider
+                    except KeyError as exc:
+                        raise ValueError(f"unknown dataset {dataset!r}") from exc
+                    if not app._provider_ready(provider_id):
+                        raise ValueError(f"provider {provider_id} is not ready")
                     operation = str(body.get("operation") or "update")
                     operands = app._runtime_for_dataset(dataset).normalize_operation(
                         dataset,
@@ -437,7 +453,7 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                         {
                             "updated": True,
                             "key": key,
-                            "value": _redact(key, value),
+                            "value": _redact(key, value, app._secret_keys),
                             "revision": app.workspace.config_snapshot()["revision"],
                         },
                     )
@@ -450,14 +466,19 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                             self._send(HTTPStatus.NOT_FOUND, {"error": "config_not_found"})
                         else:
                             self._send(
-                                HTTPStatus.OK, {"key": key, "value": _redact(key, values[key])}
+                                HTTPStatus.OK,
+                                {
+                                    "key": key,
+                                    "value": _redact(key, values[key], app._secret_keys),
+                                },
                             )
                     else:
                         self._send(
                             HTTPStatus.OK,
                             {
                                 "values": {
-                                    name: _redact(name, value) for name, value in values.items()
+                                    name: _redact(name, value, app._secret_keys)
+                                    for name, value in values.items()
                                 }
                             },
                         )
@@ -518,6 +539,7 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                                         )
                                         else "real"
                                     ),
+                                    "secret_fields": list(provider.secret_fields),
                                 }
                                 for provider_id, provider in app.providers.items()
                             ]
@@ -532,13 +554,16 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                         raise ValueError(f"unknown provider {provider_id!r}") from exc
                     runtime = provider.runtime
                     assert runtime is not None
-                    configured = app.workspace.get_config(f"provider.{provider_id}.token")
+                    configured = app.provider_mode == "mock" or any(
+                        app.workspace.get_config(f"provider.{provider_id}.{field}") is not None
+                        for field in provider.secret_fields
+                    )
                     self._send(
                         HTTPStatus.OK,
                         {
                             "name": provider_id,
                             "ready": bool(runtime.ready(app.workspace, app.provider_mode)),
-                            "configured": configured is not None or app.provider_mode == "mock",
+                            "configured": configured,
                             "mode": (
                                 "mock"
                                 if runtime.is_mock(app.workspace, app.provider_mode)
@@ -553,7 +578,9 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                         {
                             "items": [
                                 app._runtime_for_dataset(name).dataset_description(
-                                    app.workspace, name, provider_ready=app._provider_ready()
+                                    app.workspace,
+                                    name,
+                                    provider_ready=app._provider_ready(app.plugins[name].provider),
                                 )
                                 for name in app.plugins
                             ]
@@ -585,7 +612,9 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                     self._send(
                         HTTPStatus.OK,
                         app._runtime_for_dataset(parts[2]).dataset_description(
-                            app.workspace, parts[2], provider_ready=app._provider_ready()
+                            app.workspace,
+                            parts[2],
+                            provider_ready=app._provider_ready(app.plugins[parts[2]].provider),
                         ),
                     )
                     return
@@ -593,7 +622,9 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                     dataset, action = parts[2], parts[3]
                     if action in {"operations", "status"}:
                         description = app._runtime_for_dataset(dataset).dataset_description(
-                            app.workspace, dataset, provider_ready=app._provider_ready()
+                            app.workspace,
+                            dataset,
+                            provider_ready=app._provider_ready(app.plugins[dataset].provider),
                         )
                         self._send(
                             HTTPStatus.OK,
@@ -710,7 +741,18 @@ def _task_payload(record: Any) -> dict[str, Any]:
     return value
 
 
-def _redact(key: str, value: Any) -> Any:
+def secret_config_keys(providers: Iterable[Any]) -> frozenset[str]:
+    """Configuration keys declared secret by registered provider plugins."""
+    return frozenset(
+        f"provider.{provider.provider_id}.{field}"
+        for provider in providers
+        for field in provider.secret_fields
+    )
+
+
+def _redact(key: str, value: Any, secret_keys: frozenset[str] = frozenset()) -> Any:
+    if key in secret_keys:
+        return "<redacted>"
     lowered = key.lower()
     if any(word in lowered for word in ("token", "secret", "password", "credential")):
         return "<redacted>"

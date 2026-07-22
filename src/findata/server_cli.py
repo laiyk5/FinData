@@ -61,19 +61,26 @@ def main(
     signal.signal(signal.SIGINT, stop)
     signal.signal(signal.SIGTERM, stop)
     server.start_background()
-    provider = "mock" if server._provider_is_mock() else "not configured"
+    summaries = server.provider_summaries()
+    labels = {
+        str(item["name"]): (
+            "mock" if item["mode"] == "mock" else "ready" if item["ready"] else "not configured"
+        )
+        for item in summaries
+    }
     if bool(getattr(stdout, "isatty", lambda: False)()):
         stdout.write(
             "✓ FinData server ready\n"
             f"  Version    {__version__}\n"
             f"  Workspace  {workspace}\n"
             f"  API        {server.base_url}\n"
-            f"  Providers  tushare ({provider})\n"
+            f"  Providers  {', '.join(f'{name} ({label})' for name, label in labels.items())}\n"
         )
     else:
         stdout.write(
             f"FinData server ready version={__version__} workspace={workspace} "
-            f"api={server.base_url} providers=tushare:{provider}\n"
+            f"api={server.base_url} "
+            f"providers={','.join(f'{name}:{label}' for name, label in labels.items())}\n"
         )
     stdout.flush()
     try:

@@ -169,6 +169,9 @@ def _execute(
     stdin: TextIO = sys.stdin,
 ) -> object:
     if args.group == "config" and args.action == "set":
+        literal = args.value is not None or args.value_json is not None
+        if literal and args.key in _declared_secret_keys(client):
+            raise CLIUsageError("secret configuration must use --stdin or --env")
         if args.env:
             value: object = {"env": args.env}
         elif args.stdin:
@@ -309,6 +312,22 @@ def _execute(
     if args.group == "system" and args.action == "status":
         return client.request("GET", "/v1/system/status")
     raise ValueError("unsupported command")
+
+
+def _declared_secret_keys(client: _Client) -> set[str]:
+    """Secret configuration keys declared by registered providers; empty when unavailable."""
+    try:
+        items = client.request("GET", "/v1/providers").get("items", [])
+    except (OSError, RuntimeError, ValueError):
+        return set()
+    keys: set[str] = set()
+    for item in items if isinstance(items, list) else []:
+        if not isinstance(item, Mapping):
+            continue
+        fields = item.get("secret_fields")
+        for field in fields if isinstance(fields, list) else []:
+            keys.add(f"provider.{item.get('name')}.{field}")
+    return keys
 
 
 class ServerError(RuntimeError):
@@ -748,10 +767,6 @@ def _validate_cli_args(args: Any, *, output_format: str = "human") -> None:
         )
         if sources != 1:
             raise ValueError("config set requires exactly one value source")
-        lowered = args.key.lower()
-        secret = any(word in lowered for word in ("token", "secret", "password", "credential"))
-        if secret and (args.value is not None or args.value_json is not None):
-            raise ValueError("secret configuration must use --stdin or --env")
 
 
 def _json_value(source: str, *, stdin: TextIO) -> object:

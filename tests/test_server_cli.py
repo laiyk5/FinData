@@ -15,7 +15,32 @@ from urllib.request import Request, urlopen
 from findata import DataLoader
 from findata.cli import main as cli_main
 from findata.loader import DatasetNotReadyError
-from findata.server import FindataServer, ServerAlreadyRunningError, initialize_workspace
+from findata.plugins import ProviderPlugin
+from findata.server import (
+    FindataServer,
+    ServerAlreadyRunningError,
+    _redact,
+    initialize_workspace,
+    secret_config_keys,
+)
+
+
+class SecretConfigKeyTests(unittest.TestCase):
+    def test_secret_config_keys_come_from_provider_declarations(self) -> None:
+        plugin = ProviderPlugin(
+            provider_id="acme",
+            configuration_schema={},
+            secret_fields=("api_key",),
+            rate_limit=1,
+            period=1,
+        )
+        self.assertEqual(secret_config_keys([plugin]), frozenset({"provider.acme.api_key"}))
+
+    def test_redact_prefers_declared_keys_and_keeps_heuristic_fallback(self) -> None:
+        declared = frozenset({"provider.acme.api_key"})
+        self.assertEqual(_redact("provider.acme.api_key", "value", declared), "<redacted>")
+        self.assertEqual(_redact("other.token", "value", declared), "<redacted>")
+        self.assertEqual(_redact("display.timezone", "UTC", declared), "UTC")
 
 
 class ServerCLITests(unittest.TestCase):
@@ -178,6 +203,37 @@ class ServerCLITests(unittest.TestCase):
         self.run_cli("events", "ack", failure["event_id"])
         unread = json.loads(self.run_cli("--json", "events", "ls", "--unread")[1])
         self.assertNotIn(failure["event_id"], {item["event_id"] for item in unread["items"]})
+
+    def test_config_set_rejects_literal_values_for_declared_secret_keys(self) -> None:
+        stdout, stderr = io.StringIO(), io.StringIO()
+        code = cli_main(
+            ["--workspace", str(self.root), "config", "set", "provider.tushare.token", "plain"],
+            stdout=stdout,
+            stderr=stderr,
+        )
+        self.assertEqual(code, 2)
+        self.assertIn("--stdin", stderr.getvalue())
+        self.assertIsNone(self.server.workspace.get_config("provider.tushare.token"))
+
+        stdout, stderr = io.StringIO(), io.StringIO()
+        code = cli_main(
+            [
+                "--workspace",
+                str(self.root),
+                "config",
+                "set",
+                "provider.tushare.token",
+                "--value-json",
+                '"plain"',
+            ],
+            stdout=stdout,
+            stderr=stderr,
+        )
+        self.assertEqual(code, 2)
+        self.assertIsNone(self.server.workspace.get_config("provider.tushare.token"))
+
+        code, _ = self.run_cli("config", "set", "display.timezone", "UTC")
+        self.assertEqual(code, 0)
 
     def test_dataset_and_provider_discovery_commands_report_registered_contracts(self) -> None:
         datasets = json.loads(self.run_cli("--json", "dataset", "ls")[1])
