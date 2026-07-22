@@ -7,20 +7,160 @@ from typing import Any
 import click
 
 
+class _ArgumentHelpMixin:
+    def format_options(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
+        arguments = [
+            (parameter.make_metavar(ctx), parameter.help)
+            for parameter in self.get_params(ctx)
+            if isinstance(parameter, click.Argument) and getattr(parameter, "help", None)
+        ]
+        if arguments:
+            with formatter.section("Arguments"):
+                formatter.write_dl(arguments)
+        super().format_options(ctx, formatter)
+
+
+class DocumentedCommand(_ArgumentHelpMixin, click.Command):
+    pass
+
+
+class DocumentedGroup(_ArgumentHelpMixin, click.Group):
+    pass
+
+
+GROUP_HELP = {
+    "config": "Read and change workspace configuration.",
+    "provider": "Inspect provider availability and credentials.",
+    "dataset": "Inspect and maintain registered datasets.",
+    "data": "Discover, preview, verify, and export committed data.",
+    "task": "Submit and inspect asynchronous dataset work.",
+    "cron": "Manage dataset update schedules.",
+    "events": "Inspect and acknowledge retained operational events.",
+    "system": "Inspect the local findata service.",
+}
+
+COMMAND_HELP = {
+    ("config", "set"): "Set one typed workspace configuration value.",
+    ("config", "get"): "Show one value, or all values when KEY is omitted.",
+    ("config", "ls"): "List workspace configuration values.",
+    ("config", "unset"): "Remove one workspace configuration value.",
+    ("provider", "ls"): "List registered providers.",
+    ("provider", "status"): "Show one provider's configured readiness.",
+    ("provider", "check"): "Verify one provider can authenticate and respond.",
+    ("dataset", "ls"): "List registered datasets.",
+    ("dataset", "describe"): "Show one dataset's schema, settings, and capabilities.",
+    ("dataset", "operations"): "List operations supported by one dataset.",
+    ("dataset", "status"): "Show maintenance and readiness state.",
+    ("dataset", "operation"): "Describe one dataset operation and its operands.",
+    ("dataset", "reset"): "Replace one dataset with a new uninitialized database.",
+    ("dataset", "update"): "Update a dataset using its configured selection.",
+    ("dataset", "complete"): "Backfill an explicit dataset selection and time range.",
+    ("dataset", "refresh"): "Refetch data strictly inside existing coverage.",
+    ("data", "schema"): "Show the committed Arrow schema and query keys.",
+    ("data", "coverage"): "Inspect committed coverage or check a requested time range.",
+    ("data", "preview"): "Show a bounded preview of committed rows.",
+    ("data", "export"): "Stream committed rows to a file or stdout.",
+    ("task", "run"): "Submit a dataset operation through the generic task interface.",
+    ("task", "ls"): "List retained task handles.",
+    ("task", "status"): "Show the current state of one task.",
+    ("task", "cancel"): "Cancel this subscriber's task handle.",
+    ("task", "watch"): "Wait for task progress and its terminal result.",
+    ("task", "explain"): "Explain a task plan, dependencies, or failure.",
+    ("task", "logs"): "Print retained logs for one task.",
+    ("task", "retry"): "Submit a new task from a retained terminal task.",
+    ("cron", "ls"): "List dataset schedules.",
+    ("cron", "enable"): "Enable one dataset's schedule.",
+    ("cron", "disable"): "Disable one dataset's schedule.",
+    ("cron", "reset"): "Restore one dataset's default schedule.",
+    ("cron", "set"): "Set one dataset's cron expression and timezone.",
+    ("events", "ls"): "List retained operational events.",
+    ("events", "ack"): "Acknowledge one event or every matching event.",
+    ("system", "status"): "Show server identity and runtime health.",
+    ("completion", "completion"): "Generate a shell script that enables command completion.",
+}
+
+ARGUMENT_HELP = {
+    "key": "Configuration key, for example dataset.tushare_daily_basic.update_symbols.",
+    "value": "Plain string value; use an alternate input option for typed or secret values.",
+    "name": "Registered provider identifier.",
+    "dataset": "Registered dataset identifier.",
+    "operation": "Dataset operation identifier.",
+    "handle": "Full task handle or an unambiguous lowercase-hex prefix.",
+    "event_id": "Full event identifier or an unambiguous lowercase-hex prefix.",
+    "shell": "Shell whose sourceable completion script should be generated.",
+}
+
+OPTION_HELP = {
+    "workspace": "Workspace path; otherwise use FINDATA_WORKSPACE or nearest parent workspace.",
+    "output_format": "Presentation format written to stdout.",
+    "color": "When human output may contain terminal colors.",
+    "value_json": "Read the configuration value as JSON.",
+    "env": "Read the configuration value from this environment variable.",
+    "stdin": "Read the configuration value from stdin.",
+    "all": "Apply to or include all matching resources.",
+    "symbols": "Repeat for each provider symbol to select.",
+    "indexes": "Repeat for each provider-qualified index to select.",
+    "exchanges": "Repeat for each exchange to select.",
+    "timerange": "Half-open date range in START:END form.",
+    "range_start": "Inclusive start date in YYYY-MM-DD form.",
+    "range_end": "Exclusive end date in YYYY-MM-DD form.",
+    "wait": "Wait until the submitted task reaches a terminal state.",
+    "follow": "Stream progress or logs while waiting.",
+    "dry_run": "Validate and show the plan without submitting work.",
+    "keys": "Repeat for each partition key to query.",
+    "columns": "Comma-separated or repeatable columns to return.",
+    "require_coverage": "Require complete coverage for every key and requested date.",
+    "allow_partial": "Return available rows even when requested coverage is incomplete.",
+    "limit": "Maximum preview rows to return.",
+    "export_format": "Serialized data format for the export.",
+    "output": "Destination path, or - for stdout.",
+    "batch_size": "Maximum rows processed per export batch.",
+    "force": "Replace an existing export file.",
+    "param": "Repeat KEY=VALUE to supply an operation operand.",
+    "params": "JSON object, @file, or - containing operation operands.",
+    "dataset": "Filter results to one dataset.",
+    "status": "Filter tasks by status.",
+    "expression": "Five-field cron expression.",
+    "timezone": "IANA timezone used to evaluate the schedule.",
+    "unread": "Show only unacknowledged events.",
+    "since": "Show events at or after this timestamp.",
+    "severity": "Filter events by severity.",
+    "yes": "Confirm the destructive reset without prompting.",
+}
+
+
+def _document_command(command: click.Command, *, family: str, action: str) -> None:
+    command.help = COMMAND_HELP[(family, action)]
+    for parameter in command.params:
+        if isinstance(parameter, click.Argument):
+            parameter.help = ARGUMENT_HELP[parameter.name]
+        elif isinstance(parameter, click.Option) and not parameter.help:
+            parameter.help = OPTION_HELP[parameter.name]
+
+
 def command_tree(*, version: str) -> click.Group:
     """Build the Click command tree while command execution remains elsewhere."""
 
-    @click.group(name="findata")
-    @click.option("--workspace", type=click.Path(path_type=Path))
+    @click.group(name="findata", cls=DocumentedGroup)
+    @click.option(
+        "--workspace",
+        type=click.Path(path_type=Path),
+        help=OPTION_HELP["workspace"],
+    )
     @click.option(
         "--format",
         "output_format",
         type=click.Choice(["human", "json", "jsonl"]),
         default="human",
         show_default=True,
+        help=OPTION_HELP["output_format"],
     )
     @click.option(
-        "--color", type=click.Choice(["auto", "always", "never"]), default="auto", show_default=True
+        "--color",
+        type=click.Choice(["auto", "always", "never"]),
+        default="auto",
+        show_default=True,
+        help=OPTION_HELP["color"],
     )
     @click.option("--quiet", is_flag=True, help="Suppress nonterminal human output.")
     @click.option("--verbose", is_flag=True, help="Show planning and dependency detail.")
@@ -39,9 +179,11 @@ def command_tree(*, version: str) -> click.Group:
                 **values,
             )
 
-        group.add_command(click.Command(action, params=params, callback=callback))
+        command = DocumentedCommand(action, params=params, callback=callback)
+        _document_command(command, family=name, action=action)
+        group.add_command(command)
 
-    config = click.Group("config")
+    config = DocumentedGroup("config", help=GROUP_HELP["config"])
     root.add_command(config)
     attach(
         config,
@@ -59,13 +201,13 @@ def command_tree(*, version: str) -> click.Group:
     attach(config, "config", "ls", [])
     attach(config, "config", "unset", [click.Argument(["key"])])
 
-    provider = click.Group("provider")
+    provider = DocumentedGroup("provider", help=GROUP_HELP["provider"])
     root.add_command(provider)
     attach(provider, "provider", "ls", [])
     for action in ("status", "check"):
         attach(provider, "provider", action, [click.Argument(["name"])])
 
-    dataset = click.Group("dataset")
+    dataset = DocumentedGroup("dataset", help=GROUP_HELP["dataset"])
     root.add_command(dataset)
     attach(dataset, "dataset", "ls", [])
     for action in ("describe", "operations"):
@@ -110,7 +252,7 @@ def command_tree(*, version: str) -> click.Group:
             ],
         )
 
-    data = click.Group("data")
+    data = DocumentedGroup("data", help=GROUP_HELP["data"])
     root.add_command(data)
     attach(data, "data", "schema", [click.Argument(["dataset"])])
     attach(
@@ -159,7 +301,7 @@ def command_tree(*, version: str) -> click.Group:
         ],
     )
 
-    task = click.Group("task")
+    task = DocumentedGroup("task", help=GROUP_HELP["task"])
     root.add_command(task)
     attach(
         task,
@@ -207,7 +349,7 @@ def command_tree(*, version: str) -> click.Group:
         ],
     )
 
-    cron = click.Group("cron")
+    cron = DocumentedGroup("cron", help=GROUP_HELP["cron"])
     root.add_command(cron)
     attach(cron, "cron", "ls", [])
     for action in ("enable", "disable", "reset"):
@@ -223,7 +365,7 @@ def command_tree(*, version: str) -> click.Group:
         ],
     )
 
-    events = click.Group("events")
+    events = DocumentedGroup("events", help=GROUP_HELP["events"])
     root.add_command(events)
     attach(
         events,
@@ -245,7 +387,7 @@ def command_tree(*, version: str) -> click.Group:
         ],
     )
 
-    system = click.Group("system")
+    system = DocumentedGroup("system", help=GROUP_HELP["system"])
     root.add_command(system)
     attach(system, "system", "status", [])
 
@@ -265,11 +407,12 @@ def command_tree(*, version: str) -> click.Group:
             words=words,
         )
 
-    hidden = click.Command(
+    hidden = DocumentedCommand(
         "_complete",
         params=[click.Argument(["words"], nargs=-1)],
         callback=hidden_completion,
         hidden=True,
+        context_settings={"ignore_unknown_options": True},
     )
     root.add_command(hidden)
     return root

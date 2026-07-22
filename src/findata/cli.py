@@ -531,6 +531,15 @@ def _static_completion(words: list[str]) -> list[str]:
         "config": "ls get set unset".split(),
         "system": ["status"],
     }
+    tree = command_tree(version=__version__)
+    if len(words) == 1 and words[0].startswith("-"):
+        return _option_candidates(tree, words[0])
+    if len(words) >= 3:
+        family = tree.commands.get(words[0])
+        command = family.commands.get(words[1]) if isinstance(family, click.Group) else None
+        prefix = words[-1]
+        if command is not None and (not prefix or prefix.startswith("-")):
+            return _option_candidates(command, prefix)
     if not words:
         candidates, prefix = groups, ""
     elif len(words) == 1 and words[0] in actions:
@@ -546,6 +555,16 @@ def _static_completion(words: list[str]) -> list[str]:
     else:
         candidates, prefix = [], words[-1]
     return [item for item in candidates if item.startswith(prefix)]
+
+
+def _option_candidates(command: click.Command, prefix: str) -> list[str]:
+    candidates = [
+        option
+        for parameter in command.params
+        if isinstance(parameter, click.Option)
+        for option in [*parameter.opts, *parameter.secondary_opts]
+    ]
+    return sorted(option for option in candidates if option.startswith(prefix))
 
 
 def _local_data_completion(

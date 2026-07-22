@@ -11,6 +11,7 @@ from typing import TextIO
 import click
 
 from findata import __version__
+from findata.click_parser import DocumentedCommand, DocumentedGroup
 from findata.server import FindataServer, initialize_workspace
 
 
@@ -83,21 +84,46 @@ def main(
 
 
 def _command_tree() -> click.Group:
-    @click.group(name="findata-server")
+    @click.group(name="findata-server", cls=DocumentedGroup)
     @click.version_option(version=__version__, prog_name="findata-server")
     def root() -> None:
         """Initialize and run a local FinData server."""
 
-    @root.command("init")
+    @root.command(
+        "init",
+        cls=DocumentedCommand,
+        help="Create a secured local workspace and register built-in datasets.",
+    )
     @click.argument("workspace", type=click.Path(path_type=Path))
     def initialize(workspace: Path) -> SimpleNamespace:
         return SimpleNamespace(command="init", workspace=workspace)
 
-    @root.command("start")
+    @root.command(
+        "start",
+        cls=DocumentedCommand,
+        help="Run the authenticated local API and task service in the foreground.",
+    )
     @click.argument("workspace", type=click.Path(path_type=Path))
-    @click.option("--host", default="127.0.0.1", show_default=True)
-    @click.option("--port", type=click.IntRange(0, 65535), default=8765, show_default=True)
-    @click.option("--provider-mode", type=click.Choice(["real", "mock"]), default="real")
+    @click.option(
+        "--host",
+        default="127.0.0.1",
+        show_default=True,
+        help="Interface on which the local HTTP API listens.",
+    )
+    @click.option(
+        "--port",
+        type=click.IntRange(0, 65535),
+        default=8765,
+        show_default=True,
+        help="TCP port for the local API; 0 selects an ephemeral port.",
+    )
+    @click.option(
+        "--provider-mode",
+        type=click.Choice(["real", "mock"]),
+        default="real",
+        show_default=True,
+        help="Use real provider APIs or deterministic local mock responses.",
+    )
     def start(workspace: Path, host: str, port: int, provider_mode: str) -> SimpleNamespace:
         return SimpleNamespace(
             command="start",
@@ -106,6 +132,11 @@ def _command_tree() -> click.Group:
             port=port,
             provider_mode=provider_mode,
         )
+
+    for command in (initialize, start):
+        for parameter in command.params:
+            if isinstance(parameter, click.Argument) and parameter.name == "workspace":
+                parameter.help = "Workspace directory to create or run."
 
     return root
 

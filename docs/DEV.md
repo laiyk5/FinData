@@ -215,6 +215,18 @@ standalone process exits and preserves injected stdin, stdout, stderr, and envir
 tests and embedding. Live plugin metadata may extend completion and operation help without importing
 dataset implementations into the core CLI.
 
+Every public command and command family must carry a concise purpose statement. Every positional
+argument and option must explain its meaning, accepted form, and important default or side effect;
+a metavariable alone is not documentation. The command tree has a structural test that rejects an
+undocumented command or parameter, and representative nested `--help` output is tested as a user
+contract. Hidden machine-protocol commands are the only exception.
+
+When an operand has a finite or discoverable candidate set, new CLI work should provide shell
+completion wherever practical. Static command and option candidates come from the Click contract;
+registered datasets, providers, operations, settings, and retained identifiers should use local or
+server metadata without triggering writes or provider calls. Completion remains best-effort and
+must degrade to safe static or local candidates when the workspace or server is unavailable.
+
 Keep presentation separate from command execution. Commands produce semantic result or event
 objects; centralized human, JSON, and JSONL renderers decide how to display them. A shared terminal
 capability detector owns TTY, width, Unicode, color, and `NO_COLOR` handling. Command handlers must

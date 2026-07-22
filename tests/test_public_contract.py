@@ -6,9 +6,14 @@ import unittest
 from datetime import date
 from pathlib import Path
 
+import click
+
+from findata import __version__
 from findata.cli import main as cli_main, resolve_workspace
+from findata.click_parser import command_tree
 from findata.contracts import OperandError
 from findata.datasets.tushare.operations import normalize_operation
+from findata.server_cli import _command_tree as server_command_tree
 from findata.server_cli import main as server_cli_main
 from findata.storage import Workspace
 
@@ -49,6 +54,53 @@ class OperationNormalizationTests(unittest.TestCase):
 
 
 class WorkspaceResolutionTests(unittest.TestCase):
+    def test_every_public_command_and_parameter_is_documented(self) -> None:
+        def visit(command: click.Command) -> None:
+            if command.hidden:
+                return
+            self.assertTrue(command.help, command.name)
+            for parameter in command.params:
+                if isinstance(parameter, click.Option):
+                    self.assertTrue(parameter.help, f"{command.name} --{parameter.name}")
+                elif isinstance(parameter, click.Argument):
+                    self.assertTrue(
+                        getattr(parameter, "help", None),
+                        f"{command.name} {parameter.name}",
+                    )
+            if isinstance(command, click.Group):
+                for child in command.commands.values():
+                    visit(child)
+
+        visit(command_tree(version=__version__))
+        visit(server_command_tree())
+
+    def test_nested_help_explains_command_arguments_and_options(self) -> None:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+
+        code = cli_main(
+            ["data", "coverage", "--help"],
+            stdout=stdout,
+            stderr=stderr,
+        )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(stderr.getvalue(), "")
+        rendered = stdout.getvalue()
+        self.assertIn("Inspect committed coverage", rendered)
+        self.assertIn("Arguments:", rendered)
+        self.assertIn("Registered dataset identifier", rendered)
+        self.assertIn("--keys", rendered)
+        self.assertIn("partition key", rendered)
+
+        stdout = io.StringIO()
+        code = server_cli_main(["start", "--help"], stdout=stdout, stderr=io.StringIO())
+        self.assertEqual(code, 0)
+        self.assertIn("Run the authenticated local API", stdout.getvalue())
+        self.assertIn("Workspace directory", stdout.getvalue())
+        self.assertIn("deterministic local", stdout.getvalue())
+        self.assertIn("mock responses", stdout.getvalue())
+
     def test_click_help_is_embeddable_and_lists_global_presentation_options(self) -> None:
         stdout = io.StringIO()
         stderr = io.StringIO()
@@ -149,6 +201,21 @@ class WorkspaceResolutionTests(unittest.TestCase):
         code = cli_main(["_complete", "data"], stdout=stdout, stderr=io.StringIO(), environ={})
         self.assertEqual(code, 0)
         self.assertEqual(stdout.getvalue(), "schema\npreview\ncoverage\nexport\n")
+
+        stdout = io.StringIO()
+        code = cli_main(
+            ["_complete", "data", "coverage", "dataset", ""],
+            stdout=stdout,
+            stderr=io.StringIO(),
+            environ={},
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("--keys", stdout.getvalue().splitlines())
+
+        stdout = io.StringIO()
+        code = cli_main(["_complete", "--w"], stdout=stdout, stderr=io.StringIO(), environ={})
+        self.assertEqual(code, 0)
+        self.assertIn("--workspace", stdout.getvalue().splitlines())
 
     def test_event_ack_requires_an_id_or_all(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
