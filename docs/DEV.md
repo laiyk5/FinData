@@ -198,6 +198,17 @@ given.
 Do not rewrite shared `main` or `dev` history. Keep unrelated changes out of feature and fix commits,
 and do not merge while required tests or documentation updates are incomplete.
 
+Remote Git operations have a separate authorization boundary. Without explicit human permission,
+do not perform any operation that uploads data or changes remote state. This includes ordinary or
+forced pushes, pushing branches or tags, deleting or renaming remote refs, creating or updating pull
+requests or releases, and publishing build artifacts. A general request to work on, release, sync,
+or replace a repository is not permission for an individual remote mutation: immediately before
+execution, identify the remote, exact refs, operation, and whether history will be rewritten, then
+obtain human approval for that operation. Read-only inspection such as `git remote -v`,
+`git ls-remote`, and `git fetch` may be used to prepare that review but does not authorize a later
+upload. Force pushes require an explicit force-push approval and should use `--force-with-lease`
+against a freshly inspected expected remote commit whenever the intended replacement permits it.
+
 ## Packaging and builds
 
 Hatchling is the sole PEP 517 build backend. Its version is pinned in `build-system.requires`, and
