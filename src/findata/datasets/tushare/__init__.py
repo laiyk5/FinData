@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import date
+import re
 from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
@@ -30,6 +31,19 @@ def _normalize_stock_basic(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         normalized = dict(row)
         normalized["list_date"] = provider_date(row.get("list_date"), nullable=True)
         normalized["delist_date"] = provider_date(row.get("delist_date"), nullable=True)
+        result.append(normalized)
+    return result
+
+
+def _normalize_index_basic(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        normalized = dict(row)
+        normalized["base_date"] = provider_date(row.get("base_date"), nullable=True)
+        normalized["list_date"] = provider_date(row.get("list_date"), nullable=True)
+        normalized["exp_date"] = provider_date(row.get("exp_date"), nullable=True)
+        value = row.get("base_point")
+        normalized["base_point"] = None if value in (None, "") else float(value)
         result.append(normalized)
     return result
 
@@ -93,6 +107,21 @@ STOCK_BASIC_FIELDS = (
     "act_ent_type",
 )
 INDEX_WEIGHT_FIELDS = ("index_code", "con_code", "trade_date", "weight")
+INDEX_BASIC_FIELDS = (
+    "ts_code",
+    "name",
+    "fullname",
+    "market",
+    "publisher",
+    "index_type",
+    "category",
+    "base_date",
+    "base_point",
+    "list_date",
+    "weight_rule",
+    "desc",
+    "exp_date",
+)
 DAILY_BASIC_FLOAT_FIELDS = (
     "close",
     "turnover_rate",
@@ -167,6 +196,30 @@ TUSHARE_DATASETS: Mapping[str, DatasetSpec] = {
         primary_key=("ts_code",),
         normalize_rows=_normalize_stock_basic,
     ),
+    "tushare_index_basic": DatasetSpec(
+        name="tushare_index_basic",
+        api_name="index_basic",
+        schema=pa.schema(
+            [
+                pa.field("ts_code", pa.string(), nullable=False),
+                pa.field("name", pa.string(), nullable=False),
+                pa.field("fullname", pa.string(), nullable=True),
+                pa.field("market", pa.string(), nullable=False),
+                pa.field("publisher", pa.string(), nullable=True),
+                pa.field("index_type", pa.string(), nullable=True),
+                pa.field("category", pa.string(), nullable=True),
+                pa.field("base_date", pa.date32(), nullable=True),
+                pa.field("base_point", pa.float64(), nullable=True),
+                pa.field("list_date", pa.date32(), nullable=True),
+                pa.field("weight_rule", pa.string(), nullable=True),
+                pa.field("desc", pa.string(), nullable=True),
+                pa.field("exp_date", pa.date32(), nullable=True),
+            ]
+        ),
+        provider_fields=INDEX_BASIC_FIELDS,
+        primary_key=("ts_code",),
+        normalize_rows=_normalize_index_basic,
+    ),
     "tushare_index_weight": DatasetSpec(
         name="tushare_index_weight",
         api_name="index_weight",
@@ -184,8 +237,8 @@ TUSHARE_DATASETS: Mapping[str, DatasetSpec] = {
         partition_key="index_code",
         secondary_key="con_code",
         time_field="effective_month",
+        missing_data_policy="accept-empty",
         capabilities={"time_accumulating": True},
-        aliases={"CSI300": "000300.SH"},
         normalize_rows=_normalize_index_weight,
     ),
     "tushare_daily_basic": DatasetSpec(
@@ -196,6 +249,7 @@ TUSHARE_DATASETS: Mapping[str, DatasetSpec] = {
         primary_key=("ts_code", "trade_date"),
         partition_key="ts_code",
         time_field="trade_date",
+        missing_data_policy="accept-empty",
         capabilities={"symbol_set_cap": 1, "row_limit": 6000, "time_accumulating": True},
         normalize_rows=_normalize_daily_basic,
     ),
@@ -203,28 +257,44 @@ TUSHARE_DATASETS: Mapping[str, DatasetSpec] = {
 
 
 def builtin_plugins() -> list["DatasetPlugin"]:
-    from findata.plugins import DatasetPlugin
+    from findata.plugins import DatasetPlugin, SettingSpec
 
     definitions = {
-        "tushare_trade_cal": ("single-file-csv", ("update", "complete"), ()),
-        "tushare_stock_basic": ("single-file-csv", ("update",), ()),
-        "tushare_index_weight": ("partitioned-parquet", ("update", "complete"), ()),
+        "tushare_trade_cal": (("update", "complete"), ()),
+        "tushare_stock_basic": (("update",), ()),
+        "tushare_index_basic": (("update", "complete"), ()),
+        "tushare_index_weight": (("update", "complete"), ("tushare_index_basic",)),
         "tushare_daily_basic": (
-            "partitioned-parquet",
             ("update", "complete", "refresh"),
-            ("tushare_trade_cal", "tushare_index_weight"),
+            ("tushare_trade_cal", "tushare_index_basic", "tushare_index_weight"),
         ),
+    }
+    settings = {
+        "tushare_index_weight": {
+            "dataset.tushare_index_weight.update_indexes": SettingSpec(
+                schema={"type": "array", "minItems": 1, "items": {"type": "string"}},
+                normalize=_normalize_update_indexes,
+                help="Exact Tushare index references maintained by update.",
+            )
+        },
+        "tushare_daily_basic": {
+            "dataset.tushare_daily_basic.update_symbols": SettingSpec(
+                schema={"type": "array", "minItems": 1, "items": {"type": "string"}},
+                normalize=_normalize_update_symbols,
+                help="Direct securities and Tushare constituent selectors maintained by update.",
+            )
+        },
     }
     return [
         DatasetPlugin(
             name=name,
             provider="tushare",
             spec=TUSHARE_DATASETS[name],
-            storage_strategy=strategy,
             operations=operations,
             dependencies=dependencies,
+            settings=settings.get(name, {}),
         )
-        for name, (strategy, operations, dependencies) in definitions.items()
+        for name, (operations, dependencies) in definitions.items()
     ]
 
 
@@ -237,8 +307,73 @@ def stock_basic_plugin() -> "DatasetPlugin":
 
 
 def index_weight_plugin() -> "DatasetPlugin":
-    return builtin_plugins()[2]
+    return builtin_plugins()[3]
 
 
 def daily_basic_plugin() -> "DatasetPlugin":
-    return builtin_plugins()[3]
+    return builtin_plugins()[4]
+
+
+def index_basic_plugin() -> "DatasetPlugin":
+    return builtin_plugins()[2]
+
+
+_SECURITY = re.compile(r"^[0-9]{6}\.(?:SH|SZ|BJ)$")
+_INDEX_REFERENCE = re.compile(r"^tushare:([^@]+)(?:@(latest|[0-9]{6}))?$")
+
+
+def _setting_array(value: Any) -> list[str]:
+    if not isinstance(value, list) or not value:
+        raise ValueError("setting must be a nonempty JSON array")
+    if any(not isinstance(item, str) or not item for item in value):
+        raise ValueError("setting entries must be nonempty strings")
+    return list(dict.fromkeys(value))
+
+
+def _materialized(workspace: Any, code: str) -> bool:
+    from findata.loader import DataLoader, DatasetNotReadyError
+
+    try:
+        return (
+            DataLoader(workspace.root)
+            .dataset("tushare_index_basic")
+            .query(filters=[("ts_code", "=", code)])
+            .num_rows
+            > 0
+        )
+    except DatasetNotReadyError:
+        return False
+
+
+def _index_code(value: str, *, allow_suffix: bool) -> str:
+    match = _INDEX_REFERENCE.fullmatch(value)
+    if match is None or (not allow_suffix and match.group(2) is not None):
+        raise ValueError(f"invalid Tushare index reference {value!r}")
+    suffix = match.group(2)
+    if suffix and suffix != "latest" and not 1 <= int(suffix[4:]) <= 12:
+        raise ValueError(f"invalid Tushare index reference {value!r}")
+    return match.group(1)
+
+
+def _normalize_update_indexes(value: Any, workspace: Any) -> list[str]:
+    values = _setting_array(value)
+    for item in values:
+        code = _index_code(item, allow_suffix=False)
+        if not _materialized(workspace, code):
+            raise ValueError(
+                f"unknown index {item!r}; run tushare_index_basic complete for it first"
+            )
+    return sorted(values)
+
+
+def _normalize_update_symbols(value: Any, workspace: Any) -> list[str]:
+    values = _setting_array(value)
+    for item in values:
+        if _SECURITY.fullmatch(item):
+            continue
+        code = _index_code(item, allow_suffix=True)
+        if not _materialized(workspace, code):
+            raise ValueError(
+                f"unknown index {item!r}; run tushare_index_basic complete for it first"
+            )
+    return sorted(values)

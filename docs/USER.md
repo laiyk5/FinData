@@ -18,25 +18,46 @@ The representative workflow below configures Tushare, backfills CSI 300 daily va
 
 ```bash
 # Terminal 1
-export TUSHARE_API_TOKEN=...
 findata-server init ~/market-data
 findata-server start ~/market-data
 
 # Terminal 2
 cd ~/market-data
-findata config set provider.tushare.token --env TUSHARE_API_TOKEN
+# Paste the token and press Enter; it is not placed in shell history.
+findata config set provider.tushare.token --stdin
 findata provider check tushare
 
-findata dataset universe set tushare_daily_basic CSI300@latest
+findata task run tushare_index_basic complete \
+  --param indexes=tushare:000300.SH \
+  --wait
 findata task run tushare_daily_basic complete \
-  --param symbols=CSI300 \
-  --param timerange=2020-01-01:today \
+  --param symbols=tushare:000300.SH \
+  --param timerange=2026-06-29:2026-07-04 \
   --follow
 
+findata config set dataset.tushare_daily_basic.update_symbols \
+  --value-json '["tushare:000300.SH@latest"]'
 findata cron enable tushare_daily_basic
 ```
 
-The half-open backfill ends before today and uses the historical union of CSI 300 constituents over its requested range. Recurring `update` operations catch subsequent due dates and require the constituent month containing each latest due trading date. Rerunning a failed backfill skips resolved coverage and resumes its remaining intervals.
+The half-open sample backfill uses the historical union of CSI 300 constituents over its requested
+range. Resolution starts with the latest weight snapshot effective at the range start and includes
+later snapshots inside the range; a month without a new snapshot continues the preceding membership.
+Rerunning a failed backfill skips resolved historical coverage, refreshes an intersecting current
+month, and resumes its remaining intervals.
+The separate `update_symbols` setting belongs to `tushare_daily_basic`; its plugin parses the
+constituent selector and uses it only for later parameterless `update` operations. Recurring updates
+therefore resolve the constituent month containing each latest due trading date.
+
+Within the Tushare plugins, `tushare:000300.SH` preserves an exact provider index reference
+materialized in `tushare_index_basic`. The bare reference in `complete` means the historical
+constituent union over that backfill range; `@latest` is a plugin-defined suffix for future updates.
+Core findata configuration and CLI code treat both values as opaque strings.
+
+For another Tushare index, obtain its exact `ts_code`, materialize it with
+`tushare_index_basic complete`, and use the same plugin-owned `tushare:<ts_code>` form. This tracks
+only the requested reference. Metadata presence identifies the provider object but does not
+guarantee index-weight permission or historical coverage.
 
 ## Workspace selection
 
@@ -50,25 +71,123 @@ The client resolves its workspace in this order:
 
 If no workspace is found, the client exits with an error suggesting `findata-server init <path>`.
 
+Each registered dataset owns one internal DuckDB file. These files are implementation state: users
+query them through DataLoader and must not open them read/write, remove WAL files, or copy a live
+database as a backup. Findata retains only the current committed dataset revision; routine updates
+do not create historical storage copies. Dataset initialization is local and does not contact a
+provider.
+
 ## CLI behavior
 
 Operational commands support `--format human|json|jsonl`; `--json` is shorthand for `--format json`, and `jsonl` is used for streams. Stdout contains command results and stderr contains diagnostics.
+
+Human output is the default. Collection commands use compact tables, detail commands use labeled
+fields, and an empty result says what was not found rather than printing an empty JSON value. Human
+errors state what failed, include relevant context, and suggest a recovery or inspection command
+when one exists. Tracebacks are reserved for an explicit debug mode.
+
+`--color auto|always|never` controls human styling and defaults to `auto`. Automatic styling is used
+only when the destination stream is an interactive terminal and is disabled when `NO_COLOR` is set
+or `TERM=dumb`. Status always has a textual or symbolic indicator, so color is never its only
+meaning. Structured formats never contain color or other terminal control sequences, including
+when `--color always` is also supplied.
+
+JSON emits exactly one JSON document. JSONL emits one complete object per event or record with a
+stable `type` field. Neither format includes spinners, readiness banners, explanatory prose, or
+other human decoration. On failure, the selected structured format is also used for the diagnostic
+written to stderr, and the documented nonzero exit code remains authoritative.
+
+Because following is a stream, `--follow --format json` is rejected with exit code `2`; use
+`--format jsonl` instead. A non-following `--wait --format json` emits only its terminal task object.
 
 Exit codes are:
 
 - `0` — success;
 - `1` — operational failure or a failed or canceled task when waiting;
-- `2` — invalid CLI usage.
+- `2` — invalid CLI usage;
+- `130` — the user interrupted a wait or follow; the accepted server task remains running.
 
-Task submission is asynchronous by default. `--wait` waits for the terminal result; `--follow` streams logs and implies `--wait`. Without waiting, success means that the task was accepted. A log follow prints existing logs, continues with new entries, and exits when the task reaches a terminal state.
+Task submission is asynchronous by default. The CLI reports acceptance and the task ID as soon as
+the server accepts it. `--wait` waits for the terminal result; `--follow` streams logs and implies
+`--wait`. Without waiting, success means that the task was accepted. A log follow prints existing
+logs, continues with new entries, and exits when the task reaches a terminal state.
+
+While waiting in human mode, the CLI renders the server's semantic stage and progress on stderr.
+For work lasting longer than approximately 250 milliseconds, an interactive terminal may use a
+spinner or replace a progress line in place. Redirected diagnostics use ordinary newline-delimited
+updates. A terminal summary removes any transient animation and reports status, elapsed time, task
+ID, and available result identifiers. Waiting states name their reported reason, such as a rate
+permit, dependency, or write gate; the CLI does not invent progress the server did not report.
+When available, the live region also reports provider requests, fetched rows, committed checkpoints,
+elapsed time, and a conservative ETA. Unknown values are omitted rather than guessed. `--no-progress`
+disables the live region, `--quiet` suppresses nonterminal human output, and `--verbose` includes
+dependency and request-planning detail. `--quiet` and `--verbose` cannot be combined. Structured
+output is unaffected by verbosity flags.
+
+Pressing Ctrl-C while waiting or following detaches the client and leaves the accepted server task
+running. Use `findata task cancel <id>` when cancellation is intended. A temporary connection loss
+is reported clearly, and an error includes the task-status or log command needed to inspect work
+that may still be running.
+
+When `findata-server start` runs in the foreground, it prints a concise readiness report containing
+the version, resolved workspace, listening address, and a credential-free provider summary. It
+prints readiness only after startup recovery and initialization have succeeded. Redirected or
+service-managed output uses one plain log record rather than an interactive banner, and server
+output never reveals API credentials or provider secrets.
+
+### Identifier prefixes
+
+Commands that address a task handle (`task status`, `task logs`, and `task cancel`) and `events ack`
+accept either the full identifier or a lowercase hexadecimal prefix of at least eight characters.
+An exact identifier always wins. A prefix must identify exactly one retained resource; no match is
+reported as not found, and multiple matches are reported as ambiguous with no action performed.
+Success output always includes the full resolved identifier. Task commands resolve handle
+identifiers only, never the internal execution identifier shared by coalesced tasks. Dataset,
+provider, publication, and execution identifiers must be supplied in full.
+
+### Human value formatting
+
+Human output uses the declared meaning of a field rather than guessing from its Python type or
+name:
+
+- timestamps use ISO 8601 in the configured display timezone and include the UTC offset;
+- elapsed durations use an adaptive unit such as `240 ms`, `3.2 s`, or `2 min 5 s`;
+- integer counts use ASCII thousands grouping, such as `12,500`;
+- percentages and domain measurements use their declared precision and unit; and
+- generic finite decimals use a concise fixed representation, switching to scientific notation
+  only when their absolute value is at least `1e9` or is nonzero and below `1e-4`.
+
+Identifiers, symbols, calendar dates, monetary or other exact decimals, and schema-declared text
+are not passed through generic numeric formatting. JSON and JSONL retain the original values and
+types; display timezone, grouping, units, and precision are human-presentation concerns only.
+
+### Live diagnostics
+
+While waiting or following in human mode, progress remains transient. The first ten distinct
+warning or error diagnostics remain visible as ordinary lines. Exact repeats may be combined with
+an occurrence count. Further distinct diagnostics are suppressed from the live human view: an
+interactive terminal shows a replaceable line with exact additional warning and error counts,
+while redirected stderr prints one suppression notice followed by a final count summary. A
+terminal failure is always printed even when the visible limit has already been reached.
+
+The final summary reports total warning and error occurrences and names `findata task logs <id>`
+or `findata events ls` when retained details are available. Each diagnostic has a severity, stable
+code, message, optional context, and occurrence count. JSONL represents every logical occurrence;
+an aggregated record is lossless only when its count preserves the total. JSON and JSONL do not
+apply the human visibility limit.
 
 Help, version, and shell-completion generation are not subject to structured output and do not require a workspace. Dynamic completion is best-effort and falls back to static command completion if a workspace or server is unavailable.
+Click provides the command hierarchy, validation, and help pages; invoking help or version from an
+embedded Python caller returns normally rather than terminating the host process.
 
 ### Operand conventions
 
 Dataset-specific operands are defined in [DATASETS.md](DATASETS.md). CLI date ranges use `start:end` and are half-open: the start is included and the end is excluded. Dates use `YYYY-MM-DD`; `today` is resolved once in the dataset timezone to the current date, so it excludes the current date when used as the end. For example, `2026-06-01:2026-07-01` covers all of June.
 
-A scalar passed for an array operand is coerced to one element, so `--param symbols=CSI300` is equivalent to `{"symbols":["CSI300"]}` in structured operands. Repeated values are deduplicated after validation. Empty or reversed ranges and empty required arrays are rejected.
+A scalar passed for an array operand is coerced to one element, so
+`--param symbols=tushare:000300.SH` is equivalent to
+`{"symbols":["tushare:000300.SH"]}` in structured operands. Repeated values are deduplicated after
+validation. Empty or reversed ranges and empty required arrays are rejected.
 
 ### Task lifecycle
 
@@ -84,7 +203,7 @@ Every task ID names the submitting handle, even when several handles share one c
 | `failed` | terminal; work stopped with an error or was interrupted by server restart |
 | `canceled` | terminal; this handle's subscription was canceled |
 
-Canceling one coalesced handle makes that handle `canceled` immediately while another subscriber's handle continues. Canceling the final handle requests cooperative cancellation; after five seconds TaskRunner terminates a process that has not exited, and the handle then becomes `canceled` regardless of the process exit code. Completed publication checkpoints are not rolled back, and a publication already at its atomic commit may complete. Cancellation of an already terminal handle is a no-op reported as such.
+Canceling one coalesced handle makes that handle `canceled` immediately while another subscriber's handle continues. Canceling the final handle requests cooperative cancellation; after five seconds TaskRunner terminates a process that has not exited, and the handle then becomes `canceled` regardless of the process exit code. Completed transaction checkpoints are not rolled back, and a database transaction already committing may complete. Cancellation of an already terminal handle is a no-op reported as such.
 
 ## Command reference
 
@@ -98,17 +217,35 @@ Canceling one coalesced handle makes that handle `canceled` immediately while an
 - `task status <id>` — show status and progress. If work was coalesced, indicate whether other requesters remain.
 - `task logs <id> [--follow]` — print logs; `-f` aliases `--follow`.
 - `task cancel <id>` — cancel this request and report whether shared execution continued for another requester.
+- `task watch <id>` — follow a retained task's progress and logs without submitting work.
+- `task retry <id> [--wait|--follow]` — submit a new handle using the retained task's normalized
+  dataset, operation, and operands. Configuration is snapshotted again; the old record is unchanged.
+- `task explain <id>` — show the current or terminal reason, dependency-failure chain, diagnostics,
+  and concrete inspection or retry commands without changing task state.
 
 ### Datasets
 
 - `dataset ls`
-- `dataset describe <name>` — show provider readiness, capabilities, dependencies, universe, timing, storage, and status metadata.
+- `dataset describe <name>` — show provider readiness, capabilities, dependencies, declared
+  settings, timing, storage, and status metadata.
 - `dataset operations <name>`
 - `dataset operation <name> <operation>` — show operand schema, defaults, syntax, and examples.
 - `dataset status <name>` / `dataset status --all`
-- `dataset universe <name>` — show configured selectors.
-- `dataset universe set <name> <selector>...` — replace selectors after validation; this does not fetch data.
-- `dataset universe clear <name>` — clear selectors and prevent a configured-universe `update` from running.
+- `dataset reset <name> [--yes]` — replace one dataset with a new uninitialized database while
+  preserving its settings and task history. Human interactive mode requires confirmation;
+  structured or non-interactive use requires `--yes`. Reset is rejected while that dataset has
+  queued or active work and never affects another dataset.
+- `dataset update|complete|refresh <name> [operation operands] [--wait|--follow] [--dry-run]` —
+  ergonomic operation commands generated from the plugin's operation schema. Array operands use
+  repeatable plural flags such as `--symbols`; half-open date ranges use either `--timerange` or
+  `--from` plus `--to`. The generic `task run` form remains available for automation.
+
+`--dry-run` uses the same server-side operation planner as execution but submits no task, performs
+no provider request, acquires no write gate, and changes no data, coverage, configuration, events,
+or task history. It validates normalized operands, reads current local state, reports dependencies,
+coverage expansion, request strategy and estimated request/checkpoint counts when determinable, and
+marks values unknown when required dependency data is absent. A later execution revalidates mutable
+state, so a preview is informative rather than a reservation or guarantee.
 
 ### Providers
 
@@ -125,7 +262,8 @@ Provider commands never display credentials.
 - `cron set <dataset> --expression CRON --timezone IANA_ZONE`
 - `cron reset <dataset>` — restore the plugin's suggested schedule without changing enabled state.
 
-Automatic maintenance is opt-in. A job must have a ready provider and, when required, a nonempty maintenance universe.
+Automatic maintenance is opt-in. A job must have a ready provider and its dataset plugin must report
+that its settings and committed state are sufficient for `update`.
 
 Cron expressions are evaluated in the job's IANA timezone. A local wall time that does not exist because of a daylight-saving jump is skipped and records a warning event. A wall time that occurs twice runs once, at its first occurrence. Jobs missed while the server is down record a missed-job event after restart and are not submitted automatically.
 
@@ -141,19 +279,105 @@ Events include task failures, queue rejections, liveness escalations, and skippe
 
 - `config ls` / `config get [key]` — secret values are always redacted.
 - `config set <key> <value>` — set a non-secret value.
+- `config set <key> --value-json JSON|@file|-` — set a typed JSON value.
 - `config set <key> --stdin` — store a literal secret without placing it in shell history.
 - `config set <key> --env <variable>` — store an environment-variable reference; recommended for provider tokens.
 - `config unset <key>`
 
 v1 intentionally has no command for revealing a stored secret.
 
+Keys under `dataset.<dataset-name>.*` are owned by that dataset plugin. Core findata transports and
+stores the value but does not interpret it. The plugin declares its setting names and schemas,
+normalizes values, reports update readiness, and provides setting-specific help through
+`dataset describe`. Unknown dataset settings and invalid values are rejected before configuration
+is changed.
+
 ### Completion
 
-`completion <bash|zsh|fish>` generates a shell-completion script. The installed script obtains dynamic dataset, operation, and operand candidates when the resolved workspace and server are available.
+`completion <bash|zsh|fish>` generates a shell-completion script. Generating it does not activate
+completion; the current shell must source it. Add the matching line to the shell startup file, or
+run it once to enable completion in the current session:
+
+```bash
+# zsh: add to ~/.zshrc
+eval "$(findata completion zsh)"
+
+# bash: add to ~/.bashrc
+eval "$(findata completion bash)"
+
+# fish: add to ~/.config/fish/config.fish
+findata completion fish | source
+```
+
+After reloading the shell, `findata <Tab>` completes command families and
+`findata data coverage <Tab>` completes registered local datasets. The completion script obtains dynamic dataset, operation, and operand candidates when the resolved workspace and server are available.
+Completion uses a credentialed hidden CLI query rather than putting a workspace token in the shell
+script. It completes dataset/provider names, operations, configuration keys, retained task IDs, and
+schema-declared operand flags, and falls back to static commands when no server is available. The
+protocol does not depend on a shell preserving a trailing empty argument.
+
+## Discovering, previewing, and exporting committed data
+
+After maintaining a dataset, a user can inspect and export its committed revision without starting
+the server and without learning the internal DuckDB layout:
+
+```bash
+findata data schema tushare_daily_basic
+
+findata data preview tushare_daily_basic \
+  --keys 600000.SH \
+  --from 2026-01-01 --to 2026-07-01 \
+  --columns ts_code,trade_date,close,pe,pb
+
+findata data coverage tushare_daily_basic \
+  --keys 600000.SH \
+  --from 2026-01-01 --to 2026-07-01
+
+findata data export tushare_daily_basic \
+  --keys 600000.SH \
+  --from 2026-01-01 --to 2026-07-01 \
+  --columns ts_code,trade_date,close,pe,pb \
+  --output-format parquet \
+  --output daily-basic.parquet
+```
+
+This is a read-only workflow. It creates no task, performs no provider request, changes no dataset
+or configuration, and never opens an internal database for writing. A concurrent writer may delay
+the read briefly; the result always observes one committed publication.
+
+- `data schema <dataset>` reports the Arrow fields, nullability, primary key, partition key, time
+  field, publication ID, and whether coverage is supported.
+- `data preview <dataset>` prints at most 20 rows by default; `--limit` changes the bound. It accepts
+  repeatable `--keys`, `--from/--to`, and comma-separated or repeatable `--columns`.
+- `data coverage <dataset> [--keys KEY ...]` reports committed half-open coverage intervals. With
+  `--from/--to`, it compares that requested interval with each selected key and reports whether it
+  is complete, the committed interval, and every missing half-open interval. Both boundaries must
+  be supplied together.
+- `data export <dataset> --output PATH|- --output-format csv|parquet|arrow|jsonl` streams committed
+  batches instead of materializing the full result. `--batch-size` controls the batch bound.
+
+When both keys and a time range are supplied, preview and export require complete coverage by
+default. `--allow-partial` explicitly opts into a partial result and reports that policy in the
+export summary. `--require-coverage` may be used for clarity but cannot be combined with
+`--allow-partial`. Coverage validation errors name every missing interval and suggest the matching
+`dataset complete ...` command; they never trigger that command automatically.
+
+CSV and JSONL may be written to `--output -`. Parquet and Arrow IPC require a file or a binary stdout
+stream. A filesystem export refuses to replace an existing file unless `--force` is supplied and
+publishes the completed export with an atomic rename, so a failed export does not leave a file that
+looks complete. Diagnostics and a file-export summary go to stderr; stdout contains only exported
+records when `--output -` is used.
+
+Long human-readable results shown in an interactive terminal are automatically sent through the
+pager selected by `$PAGER` (normally `less`) instead of flooding the terminal. Paging is never used
+for redirected output, `--json`, `--jsonl`, or export data written to stdout. Set `PAGER=cat` when
+interactive paging is not wanted.
 
 ## DataLoader
 
-The DataLoader reads a workspace directly and does not require the server process.
+The DataLoader reads each dataset's DuckDB database directly and does not require the server
+process. It coordinates with writers through the dataset gate, so a query may briefly wait for a
+transaction on the same dataset; different datasets remain independent.
 
 ```python
 from pathlib import Path
@@ -185,9 +409,16 @@ with dataset.iter_batches(...) as batches:
         ...
 ```
 
-The iterator yields `pyarrow.RecordBatch` values and holds its read snapshot until the context manager closes.
+The iterator yields `pyarrow.RecordBatch` values and holds its shared gate, read-only connection,
+and committed database view until the context manager closes.
 
-An uninitialized dataset raises `DatasetNotReadyError`; a manifest or data-layout version unsupported by the installed core raises `IncompatibleDatasetError` without modifying the workspace. With `require_coverage=True`, a coverage-tracked dataset verifies explicit `keys` and `time_range` and raises `CoverageError(dataset, missing_intervals)` when due observations are unresolved. Non-observation dates such as a daily dataset's closed market days do not appear as gaps. Best-effort and non-coverage-tracked datasets do not support this option. `dataset.coverage(keys=None)` returns the coverage table when available.
+An uninitialized dataset raises `DatasetNotReadyError`; an unsupported storage-adapter,
+DuckDB-storage, or data-layout version raises `IncompatibleDatasetError` without modifying the
+workspace. With `require_coverage=True`, a coverage-tracked dataset verifies explicit `keys` and
+`time_range` and raises `CoverageError(dataset, missing_intervals)` when due observations are
+unresolved. Non-observation dates such as a daily dataset's closed market days do not appear as gaps.
+Best-effort and non-coverage-tracked datasets do not support this option.
+`dataset.coverage(keys=None)` returns the coverage table when available.
 
 ## User-documentation principles
 

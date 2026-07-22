@@ -7,10 +7,20 @@ import unittest
 from pathlib import Path
 
 from findata import DataLoader
-from findata.operations import OperationWorker, register_v1_datasets, resolve_v1_dependency
+from findata.datasets.tushare.operations import (
+    OperationWorker,
+    register_v1_datasets,
+    resolve_v1_dependency,
+)
 from findata.rate_limit import FileRateLimiter
 from findata.storage import Workspace
-from findata.taskrunner import QueueFullError, TaskContext, TaskNotFoundError, TaskRunner
+from findata.taskrunner import (
+    DatasetBusyError,
+    QueueFullError,
+    TaskContext,
+    TaskNotFoundError,
+    TaskRunner,
+)
 
 
 def successful_worker(request: dict[str, object], context: TaskContext) -> dict[str, object]:
@@ -19,6 +29,13 @@ def successful_worker(request: dict[str, object], context: TaskContext) -> dict[
     context.checkpoint()
     context.progress(2, 2)
     return {"pid": os.getpid(), "value": request["operands"]}
+
+
+def context_worker(request: dict[str, object], context: TaskContext) -> dict[str, object]:
+    return {
+        "revision": request["configuration_revision"],
+        "settings": request["settings"],
+    }
 
 
 def slow_worker(request: dict[str, object], context: TaskContext) -> dict[str, object]:
@@ -82,8 +99,30 @@ class TaskRunnerTests(unittest.TestCase):
             self.assertEqual(runner.logs(handle_id), ["worker started"])
             self.assertTrue((self.root / "tasks" / "handles" / f"{handle_id}.json").is_file())
 
+    def test_execution_receives_submission_time_settings_snapshot(self) -> None:
+        current = {
+            "configuration_revision": 4,
+            "settings": {"dataset.example.symbols": ["first"]},
+        }
+        runner = TaskRunner(
+            self.root,
+            context_worker,
+            execution_context=lambda _dataset: current,
+        )
+        with runner:
+            handle = runner.submit("example", "update", {})
+            current["configuration_revision"] = 5
+            current["settings"] = {"dataset.example.symbols": ["second"]}
+            result = runner.wait(handle, timeout=5)
+        self.assertEqual(result.result["revision"], 4)
+        self.assertEqual(result.result["settings"], {"dataset.example.symbols": ["first"]})
+
     def test_identical_complete_submissions_coalesce_but_handles_cancel_independently(self) -> None:
-        operands = {"duration": 0.15, "symbols": ["000001.SZ"], "timerange": "2026-07-01:2026-07-02"}
+        operands = {
+            "duration": 0.15,
+            "symbols": ["000001.SZ"],
+            "timerange": "2026-07-01:2026-07-02",
+        }
         with TaskRunner(self.root, slow_worker, global_concurrency=2) as runner:
             first = runner.submit("tushare_daily_basic", "complete", operands, owner="alice")
             second = runner.submit("tushare_daily_basic", "complete", operands, owner="bob")
@@ -101,10 +140,23 @@ class TaskRunnerTests(unittest.TestCase):
             first = runner.submit("tushare_stock_basic", "update", {"duration": 0.08})
             second = runner.submit("tushare_stock_basic", "update", {"duration": 0.08})
 
-            self.assertNotEqual(runner.status(first).execution_id, runner.status(second).execution_id)
+            self.assertNotEqual(
+                runner.status(first).execution_id, runner.status(second).execution_id
+            )
             first_result = runner.wait(first, timeout=5).result
             second_result = runner.wait(second, timeout=5).result
             self.assertGreaterEqual(second_result["started"], first_result["ended"])
+
+    def test_dataset_reset_reservation_rejects_submissions_and_active_work(self) -> None:
+        with TaskRunner(self.root, slow_worker, global_concurrency=1) as runner:
+            with runner.reserve_dataset_reset("example"):
+                with self.assertRaises(DatasetBusyError):
+                    runner.submit("example", "update", {})
+            handle = runner.submit("example", "update", {"duration": 0.1})
+            with self.assertRaises(DatasetBusyError):
+                with runner.reserve_dataset_reset("example"):
+                    pass
+            runner.wait(handle, timeout=5)
 
     def test_queue_capacity_counts_executions_not_coalesced_handles(self) -> None:
         with TaskRunner(
@@ -118,7 +170,9 @@ class TaskRunnerTests(unittest.TestCase):
             queued_two = runner.submit("tushare_daily_basic", "complete", {"duration": 0.2})
             shared = runner.submit("tushare_daily_basic", "complete", {"duration": 0.2})
 
-            self.assertEqual(runner.status(queued_two).execution_id, runner.status(shared).execution_id)
+            self.assertEqual(
+                runner.status(queued_two).execution_id, runner.status(shared).execution_id
+            )
             with self.assertRaises(QueueFullError):
                 runner.submit("tushare_daily_basic", "refresh", {"duration": 0.2})
 
@@ -167,7 +221,10 @@ class TaskRunnerTests(unittest.TestCase):
             handle = runner.submit(
                 "tushare_daily_basic",
                 "complete",
-                {"symbols": ["CSI300"], "timerange": "2026-06-29:2026-07-04"},
+                {
+                    "symbols": ["tushare:000300.SH"],
+                    "timerange": "2026-06-29:2026-07-04",
+                },
             )
             status = runner.wait(handle, timeout=10)
 
@@ -175,14 +232,35 @@ class TaskRunnerTests(unittest.TestCase):
 
         self.assertEqual(status.status, "succeeded", status.error)
         self.assertEqual(
-            {item.dataset for item in handles},
-            {"tushare_daily_basic", "tushare_trade_cal", "tushare_index_weight"},
+            status.progress,
+            {
+                "current": 3,
+                "total": 3,
+                "provider_requests": 3,
+                "rows_fetched": 15,
+                "checkpoints": 1,
+            },
         )
-        self.assertTrue(all(item.owner.startswith("trigger:") for item in handles if item.handle_id != handle))
-        table = DataLoader(self.root).dataset("tushare_daily_basic").query(
-            keys=["000001.SZ", "600000.SH", "600519.SH"],
-            time_range=("2026-06-29", "2026-07-04"),
-            require_coverage=True,
+        self.assertEqual(
+            {item.dataset for item in handles},
+            {
+                "tushare_daily_basic",
+                "tushare_trade_cal",
+                "tushare_index_basic",
+                "tushare_index_weight",
+            },
+        )
+        self.assertTrue(
+            all(item.owner.startswith("trigger:") for item in handles if item.handle_id != handle)
+        )
+        table = (
+            DataLoader(self.root)
+            .dataset("tushare_daily_basic")
+            .query(
+                keys=["000001.SZ", "600000.SH", "600519.SH"],
+                time_range=("2026-06-29", "2026-07-04"),
+                require_coverage=True,
+            )
         )
         self.assertGreater(table.num_rows, 0)
 
@@ -254,7 +332,10 @@ class TaskRunnerTests(unittest.TestCase):
                 {"path": str(self.root / "provider-rate.json")},
             )
             runner.wait_for_status(waiting, {"waiting"}, timeout=3)
-            quick = runner.submit("tushare_stock_basic", "update", {"path": str(self.root / "fast-rate.json")})
+            self.assertEqual(runner.status(waiting).reason, "provider_rate_limit")
+            quick = runner.submit(
+                "tushare_stock_basic", "update", {"path": str(self.root / "fast-rate.json")}
+            )
             # The second task also waits for its own empty bucket, proving it was dispatched
             # while the first waiting task no longer occupied global capacity.
             runner.wait_for_status(quick, {"waiting"}, timeout=3)

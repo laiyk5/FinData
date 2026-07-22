@@ -101,13 +101,13 @@ class CronManager:
         *,
         submit: Callable[[str, str, dict[str, object]], Any],
         provider_ready: Callable[[str], bool],
-        universe_ready: Callable[[str], bool],
+        update_ready: Callable[[str], bool],
     ) -> None:
         self.workspace = workspace
         self.events = events
         self.submit = submit
         self.provider_ready = provider_ready
-        self.universe_ready = universe_ready
+        self.update_ready = update_ready
 
     def list_jobs(self, *, now: datetime | None = None) -> list[CronJob]:
         current = (now or datetime.now(UTC)).astimezone(UTC)
@@ -122,11 +122,14 @@ class CronManager:
                 "cron_skipped", "error", f"cannot enable {dataset}: provider is not ready", dataset=dataset
             )
             raise ValueError(f"provider for {dataset} is not ready")
-        if not self.universe_ready(dataset):
+        if not self.update_ready(dataset):
             self.events.record(
-                "cron_skipped", "error", f"cannot enable {dataset}: universe is empty", dataset=dataset
+                "cron_skipped",
+                "error",
+                f"cannot enable {dataset}: update is not ready",
+                dataset=dataset,
             )
-            raise ValueError(f"maintenance universe for {dataset} is empty")
+            raise ValueError(f"update for {dataset} is not ready")
         state = self._state()
         entry = dict(state.get(dataset) or {})
         entry["enabled"] = True
@@ -184,9 +187,9 @@ class CronManager:
             last_checked_text = entry.get("last_checked")
             if last_checked_text:
                 schedule = CronSchedule(job.expression, job.timezone)
-                for wall_time in schedule.skipped_between(
-                    datetime.fromisoformat(last_checked_text), current
-                ):
+                last_checked = datetime.fromisoformat(last_checked_text)
+                skipped = schedule.skipped_between(last_checked, current) if last_checked < current else []
+                for wall_time in skipped:
                     self.events.record(
                         "cron_dst_gap",
                         "warning",
@@ -201,7 +204,7 @@ class CronManager:
             due = datetime.fromisoformat(job.next_run) if job.next_run else None
             if due is None or due > current:
                 continue
-            if not self.provider_ready(dataset) or not self.universe_ready(dataset):
+            if not self.provider_ready(dataset) or not self.update_ready(dataset):
                 self.events.record(
                     "cron_skipped", "error", f"scheduled update skipped for {dataset}", dataset=dataset
                 )

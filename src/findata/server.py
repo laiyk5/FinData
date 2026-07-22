@@ -17,20 +17,11 @@ from zoneinfo import ZoneInfo
 
 from findata.cron import CronManager
 from findata.events import EventStore
-from findata.providers.tushare import TushareClient, TushareHTTPTransport
-from findata.rate_limit import FileRateLimiter
-from findata.datasets.tushare import TUSHARE_DATASETS
-from findata.operations import (
-    OperationWorker,
-    dataset_description,
-    normalize_operation,
-    normalize_universe,
-    operation_description,
-    register_v1_datasets,
-    resolve_v1_dependency,
-)
+from findata.identifiers import AmbiguousIdentifierError, IdentifierNotFoundError
+from findata.loader import DataLoader, DatasetNotReadyError
 from findata.storage import Workspace
-from findata.taskrunner import QueueFullError, TaskNotFoundError, TaskRunner
+from findata.plugins import discover_dataset_plugins, discover_provider_plugins, register_plugins
+from findata.taskrunner import DatasetBusyError, QueueFullError, TaskNotFoundError, TaskRunner
 
 
 class ServerAlreadyRunningError(RuntimeError):
@@ -39,7 +30,12 @@ class ServerAlreadyRunningError(RuntimeError):
 
 def initialize_workspace(root: Path) -> Workspace:
     workspace = Workspace.init(root)
-    register_v1_datasets(workspace)
+    providers = discover_provider_plugins()
+    register_plugins(
+        workspace,
+        discover_dataset_plugins(providers=providers),
+        providers=providers,
+    )
     token_path = Path(root) / "token"
     if not token_path.exists():
         descriptor = os.open(token_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -63,6 +59,10 @@ class FindataServer:
     ) -> None:
         self.root = Path(workspace)
         self.workspace = initialize_workspace(self.root)
+        self.providers = {item.provider_id: item for item in discover_provider_plugins()}
+        self.plugins = {
+            item.name: item for item in discover_dataset_plugins(providers=self.providers.values())
+        }
         self.host = host
         self.port = port
         self.provider_mode = provider_mode
@@ -79,18 +79,20 @@ class FindataServer:
         self._cron_thread: threading.Thread | None = None
         self._cron_stop = threading.Event()
         self.events = EventStore(self.root)
+        runtime = self.providers["tushare"].runtime
+        assert runtime is not None
         self.taskrunner = TaskRunner(
             self.root,
-            OperationWorker(
-                workspace=self.root,
-                provider=provider_mode,
-                token="mock-token" if provider_mode == "mock" else "",
-                today=self.today.isoformat(),
-                now=operation_now.isoformat(),
+            runtime.operation_worker(
+                self.root,
+                mode=provider_mode,
+                today=self.today,
+                now=operation_now,
             ),
             global_concurrency=global_concurrency,
             event_sink=self.events.record,
-            dependency_resolver=resolve_v1_dependency,
+            dependency_resolver=self._resolve_dependency,
+            execution_context=self._execution_context,
         )
         self.cron = CronManager(
             self.workspace,
@@ -99,7 +101,7 @@ class FindataServer:
                 dataset, operation, operands, owner="cron"
             ),
             provider_ready=lambda _dataset: self._provider_ready(),
-            universe_ready=self._universe_ready,
+            update_ready=self._update_ready,
         )
 
     @property
@@ -160,41 +162,62 @@ class FindataServer:
 
     def _cron_loop(self) -> None:
         while not self._cron_stop.wait(1.0):
-            self.cron.tick()
+            try:
+                self.cron.tick()
+            except Exception as exc:
+                self.events.record("cron_loop_error", "error", f"cron scheduler tick failed: {exc}")
 
     def _provider_ready(self) -> bool:
-        return self.provider_mode == "mock" or _configured_secret_ready(
-            self.workspace.get_config("provider.tushare.token")
-        )
+        runtime = self.providers["tushare"].runtime
+        assert runtime is not None
+        return bool(runtime.ready(self.workspace, self.provider_mode))
 
-    def _universe_ready(self, dataset: str) -> bool:
-        return dataset not in {"tushare_index_weight", "tushare_daily_basic"} or bool(
-            self.workspace.get_universe(dataset)
-        )
+    def _provider_is_mock(self) -> bool:
+        runtime = self.providers["tushare"].runtime
+        assert runtime is not None
+        return bool(runtime.is_mock(self.workspace, self.provider_mode))
+
+    def _update_ready(self, dataset: str) -> bool:
+        if dataset == "tushare_index_weight":
+            return bool(self.workspace.get_config("dataset.tushare_index_weight.update_indexes"))
+        if dataset == "tushare_daily_basic":
+            return bool(self.workspace.get_config("dataset.tushare_daily_basic.update_symbols"))
+        if dataset == "tushare_index_basic":
+            try:
+                DataLoader(self.workspace.root).dataset(dataset).publication_id
+                return True
+            except DatasetNotReadyError:
+                return False
+        return True
+
+    def _execution_context(self, dataset: str) -> dict[str, Any]:
+        snapshot = self.workspace.config_snapshot()
+        prefix = f"dataset.{dataset}."
+        return {
+            "configuration_revision": snapshot["revision"],
+            "settings": {
+                key: value for key, value in snapshot["values"].items() if key.startswith(prefix)
+            },
+        }
+
+    def _runtime_for_dataset(self, dataset: str) -> Any:
+        try:
+            provider_id = self.plugins[dataset].provider
+            runtime = self.providers[provider_id].runtime
+        except KeyError as exc:
+            raise ValueError(f"unknown dataset {dataset!r}") from exc
+        assert runtime is not None
+        return runtime
+
+    def _resolve_dependency(
+        self, parent: str, target: str, requirement: dict[str, object]
+    ) -> tuple[str, dict[str, object]]:
+        return self._runtime_for_dataset(parent).resolve_dependency(parent, target, requirement)
 
     def _probe_tushare(self) -> None:
-        configured = self.workspace.get_config("provider.tushare.token")
-        if isinstance(configured, dict) and isinstance(configured.get("env"), str):
-            token = os.environ.get(configured["env"], "")
-        else:
-            token = str(configured or "")
-        limiter = FileRateLimiter(
-            self.root / "providers" / "tushare-rate.json",
-            limit=int(self.workspace.get_config("provider.tushare.rate_limit", 500)),
-            period=60,
-        )
-        client = TushareClient(
-            token=token,
-            transport=TushareHTTPTransport(),
-            permit=limiter.acquire,
-        )
-        day = self.today.strftime("%Y%m%d")
-        client.query(
-            "tushare_trade_cal",
-            exchange="SSE",
-            start_date=day,
-            end_date=day,
-        )
+        runtime = self.providers["tushare"].runtime
+        assert runtime is not None
+        runtime.probe(self.workspace, today=self.today)
 
     def _acquire_lock(self) -> None:
         lock_path = self.root / "server.lock"
@@ -258,7 +281,7 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                         raise ValueError("provider tushare is not ready")
                     dataset = str(body["dataset"])
                     operation = str(body.get("operation") or "update")
-                    operands = normalize_operation(
+                    operands = app._runtime_for_dataset(dataset).normalize_operation(
                         dataset,
                         operation,
                         dict(body.get("operands") or {}),
@@ -270,7 +293,40 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                         operands,
                         owner=str(body.get("owner") or "api"),
                     )
-                    self._send(HTTPStatus.ACCEPTED, {"handle_id": handle})
+                    self._send(
+                        HTTPStatus.ACCEPTED,
+                        {
+                            "handle_id": handle,
+                            "execution_id": app.taskrunner.status(handle).execution_id,
+                        },
+                    )
+                    return
+                if (
+                    method == "POST"
+                    and len(parts) == 6
+                    and parts[:2] == ["v1", "datasets"]
+                    and parts[3] == "operations"
+                    and parts[5] == "plan"
+                ):
+                    dataset, operation = parts[2], parts[4]
+                    body = self._body()
+                    runtime = app._runtime_for_dataset(dataset)
+                    operands = runtime.normalize_operation(
+                        dataset,
+                        operation,
+                        dict(body.get("operands") or {}),
+                        today=app.today,
+                    )
+                    self._send(
+                        HTTPStatus.OK,
+                        runtime.plan_operation(
+                            app.workspace,
+                            dataset,
+                            operation,
+                            operands,
+                            today=app.today,
+                        ),
+                    )
                     return
                 if method == "GET" and parts == ["v1", "tasks"]:
                     items = app.taskrunner.list_handles(
@@ -278,33 +334,113 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                         status=_query_one(query, "status"),
                     )
                     if _query_one(query, "all") != "true":
-                        active = [item for item in items if item.status not in {"succeeded", "failed", "canceled"}]
-                        terminal = [item for item in items if item.status in {"succeeded", "failed", "canceled"}][:50]
+                        active = [
+                            item
+                            for item in items
+                            if item.status not in {"succeeded", "failed", "canceled"}
+                        ]
+                        terminal = [
+                            item
+                            for item in items
+                            if item.status in {"succeeded", "failed", "canceled"}
+                        ][:50]
                         items = active + terminal
-                    self._send(HTTPStatus.OK, {"items": [asdict(item) for item in items]})
+                    self._send(
+                        HTTPStatus.OK,
+                        {"items": [_task_payload(item) for item in items]},
+                    )
                     return
                 if len(parts) >= 3 and parts[:2] == ["v1", "tasks"]:
                     handle_id = parts[2]
                     if method == "GET" and len(parts) == 3:
-                        value = asdict(app.taskrunner.status(handle_id))
-                        value["subscriber_count"] = app.taskrunner.subscriber_count(handle_id)
+                        record, subscriber_count = app.taskrunner.status_with_subscriber_count(
+                            handle_id
+                        )
+                        value = _task_payload(record)
+                        value["subscriber_count"] = subscriber_count
                         self._send(HTTPStatus.OK, value)
                         return
                     if method == "GET" and parts[3:] == ["logs"]:
-                        self._send(HTTPStatus.OK, {"items": app.taskrunner.logs(handle_id)})
+                        resolved = app.taskrunner.status(handle_id).handle_id
+                        self._send(
+                            HTTPStatus.OK,
+                            {"handle_id": resolved, "items": app.taskrunner.logs(resolved)},
+                        )
                         return
                     if method == "POST" and parts[3:] == ["cancel"]:
                         current = app.taskrunner.status(handle_id)
                         if current.status in {"succeeded", "failed", "canceled"}:
-                            self._send(HTTPStatus.OK, asdict(current))
+                            self._send(HTTPStatus.OK, _task_payload(current))
                         else:
-                            result = app.taskrunner.cancel(handle_id)
+                            result = app.taskrunner.cancel(current.handle_id)
                             self._send(HTTPStatus.OK, asdict(result))
+                        return
+                    if method == "POST" and parts[3:] == ["retry"]:
+                        retained = app.taskrunner.retained_request(handle_id)
+                        handle = app.taskrunner.submit(
+                            str(retained["dataset"]),
+                            str(retained["operation"]),
+                            dict(retained["operands"]),
+                            owner="retry",
+                        )
+                        self._send(
+                            HTTPStatus.ACCEPTED,
+                            {
+                                "handle_id": handle,
+                                "execution_id": app.taskrunner.status(handle).execution_id,
+                                "retried_from": retained["handle_id"],
+                            },
+                        )
+                        return
+                    if method == "GET" and parts[3:] == ["explain"]:
+                        record, subscribers = app.taskrunner.status_with_subscriber_count(handle_id)
+                        logs = app.taskrunner.logs(record.handle_id)
+                        diagnostics = [
+                            item
+                            for item in logs
+                            if isinstance(item, dict) and item.get("type") == "task.diagnostic"
+                        ]
+                        self._send(
+                            HTTPStatus.OK,
+                            {
+                                "handle_id": record.handle_id,
+                                "dataset": record.dataset,
+                                "operation": record.operation,
+                                "status": record.status,
+                                "reason": record.reason or record.error,
+                                "diagnostics": diagnostics,
+                                "subscriber_count": subscribers,
+                                "inspection": {
+                                    "status": f"findata task status {record.handle_id}",
+                                    "logs": f"findata task logs {record.handle_id}",
+                                    "retry": f"findata task retry {record.handle_id}",
+                                },
+                            },
+                        )
                         return
                 if method == "POST" and parts == ["v1", "config"]:
                     body = self._body()
-                    app.workspace.set_config(str(body["key"]), body["value"])
-                    self._send(HTTPStatus.OK, {"updated": True})
+                    key = str(body["key"])
+                    value = body["value"]
+                    if key == "display.timezone":
+                        ZoneInfo(str(value))
+                    if key.startswith("dataset."):
+                        components = key.split(".", 2)
+                        if len(components) != 3 or components[1] not in app.plugins:
+                            raise ValueError(f"unknown dataset setting {key!r}")
+                        value = app.plugins[components[1]].normalize_setting(
+                            key, value, workspace=app.workspace
+                        )
+                    app.workspace.set_config(key, value)
+                    self._send(
+                        HTTPStatus.OK,
+                        {
+                            "updated": True,
+                            "key": key,
+                            "value": _redact(key, value),
+                            "revision": app.workspace.config_snapshot()["revision"],
+                        },
+                    )
                     return
                 if method == "GET" and parts == ["v1", "config"]:
                     key = _query_one(query, "key")
@@ -313,40 +449,101 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                         if key not in values:
                             self._send(HTTPStatus.NOT_FOUND, {"error": "config_not_found"})
                         else:
-                            self._send(HTTPStatus.OK, {"key": key, "value": _redact(key, values[key])})
+                            self._send(
+                                HTTPStatus.OK, {"key": key, "value": _redact(key, values[key])}
+                            )
                     else:
                         self._send(
                             HTTPStatus.OK,
-                            {"values": {name: _redact(name, value) for name, value in values.items()}},
+                            {
+                                "values": {
+                                    name: _redact(name, value) for name, value in values.items()
+                                }
+                            },
                         )
                     return
                 if method == "DELETE" and len(parts) == 3 and parts[:2] == ["v1", "config"]:
+                    key = parts[2]
+                    if key.startswith("dataset."):
+                        components = key.split(".", 2)
+                        if (
+                            len(components) != 3
+                            or components[1] not in app.plugins
+                            or key not in app.plugins[components[1]].settings
+                        ):
+                            raise ValueError(f"unknown dataset setting {key!r}")
                     self._send(HTTPStatus.OK, {"removed": app.workspace.unset_config(parts[2])})
                     return
-                if method == "GET" and parts == ["v1", "providers", "tushare", "check"]:
-                    configured = app.workspace.get_config("provider.tushare.token")
-                    ready = app._provider_ready()
-                    if ready and app.provider_mode == "real":
-                        app._probe_tushare()
+                if (
+                    method == "GET"
+                    and len(parts) == 4
+                    and parts[:2] == ["v1", "providers"]
+                    and parts[3] == "check"
+                ):
+                    provider_id = parts[2]
+                    try:
+                        provider = app.providers[provider_id]
+                    except KeyError as exc:
+                        raise ValueError(f"unknown provider {provider_id!r}") from exc
+                    runtime = provider.runtime
+                    assert runtime is not None
+                    ready = bool(runtime.ready(app.workspace, app.provider_mode))
+                    mock = bool(runtime.is_mock(app.workspace, app.provider_mode))
+                    if ready and not mock:
+                        runtime.probe(app.workspace, today=app.today)
                     self._send(
                         HTTPStatus.OK,
-                        {"provider": "tushare", "ready": ready, "authenticated": ready},
+                        {
+                            "provider": provider_id,
+                            "ready": ready,
+                            "authenticated": ready and not mock,
+                            "mode": "mock" if mock else "real",
+                        },
                     )
                     return
                 if method == "GET" and parts == ["v1", "providers"]:
                     self._send(
                         HTTPStatus.OK,
-                        {"items": [{"name": "tushare", "ready": app._provider_ready()}]},
+                        {
+                            "items": [
+                                {
+                                    "name": provider_id,
+                                    "ready": bool(
+                                        provider.runtime.ready(app.workspace, app.provider_mode)
+                                    ),
+                                    "mode": (
+                                        "mock"
+                                        if provider.runtime.is_mock(
+                                            app.workspace, app.provider_mode
+                                        )
+                                        else "real"
+                                    ),
+                                }
+                                for provider_id, provider in app.providers.items()
+                            ]
+                        },
                     )
                     return
-                if method == "GET" and parts == ["v1", "providers", "tushare"]:
-                    configured = app.workspace.get_config("provider.tushare.token")
+                if method == "GET" and len(parts) == 3 and parts[:2] == ["v1", "providers"]:
+                    provider_id = parts[2]
+                    try:
+                        provider = app.providers[provider_id]
+                    except KeyError as exc:
+                        raise ValueError(f"unknown provider {provider_id!r}") from exc
+                    runtime = provider.runtime
+                    assert runtime is not None
+                    configured = app.workspace.get_config(f"provider.{provider_id}.token")
                     self._send(
                         HTTPStatus.OK,
                         {
-                            "name": "tushare",
-                            "ready": app._provider_ready(),
+                            "name": provider_id,
+                            "ready": bool(runtime.ready(app.workspace, app.provider_mode)),
                             "configured": configured is not None or app.provider_mode == "mock",
+                            "mode": (
+                                "mock"
+                                if runtime.is_mock(app.workspace, app.provider_mode)
+                                else "real"
+                            ),
                         },
                     )
                     return
@@ -355,18 +552,39 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                         HTTPStatus.OK,
                         {
                             "items": [
-                                dataset_description(
+                                app._runtime_for_dataset(name).dataset_description(
                                     app.workspace, name, provider_ready=app._provider_ready()
                                 )
-                                for name in TUSHARE_DATASETS
+                                for name in app.plugins
                             ]
                         },
+                    )
+                    return
+                if (
+                    method == "POST"
+                    and len(parts) == 4
+                    and parts[:2] == ["v1", "datasets"]
+                    and parts[3] == "reset"
+                ):
+                    body = self._body()
+                    if body.get("confirm") is not True:
+                        raise ValueError("dataset reset requires confirm=true")
+                    dataset = parts[2]
+                    try:
+                        plugin = app.plugins[dataset]
+                    except KeyError as exc:
+                        raise ValueError(f"unknown dataset {dataset!r}") from exc
+                    with app.taskrunner.reserve_dataset_reset(dataset):
+                        app.workspace.reset_dataset(dataset, spec=plugin.spec)
+                    self._send(
+                        HTTPStatus.OK,
+                        {"dataset": dataset, "state": "uninitialized", "reset": True},
                     )
                     return
                 if method == "GET" and len(parts) == 3 and parts[:2] == ["v1", "datasets"]:
                     self._send(
                         HTTPStatus.OK,
-                        dataset_description(
+                        app._runtime_for_dataset(parts[2]).dataset_description(
                             app.workspace, parts[2], provider_ready=app._provider_ready()
                         ),
                     )
@@ -374,12 +592,14 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                 if method == "GET" and len(parts) == 4 and parts[:2] == ["v1", "datasets"]:
                     dataset, action = parts[2], parts[3]
                     if action in {"operations", "status"}:
-                        description = dataset_description(
+                        description = app._runtime_for_dataset(dataset).dataset_description(
                             app.workspace, dataset, provider_ready=app._provider_ready()
                         )
                         self._send(
                             HTTPStatus.OK,
-                            description if action == "status" else {"items": description["operations"]},
+                            description
+                            if action == "status"
+                            else {"items": description["operations"]},
                         )
                         return
                 if (
@@ -388,23 +608,17 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                     and parts[:2] == ["v1", "datasets"]
                     and parts[3] == "operations"
                 ):
-                    self._send(HTTPStatus.OK, operation_description(parts[2], parts[4]))
-                    return
-                if len(parts) == 4 and parts[:2] == ["v1", "datasets"] and parts[3:] == ["universe"]:
-                    dataset = parts[2]
-                    if method == "GET":
-                        self._send(HTTPStatus.OK, {"selectors": app.workspace.get_universe(dataset)})
-                    elif method == "PUT":
-                        body = self._body()
-                        selectors = normalize_universe(dataset, list(body.get("selectors") or []))
-                        app.workspace.set_universe(dataset, selectors)
-                        self._send(HTTPStatus.OK, {"selectors": app.workspace.get_universe(dataset)})
-                    elif method == "DELETE":
-                        app.workspace.clear_universe(dataset)
-                        self._send(HTTPStatus.OK, {"selectors": []})
+                    self._send(
+                        HTTPStatus.OK,
+                        app._runtime_for_dataset(parts[2]).operation_description(
+                            parts[2], parts[4]
+                        ),
+                    )
                     return
                 if method == "GET" and parts == ["v1", "cron"]:
-                    self._send(HTTPStatus.OK, {"items": [asdict(job) for job in app.cron.list_jobs()]})
+                    self._send(
+                        HTTPStatus.OK, {"items": [asdict(job) for job in app.cron.list_jobs()]}
+                    )
                     return
                 if len(parts) >= 4 and parts[:2] == ["v1", "cron"]:
                     dataset, action = parts[2], parts[3]
@@ -416,7 +630,11 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                         body = self._body()
                         self._send(
                             HTTPStatus.OK,
-                            asdict(app.cron.set_schedule(dataset, str(body["expression"]), str(body["timezone"]))),
+                            asdict(
+                                app.cron.set_schedule(
+                                    dataset, str(body["expression"]), str(body["timezone"])
+                                )
+                            ),
                         )
                     elif method == "POST" and action == "reset":
                         self._send(HTTPStatus.OK, asdict(app.cron.reset(dataset)))
@@ -436,16 +654,24 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                     body = self._body()
                     if body.get("all"):
                         count = app.events.ack_all()
+                        response = {"acknowledged": count}
                     else:
-                        app.events.ack(str(body["event_id"]))
+                        event_id = app.events.ack(str(body["event_id"]))
                         count = 1
-                    self._send(HTTPStatus.OK, {"acknowledged": count})
+                        response = {"acknowledged": count, "event_id": event_id}
+                    self._send(HTTPStatus.OK, response)
                     return
                 self._send(HTTPStatus.NOT_FOUND, {"error": "not_found"})
             except QueueFullError as exc:
                 self._send(HTTPStatus.CONFLICT, {"error": str(exc)})
+            except DatasetBusyError as exc:
+                self._send(HTTPStatus.CONFLICT, {"error": str(exc)})
+            except AmbiguousIdentifierError as exc:
+                self._send(HTTPStatus.CONFLICT, {"error": str(exc)})
             except TaskNotFoundError:
                 self._send(HTTPStatus.NOT_FOUND, {"error": "task_not_found"})
+            except IdentifierNotFoundError:
+                self._send(HTTPStatus.NOT_FOUND, {"error": "event_not_found"})
             except (KeyError, TypeError, ValueError) as exc:
                 self._send(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
             except Exception as exc:
@@ -476,10 +702,12 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
     return Handler
 
 
-def _configured_secret_ready(value: Any) -> bool:
-    if isinstance(value, dict) and isinstance(value.get("env"), str):
-        return bool(os.environ.get(value["env"]))
-    return bool(value)
+def _task_payload(record: Any) -> dict[str, Any]:
+    value = asdict(record)
+    counts = value.get("diagnostic_counts")
+    if isinstance(counts, dict) and not any(counts.values()):
+        value.pop("diagnostic_counts", None)
+    return value
 
 
 def _redact(key: str, value: Any) -> Any:

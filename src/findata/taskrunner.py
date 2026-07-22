@@ -12,11 +12,14 @@ import threading
 import time
 import traceback
 import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from multiprocessing.connection import Client, Connection, Listener
 from pathlib import Path
 from typing import Any
+
+from findata.identifiers import IdentifierNotFoundError, resolve_identifier
 
 
 TERMINAL_STATES = {"succeeded", "failed", "canceled"}
@@ -25,6 +28,10 @@ COALESCING_OPERATIONS = {"complete", "refresh"}
 
 
 class TaskRunnerError(RuntimeError):
+    pass
+
+
+class DatasetBusyError(TaskRunnerError):
     pass
 
 
@@ -53,6 +60,9 @@ class HandleRecord:
     result: Any = None
     error: str | None = None
     progress: dict[str, int | float] | None = None
+    reason: str | None = None
+    stage: str | None = None
+    diagnostic_counts: dict[str, int] = field(default_factory=lambda: {"warning": 0, "error": 0})
 
 
 @dataclass(slots=True)
@@ -65,6 +75,8 @@ class ExecutionRecord:
     created_at: float
     updated_at: float
     coalescing_key: str | None
+    configuration_revision: int = 0
+    settings: dict[str, Any] = field(default_factory=dict)
     handle_ids: list[str] = field(default_factory=list)
     pid: int | None = None
     process_start: str | None = None
@@ -74,6 +86,9 @@ class ExecutionRecord:
     cancel_requested: bool = False
     triggered_handle_ids: list[str] = field(default_factory=list)
     trigger_depth: int = 0
+    reason: str | None = None
+    stage: str | None = None
+    diagnostic_counts: dict[str, int] = field(default_factory=lambda: {"warning": 0, "error": 0})
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,10 +115,46 @@ class TaskContext:
     def log(self, message: str) -> None:
         self._send({"type": "log", "message": str(message)})
 
-    def progress(self, current: int | float, total: int | float) -> None:
+    def diagnostic(
+        self,
+        severity: str,
+        code: str,
+        message: str,
+        *,
+        context: Mapping[str, Any] | None = None,
+        count: int = 1,
+    ) -> None:
+        if severity not in {"warning", "error"}:
+            raise ValueError(f"invalid task diagnostic severity {severity!r}")
+        if not code:
+            raise ValueError("task diagnostic code cannot be empty")
+        if not isinstance(count, int) or isinstance(count, bool) or count < 1:
+            raise ValueError("task diagnostic count must be a positive integer")
+        self._send(
+            {
+                "type": "diagnostic",
+                "severity": severity,
+                "code": str(code),
+                "message": str(message),
+                "context": dict(context or {}),
+                "count": count,
+            }
+        )
+
+    def progress(
+        self,
+        current: int | float,
+        total: int | float,
+        **metrics: int | float,
+    ) -> None:
         if total < 0 or current < 0:
             raise ValueError("progress values cannot be negative")
-        self._send({"type": "progress", "current": current, "total": total})
+        if any(value < 0 for value in metrics.values()):
+            raise ValueError("progress metrics cannot be negative")
+        self._send({"type": "progress", "current": current, "total": total, **metrics})
+
+    def stage(self, value: str) -> None:
+        self._send({"type": "stage", "stage": str(value)})
 
     def waiting(self, reason: str) -> None:
         self._send({"type": "state", "state": "waiting", "reason": reason})
@@ -181,6 +232,7 @@ class TaskRunner:
         event_sink: Callable[..., Any] | None = None,
         dependency_resolver: DependencyResolver | None = None,
         max_trigger_depth: int = 8,
+        execution_context: Callable[[str], Mapping[str, Any]] | None = None,
     ) -> None:
         if global_concurrency <= 0:
             raise ValueError("global_concurrency must be positive")
@@ -196,6 +248,7 @@ class TaskRunner:
         self.event_sink = event_sink
         self.dependency_resolver = dependency_resolver
         self.max_trigger_depth = max_trigger_depth
+        self.execution_context = execution_context
         self.tasks_root = self.workspace / "tasks"
         self.handles_root = self.tasks_root / "handles"
         self.executions_root = self.tasks_root / "executions"
@@ -205,6 +258,7 @@ class TaskRunner:
         self._executions: dict[str, ExecutionRecord] = {}
         self._runtime: dict[str, _Runtime] = {}
         self._dataset_running: set[str] = set()
+        self._dataset_resetting: set[str] = set()
         self._launching: set[str] = set()
         self._monitor_threads: set[threading.Thread] = set()
         self._stop = threading.Event()
@@ -260,13 +314,16 @@ class TaskRunner:
         key = _coalescing_key(dataset, operation, normalized)
         now = time.time()
         with self._condition:
+            if dataset in self._dataset_resetting:
+                raise DatasetBusyError(f"dataset {dataset!r} is being reset")
             execution = None
             if key is not None:
                 execution = next(
                     (
                         item
                         for item in self._executions.values()
-                        if item.coalescing_key == key and item.status in {"queued", "running", "waiting"}
+                        if item.coalescing_key == key
+                        and item.status in {"queued", "running", "waiting"}
                     ),
                     None,
                 )
@@ -289,6 +346,11 @@ class TaskRunner:
                         f"dataset {dataset!r} already has {self.per_dataset_queue_limit} queued executions"
                     )
                 execution_id = uuid.uuid4().hex
+                context = (
+                    dict(self.execution_context(dataset))
+                    if self.execution_context is not None
+                    else {}
+                )
                 execution = ExecutionRecord(
                     execution_id=execution_id,
                     dataset=dataset,
@@ -298,6 +360,8 @@ class TaskRunner:
                     created_at=now,
                     updated_at=now,
                     coalescing_key=key,
+                    configuration_revision=int(context.get("configuration_revision", 0)),
+                    settings=dict(context.get("settings") or {}),
                     trigger_depth=_trigger_depth,
                 )
                 self._executions[execution_id] = execution
@@ -314,6 +378,9 @@ class TaskRunner:
                 created_at=now,
                 updated_at=now,
                 progress=dict(execution.progress) if execution.progress else None,
+                reason=execution.reason,
+                stage=execution.stage,
+                diagnostic_counts=dict(execution.diagnostic_counts),
             )
             execution.handle_ids.append(handle_id)
             execution.updated_at = now
@@ -323,12 +390,41 @@ class TaskRunner:
             self._condition.notify_all()
             return handle_id
 
+    @contextmanager
+    def reserve_dataset_reset(self, dataset: str) -> Iterator[None]:
+        self._ensure_started()
+        with self._condition:
+            active = any(
+                item.dataset == dataset and item.status in ACTIVE_STATES
+                for item in self._executions.values()
+            )
+            if active or dataset in self._dataset_resetting:
+                raise DatasetBusyError(f"dataset {dataset!r} has queued or active work")
+            self._dataset_resetting.add(dataset)
+        try:
+            yield
+        finally:
+            with self._condition:
+                self._dataset_resetting.discard(dataset)
+                self._condition.notify_all()
+
     def status(self, handle_id: str) -> HandleRecord:
         with self._condition:
-            handle = self._handles.get(handle_id)
-            if handle is None:
-                raise TaskNotFoundError(handle_id)
+            resolved = self._resolve_handle(handle_id)
+            handle = self._handles[resolved]
             return _copy_handle(handle)
+
+    def status_with_subscriber_count(self, handle_id: str) -> tuple[HandleRecord, int]:
+        with self._condition:
+            resolved = self._resolve_handle(handle_id)
+            handle = self._handles[resolved]
+            execution = self._executions[handle.execution_id]
+            subscribers = sum(
+                self._handles[item].status not in TERMINAL_STATES
+                for item in execution.handle_ids
+                if item in self._handles
+            )
+            return _copy_handle(handle), subscribers
 
     def list_handles(
         self,
@@ -347,9 +443,8 @@ class TaskRunner:
 
     def subscriber_count(self, handle_id: str) -> int:
         with self._condition:
-            handle = self._handles.get(handle_id)
-            if handle is None:
-                raise TaskNotFoundError(handle_id)
+            resolved = self._resolve_handle(handle_id)
+            handle = self._handles[resolved]
             execution = self._executions[handle.execution_id]
             return sum(
                 self._handles[item].status not in TERMINAL_STATES
@@ -407,9 +502,8 @@ class TaskRunner:
 
     def cancel(self, handle_id: str) -> CancellationResult:
         with self._condition:
-            handle = self._handles.get(handle_id)
-            if handle is None:
-                raise TaskNotFoundError(handle_id)
+            handle_id = self._resolve_handle(handle_id)
+            handle = self._handles[handle_id]
             if handle.status in TERMINAL_STATES:
                 return CancellationResult(handle_id, False, handle.status)
             execution = self._executions[handle.execution_id]
@@ -463,30 +557,62 @@ class TaskRunner:
             self._condition.notify_all()
             return CancellationResult(handle_id, False, "canceling")
 
-    def logs(self, handle_id: str) -> list[str]:
+    def logs(self, handle_id: str) -> list[object]:
         with self._condition:
-            handle = self._handles.get(handle_id)
-            if handle is None:
-                raise TaskNotFoundError(handle_id)
+            resolved = self._resolve_handle(handle_id)
+            handle = self._handles[resolved]
             path = self.logs_root / f"{handle.execution_id}.jsonl"
-        if not path.exists():
-            return []
-        result: list[str] = []
-        for line in path.read_text(encoding="utf-8").splitlines():
+            lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+        result: list[object] = []
+        for line in lines:
             try:
                 item = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if isinstance(item, dict) and isinstance(item.get("message"), str):
+            if not isinstance(item, dict) or not isinstance(item.get("message"), str):
+                continue
+            if item.get("type") == "diagnostic":
+                result.append(
+                    {
+                        "type": "task.diagnostic",
+                        "severity": item.get("severity"),
+                        "code": item.get("code"),
+                        "message": item["message"],
+                        "context": dict(item.get("context") or {}),
+                        "count": item.get("count", 1),
+                    }
+                )
+            else:
                 result.append(item["message"])
         return result
+
+    def retained_request(self, handle_id: str) -> dict[str, Any]:
+        """Return the immutable normalized request behind a retained handle."""
+        with self._condition:
+            resolved = self._resolve_handle(handle_id)
+            handle = self._handles[resolved]
+            execution = self._executions[handle.execution_id]
+            return {
+                "handle_id": resolved,
+                "dataset": execution.dataset,
+                "operation": execution.operation,
+                "operands": _canonical_value(execution.operands),
+            }
+
+    def _resolve_handle(self, operand: str) -> str:
+        try:
+            return resolve_identifier(operand, self._handles)
+        except IdentifierNotFoundError as exc:
+            raise TaskNotFoundError(operand) from exc
 
     def shutdown(self) -> None:
         if not self._started:
             return
         with self._condition:
             handles = [
-                item.handle_id for item in self._handles.values() if item.status not in TERMINAL_STATES
+                item.handle_id
+                for item in self._handles.values()
+                if item.status not in TERMINAL_STATES
             ]
         for handle_id in handles:
             try:
@@ -564,9 +690,7 @@ class TaskRunner:
                         runtime.liveness_warned = True
                         execution = self._executions.get(execution_id)
                         if execution is not None:
-                            expired.append(
-                                (execution_id, execution.dataset, execution.operation)
-                            )
+                            expired.append((execution_id, execution.dataset, execution.operation))
             for execution_id, dataset, operation in expired:
                 self._event(
                     "liveness_timeout",
@@ -606,6 +730,8 @@ class TaskRunner:
                     "dataset": execution.dataset,
                     "operation": execution.operation,
                     "operands": execution.operands,
+                    "configuration_revision": execution.configuration_revision,
+                    "settings": execution.settings,
                 }
             authkey = secrets.token_bytes(32)
             listener = Listener(("127.0.0.1", 0), authkey=authkey)
@@ -631,7 +757,9 @@ class TaskRunner:
             try:
                 connection = listener.accept()
             except (socket.timeout, TimeoutError) as exc:
-                raise TaskRunnerError("task process did not establish its authenticated channel") from exc
+                raise TaskRunnerError(
+                    "task process did not establish its authenticated channel"
+                ) from exc
             runtime.connection = connection
             with self._condition:
                 execution = self._executions[execution_id]
@@ -695,12 +823,44 @@ class TaskRunner:
             if kind == "log":
                 self._append_log(execution_id, str(message.get("message", "")))
                 return
+            if kind == "diagnostic":
+                severity = str(message.get("severity"))
+                count = message.get("count", 1)
+                if severity not in {"warning", "error"}:
+                    return
+                if not isinstance(count, int) or isinstance(count, bool) or count < 1:
+                    return
+                self._append_diagnostic(
+                    execution_id,
+                    severity=severity,
+                    code=str(message.get("code") or "task_diagnostic"),
+                    message=str(message.get("message", "")),
+                    context=dict(message.get("context") or {}),
+                    count=count,
+                )
+                execution.diagnostic_counts[severity] = (
+                    execution.diagnostic_counts.get(severity, 0) + count
+                )
+                for handle_id in execution.handle_ids:
+                    handle = self._handles[handle_id]
+                    handle.diagnostic_counts[severity] = (
+                        handle.diagnostic_counts.get(severity, 0) + count
+                    )
+                    handle.updated_at = time.time()
+                    self._persist_handle(handle)
+                execution.updated_at = time.time()
+                self._persist_execution(execution)
+                return
             if kind == "progress":
                 execution.progress = {
-                    "current": message.get("current", 0),
-                    "total": message.get("total", 0),
+                    key: value
+                    for key, value in message.items()
+                    if key != "type" and isinstance(value, (int, float))
                 }
                 self._update_active_handles(execution, progress=execution.progress)
+            elif kind == "stage":
+                execution.stage = str(message.get("stage") or "") or None
+                self._update_active_handles(execution, stage=execution.stage, update_stage=True)
             elif kind == "subtask":
                 timeout = float(message.get("timeout", 0))
                 if timeout <= 0:
@@ -716,7 +876,14 @@ class TaskRunner:
                     runtime.liveness_warned = False
             elif kind == "state" and message.get("state") in {"running", "waiting"}:
                 execution.status = str(message["state"])
-                self._update_active_handles(execution, status=execution.status)
+                execution.reason = (
+                    str(message.get("reason"))
+                    if execution.status == "waiting" and message.get("reason")
+                    else None
+                )
+                self._update_active_handles(
+                    execution, status=execution.status, reason=execution.reason, update_reason=True
+                )
             execution.updated_at = time.time()
             self._persist_execution(execution)
             self._condition.notify_all()
@@ -770,7 +937,10 @@ class TaskRunner:
                 parent = self._executions[execution_id]
                 parent.triggered_handle_ids.append(child_handle)
                 parent.status = "waiting"
-                self._update_active_handles(parent, status="waiting")
+                parent.reason = f"dependency:{target}"
+                self._update_active_handles(
+                    parent, status="waiting", reason=parent.reason, update_reason=True
+                )
                 self._persist_execution(parent)
             child = self.wait(child_handle)
             if child.status != "succeeded":
@@ -793,7 +963,10 @@ class TaskRunner:
                 parent = self._executions.get(execution_id)
                 if parent is not None and parent.status == "waiting":
                     parent.status = "running"
-                    self._update_active_handles(parent, status="running")
+                    parent.reason = None
+                    self._update_active_handles(
+                        parent, status="running", reason=None, update_reason=True
+                    )
                     self._persist_execution(parent)
         try:
             connection.send(response)
@@ -825,6 +998,8 @@ class TaskRunner:
             execution.status = status
             execution.result = result
             execution.error = error
+            execution.reason = None
+            execution.stage = None
             execution.updated_at = time.time()
             self._dataset_running.discard(execution.dataset)
             for handle_id in execution.handle_ids:
@@ -835,6 +1010,8 @@ class TaskRunner:
                 handle.result = result
                 handle.error = error
                 handle.progress = dict(execution.progress) if execution.progress else None
+                handle.reason = None
+                handle.stage = None
                 handle.updated_at = execution.updated_at
                 self._persist_handle(handle)
             self._persist_execution(execution)
@@ -867,6 +1044,10 @@ class TaskRunner:
         *,
         status: str | None = None,
         progress: Mapping[str, int | float] | None = None,
+        reason: str | None = None,
+        update_reason: bool = False,
+        stage: str | None = None,
+        update_stage: bool = False,
     ) -> None:
         now = time.time()
         for handle_id in execution.handle_ids:
@@ -877,6 +1058,10 @@ class TaskRunner:
                 handle.status = status
             if progress is not None:
                 handle.progress = dict(progress)
+            if update_reason:
+                handle.reason = reason
+            if update_stage:
+                handle.stage = stage
             handle.updated_at = now
             self._persist_handle(handle)
         self._condition.notify_all()
@@ -885,6 +1070,31 @@ class TaskRunner:
         path = self.logs_root / f"{execution_id}.jsonl"
         with path.open("a", encoding="utf-8") as file:
             file.write(json.dumps({"time": time.time(), "message": message}) + "\n")
+            file.flush()
+            os.fsync(file.fileno())
+
+    def _append_diagnostic(
+        self,
+        execution_id: str,
+        *,
+        severity: str,
+        code: str,
+        message: str,
+        context: Mapping[str, Any],
+        count: int,
+    ) -> None:
+        path = self.logs_root / f"{execution_id}.jsonl"
+        record = {
+            "time": time.time(),
+            "type": "diagnostic",
+            "severity": severity,
+            "code": code,
+            "message": message,
+            "context": dict(context),
+            "count": count,
+        }
+        with path.open("a", encoding="utf-8") as file:
+            file.write(json.dumps(record, separators=(",", ":"), default=str) + "\n")
             file.flush()
             os.fsync(file.fileno())
 
@@ -963,7 +1173,9 @@ class TaskRunner:
             execution = self._executions.get(handle.execution_id)
             if execution is None:
                 continue
-            execution.handle_ids = [item for item in execution.handle_ids if item != handle.handle_id]
+            execution.handle_ids = [
+                item for item in execution.handle_ids if item != handle.handle_id
+            ]
             if execution.handle_ids:
                 self._persist_execution(execution)
                 continue
@@ -1029,7 +1241,9 @@ def _canonical_value(value: Any) -> Any:
     if isinstance(value, (list, tuple)):
         normalized = [_canonical_value(item) for item in value]
         if all(isinstance(item, (str, int, float, bool, type(None))) for item in normalized):
-            return sorted(dict.fromkeys(normalized), key=lambda item: (type(item).__name__, repr(item)))
+            return sorted(
+                dict.fromkeys(normalized), key=lambda item: (type(item).__name__, repr(item))
+            )
         return normalized
     return value
 
