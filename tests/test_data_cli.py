@@ -82,6 +82,47 @@ class DataCLITests(unittest.TestCase):
         self.assertEqual(coverage["items"][0]["start"], "2026-07-13")
         self.assertEqual(coverage["items"][0]["end"], "2026-07-18")
 
+        checked = self.run_json(
+            "data",
+            "coverage",
+            "tushare_daily_basic",
+            "--keys",
+            "600000.SH",
+            "--from",
+            "2026-07-10",
+            "--to",
+            "2026-07-18",
+        )
+        self.assertFalse(checked["items"][0]["complete"])
+        self.assertEqual(
+            checked["items"][0]["missing"],
+            [["2026-07-10", "2026-07-13"]],
+        )
+
+        human = io.StringIO()
+        code = cli_main(
+            [
+                "--workspace",
+                str(self.root),
+                "data",
+                "coverage",
+                "tushare_daily_basic",
+                "--keys",
+                "600000.SH",
+                "--from",
+                "2026-07-10",
+                "--to",
+                "2026-07-18",
+            ],
+            stdout=human,
+            stderr=io.StringIO(),
+            environ={},
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("REQUESTED_START", human.getvalue())
+        self.assertIn("2026-07-13", human.getvalue())
+        self.assertIn("MISSING", human.getvalue())
+
         completion = io.StringIO()
         code = cli_main(
             [

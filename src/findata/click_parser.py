@@ -117,7 +117,12 @@ def command_tree(*, version: str) -> click.Group:
         data,
         "data",
         "coverage",
-        [click.Argument(["dataset"]), click.Option(["--keys"], multiple=True)],
+        [
+            click.Argument(["dataset"]),
+            click.Option(["--keys"], multiple=True),
+            click.Option(["--from", "range_start"]),
+            click.Option(["--to", "range_end"]),
+        ],
     )
 
     def query_options() -> list[click.Parameter]:

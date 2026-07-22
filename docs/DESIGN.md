@@ -302,6 +302,12 @@ plugin, opens a write connection, submits maintenance, or infers that missing co
 downloaded. File exports use a sibling temporary file and atomic rename, while stdout exports keep
 stdout data-only and send diagnostics to stderr.
 
+Coverage presentation preserves the stored half-open start and end dates. An optional requested
+half-open interval is compared with the same central coverage record to expose completeness and
+exact gaps without initiating maintenance. The human renderer treats dates as first-class table
+cells and sends output taller than an interactive terminal through the user's pager. Paging is a
+presentation concern only: structured, redirected, and export stdout remain deterministic streams.
+
 An eager query holds a shared gate and read-only connection through Arrow-table materialization. A
 batch iterator holds both until its context manager closes. A reader therefore observes one committed
 database state for its complete query.

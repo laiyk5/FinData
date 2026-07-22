@@ -34,8 +34,7 @@ def execute_data_command(
     if args.action == "schema":
         return dataset.describe()
     if args.action == "coverage":
-        table = dataset.coverage(keys=_values(args.keys))
-        return {"dataset": args.dataset, "items": table.to_pylist()}
+        return _coverage(dataset, args)
 
     query = _query_arguments(args, dataset.describe())
     if args.action == "preview":
@@ -49,6 +48,55 @@ def execute_data_command(
     if args.action == "export":
         return _export(dataset, args, query=query, stdout=stdout)
     raise ValueError(f"unsupported data action {args.action!r}")
+
+
+def _coverage(dataset: Any, args: Any) -> dict[str, object]:
+    if bool(args.range_start) != bool(args.range_end):
+        raise ValueError("--from and --to must be supplied together")
+    keys = _values(args.keys)
+    rows = dataset.coverage(keys=keys).to_pylist()
+    if not args.range_start:
+        return {"dataset": args.dataset, "items": rows}
+
+    request_start = _date_argument(args.range_start, "--from")
+    request_end = _date_argument(args.range_end, "--to")
+    if request_start >= request_end:
+        raise ValueError("--from must be earlier than --to")
+    by_key = {row["key"]: row for row in rows}
+    selected_keys = keys or list(by_key)
+    items: list[dict[str, object]] = []
+    for key in selected_keys:
+        row = by_key.get(key)
+        missing: list[tuple[date, date]] = []
+        if row is None:
+            covered_start = covered_end = None
+            missing.append((request_start, request_end))
+        else:
+            covered_start, covered_end = row["start"], row["end"]
+            if request_start < covered_start:
+                missing.append((request_start, min(request_end, covered_start)))
+            if request_end > covered_end:
+                missing.append((max(request_start, covered_end), request_end))
+            missing = [(start, end) for start, end in missing if start < end]
+        items.append(
+            {
+                "key": key,
+                "requested_start": request_start,
+                "requested_end": request_end,
+                "complete": not missing,
+                "covered_start": covered_start,
+                "covered_end": covered_end,
+                "missing": missing,
+            }
+        )
+    return {"dataset": args.dataset, "items": items}
+
+
+def _date_argument(value: str, option: str) -> date:
+    try:
+        return date.fromisoformat(value)
+    except ValueError as exc:
+        raise ValueError(f"{option} must be an ISO date (YYYY-MM-DD)") from exc
 
 
 def _query_arguments(args: Any, description: dict[str, Any]) -> dict[str, Any]:

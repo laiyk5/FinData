@@ -157,7 +157,10 @@ injected.
 
 Data CLI tests cover schema metadata, bounded preview, supported and unsupported coverage, strict
 and explicitly partial reads, column and key selection, empty results, and actionable missing-range
-errors. Export tests read outputs back with Arrow, exercise multiple record batches, verify CSV,
+errors. Coverage tests verify stored dates remain visible in human tables and requested ranges report
+completeness and exact half-open gaps. Presentation tests use TTY and non-TTY streams to prove long
+human output pages only when interactive; structured, redirected, and export stdout never page.
+Export tests read outputs back with Arrow, exercise multiple record batches, verify CSV,
 Parquet, Arrow IPC, and JSONL schemas and row values, reject accidental overwrite, and prove atomic
 cleanup after failure. Spies assert no HTTP client, task record, provider transport, write gate,
 dataset revision, or publication change. Stdout exports assert byte-for-byte data-only output with

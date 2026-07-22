@@ -55,6 +55,7 @@ def main(
             quiet=quiet,
             verbose=verbose,
             progress_enabled=progress_enabled,
+            pager=lambda text, color: _page_output(text, color=color, stdout=stdout),
         )
         _normalize_aliases(arguments)
         try:
@@ -139,10 +140,16 @@ def main(
             quiet=locals().get("quiet", False),
             verbose=locals().get("verbose", False),
             progress_enabled=locals().get("progress_enabled", True),
+            pager=lambda text, color: _page_output(text, color=color, stdout=stdout),
         )
         output.finish_progress()
         output.error(str(exc))
         return 1
+
+
+def _page_output(text: str, *, color: bool, stdout: TextIO) -> None:
+    with redirect_stdout(stdout):
+        click.echo_via_pager(text, color=color)
 
 
 def _execute(

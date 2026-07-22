@@ -353,6 +353,41 @@ class ProgressPresentationTests(unittest.TestCase):
         progress_type.assert_not_called()
         self.assertIn("fetching data", stderr.getvalue())
 
+    def test_long_interactive_human_result_uses_pager(self) -> None:
+        rendered: list[str] = []
+        stdout = TTYBuffer()
+        output = CLIOutput(
+            output_format="human",
+            color_mode="auto",
+            stdout=stdout,
+            stderr=TTYBuffer(),
+            environ={},
+            pager=lambda text, _color: rendered.append(text),
+        )
+
+        output.result({"items": [{"key": f"item-{index}"} for index in range(100)]})
+
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertEqual(len(rendered), 1)
+        self.assertIn("item-99", rendered[0])
+
+    def test_redirected_human_result_does_not_use_pager(self) -> None:
+        rendered: list[str] = []
+        stdout = io.StringIO()
+        output = CLIOutput(
+            output_format="human",
+            color_mode="auto",
+            stdout=stdout,
+            stderr=io.StringIO(),
+            environ={},
+            pager=lambda text, _color: rendered.append(text),
+        )
+
+        output.result({"items": [{"key": f"item-{index}"} for index in range(100)]})
+
+        self.assertEqual(rendered, [])
+        self.assertIn("item-99", stdout.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()

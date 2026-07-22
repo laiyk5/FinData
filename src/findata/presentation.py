@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 import json
 import os
 import shutil
 import time
-from typing import TextIO
+from typing import Callable, TextIO
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from rich.console import Console
@@ -49,6 +49,7 @@ class TerminalCapabilities:
     color: bool
     unicode: bool
     width: int
+    height: int
 
     @classmethod
     def detect(
@@ -74,8 +75,16 @@ class TerminalCapabilities:
             unicode = False
         else:
             unicode = not dumb
-        width = shutil.get_terminal_size(fallback=(100, 24)).columns if interactive else 100
-        return cls(interactive=interactive, color=color, unicode=unicode, width=max(width, 40))
+        size = shutil.get_terminal_size(fallback=(100, 24))
+        width = size.columns if interactive else 100
+        height = size.lines if interactive else 24
+        return cls(
+            interactive=interactive,
+            color=color,
+            unicode=unicode,
+            width=max(width, 40),
+            height=max(height, 4),
+        )
 
 
 class CLIOutput:
@@ -91,6 +100,7 @@ class CLIOutput:
         quiet: bool = False,
         verbose: bool = False,
         progress_enabled: bool = True,
+        pager: Callable[[str, bool], None] | None = None,
     ) -> None:
         self.output_format = output_format
         self.stdout = stdout
@@ -98,6 +108,7 @@ class CLIOutput:
         self.quiet = quiet
         self.verbose = verbose
         self.progress_enabled = progress_enabled
+        self.pager = pager
         try:
             self.display_timezone = ZoneInfo(display_timezone)
         except ZoneInfoNotFoundError as exc:
@@ -128,7 +139,15 @@ class CLIOutput:
         elif self.output_format == "jsonl":
             self._jsonl(value, record_type)
         else:
-            self.stdout.write(self._human(value))
+            rendered = self._human(value)
+            if (
+                self.out_terminal.interactive
+                and self.pager is not None
+                and rendered.count("\n") >= self.out_terminal.height
+            ):
+                self.pager(rendered, self.out_terminal.color)
+                return
+            self.stdout.write(rendered)
         self.stdout.flush()
 
     def error(self, message: str) -> None:
@@ -427,6 +446,15 @@ class CLIOutput:
         if not rows:
             return "No results found.\n"
         preferred = [
+            "key",
+            "requested_start",
+            "requested_end",
+            "complete",
+            "missing",
+            "covered_start",
+            "covered_end",
+            "start",
+            "end",
             "name",
             "dataset",
             "operation",
@@ -444,7 +472,9 @@ class CLIOutput:
             str(key)
             for row in rows
             for key, item in row.items()
-            if item is None or isinstance(item, (str, int, float, bool))
+            if item is None
+            or isinstance(item, (str, int, float, bool, date, datetime))
+            or (key == "missing" and isinstance(item, (list, tuple)))
         }
         columns = [key for key in preferred if key in scalar_keys]
         columns.extend(sorted(scalar_keys - set(columns)))
@@ -550,6 +580,7 @@ def _without_decoration(value: TerminalCapabilities) -> TerminalCapabilities:
         color=False,
         unicode=value.unicode,
         width=value.width,
+        height=value.height,
     )
 
 
