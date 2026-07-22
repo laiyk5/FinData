@@ -207,6 +207,53 @@ class CLIPresentationTests(unittest.TestCase):
         self.assertEqual(len(tasks), 1)
         self.assertNotEqual(tasks[0].status, "canceled")
 
+    def test_logs_follow_ctrl_c_detaches(self) -> None:
+        submitted = json.loads(
+            self.run_cli(
+                "--json",
+                "task",
+                "run",
+                "tushare_trade_cal",
+                "complete",
+                "--params",
+                '{"exchanges":["SSE"],"timerange":"2020-01-01:2026-07-20"}',
+            )[1]
+        )
+        with patch("findata.cli.time.sleep", side_effect=KeyboardInterrupt):
+            code, _, errors = self.run_cli("task", "logs", str(submitted["handle_id"]), "--follow")
+
+        self.assertEqual(code, 130)
+        self.assertIn("detached", errors.lower())
+
+    def test_equals_form_global_options_match_spaced_forms(self) -> None:
+        code, output, errors = self.run_cli("--format=json", "provider", "ls")
+        self.assertEqual(code, 0)
+        self.assertEqual(errors, "")
+        spaced = json.loads(self.run_cli("--format", "json", "provider", "ls")[1])
+        self.assertEqual(json.loads(output), spaced)
+
+        code, output, _ = self.run_cli("--color=never", "provider", "check", "tushare", tty=True)
+        self.assertEqual(code, 0)
+        self.assertNotIn("\x1b[", output)
+
+        code, output, _ = self.run_cli("provider", "ls", "--format=json")
+        self.assertEqual(code, 0)
+        self.assertIn("items", json.loads(output))
+
+    def test_invalid_global_option_values_are_usage_errors(self) -> None:
+        code, output, errors = self.run_cli("--format=bogus", "provider", "ls")
+        self.assertEqual(code, 2)
+        self.assertEqual(output, "")
+        self.assertIn("bogus", errors)
+
+        code, _, errors = self.run_cli("provider", "ls", "--format")
+        self.assertEqual(code, 2)
+        self.assertIn("--format", errors)
+
+        code, _, errors = self.run_cli("--color=sometimes", "provider", "ls")
+        self.assertEqual(code, 2)
+        self.assertIn("--color", errors)
+
 
 class ProgressPresentationTests(unittest.TestCase):
     @patch("findata.presentation.Progress")

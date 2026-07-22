@@ -43,6 +43,21 @@ def main(
     environment = os.environ if environ is None else environ
     output_format = "human"
     color_mode = "auto"
+
+    def fallback_output() -> CLIOutput:
+        return CLIOutput(
+            output_format=output_format,
+            color_mode=color_mode,
+            stdout=stdout,
+            stderr=stderr,
+            environ=environment,
+            quiet=locals().get("quiet", False),
+            verbose=locals().get("verbose", False),
+            progress_enabled=locals().get("progress_enabled", True),
+            pager=lambda text, color: _page_output(text, color=color, stdout=stdout),
+        )
+
+    output: CLIOutput | None = None
     try:
         output_format = _extract_format(arguments)
         color_mode = _extract_color(arguments)
@@ -125,26 +140,18 @@ def main(
             else 1
         )
     except TaskDetached as exc:
+        assert output is not None
         output.detached(exc.handle)
         return 130
     except CLIUsageError as exc:
-        output.finish_progress()
-        output.error(str(exc))
+        renderer = output or fallback_output()
+        renderer.finish_progress()
+        renderer.error(str(exc))
         return 2
     except (ValueError, RuntimeError, HTTPError, URLError) as exc:
-        output = locals().get("output") or CLIOutput(
-            output_format=output_format,
-            color_mode=color_mode,
-            stdout=stdout,
-            stderr=stderr,
-            environ=environment,
-            quiet=locals().get("quiet", False),
-            verbose=locals().get("verbose", False),
-            progress_enabled=locals().get("progress_enabled", True),
-            pager=lambda text, color: _page_output(text, color=color, stdout=stdout),
-        )
-        output.finish_progress()
-        output.error(str(exc))
+        renderer = output or fallback_output()
+        renderer.finish_progress()
+        renderer.error(str(exc))
         return 1
 
 
@@ -239,23 +246,10 @@ def _execute(
         )
         if not (args.wait or args.follow):
             return submitted
-        handle = str(submitted["handle_id"])
         output.accepted(submitted)
-        emitted_logs = 0
-        try:
-            while True:
-                if args.follow:
-                    logs = client.request("GET", f"/v1/tasks/{handle}/logs")["items"]
-                    for message in logs[emitted_logs:]:
-                        _render_task_log(output, message, handle_id=handle)
-                    emitted_logs = len(logs)
-                status = client.request("GET", f"/v1/tasks/{handle}")
-                if status["status"] in {"succeeded", "failed", "canceled"}:
-                    return status
-                output.state(status)
-                time.sleep(0.05)
-        except KeyboardInterrupt as exc:
-            raise TaskDetached(handle) from exc
+        return _wait_for_task(
+            client, str(submitted["handle_id"]), output=output, follow=args.follow
+        )
     if args.group == "task" and args.action == "retry":
         submitted = client.request("POST", f"/v1/tasks/{args.handle}/retry", {})
         if not (args.wait or args.follow):
@@ -283,20 +277,7 @@ def _execute(
     if args.group == "task" and args.action == "logs":
         if not args.follow:
             return client.request("GET", f"/v1/tasks/{args.handle}/logs")
-        emitted = 0
-        try:
-            while True:
-                logs = client.request("GET", f"/v1/tasks/{args.handle}/logs")["items"]
-                for message in logs[emitted:]:
-                    _render_task_log(output, message, handle_id=str(args.handle))
-                emitted = len(logs)
-                status = client.request("GET", f"/v1/tasks/{args.handle}")
-                if status["status"] in {"succeeded", "failed", "canceled"}:
-                    return status
-                output.state(status)
-                time.sleep(0.05)
-        except KeyboardInterrupt as exc:
-            raise TaskDetached(str(args.handle)) from exc
+        return _wait_for_task(client, str(args.handle), output=output, follow=True)
     if args.group == "task" and args.action == "cancel":
         return client.request("POST", f"/v1/tasks/{args.handle}/cancel", {})
     if args.group == "cron":
@@ -329,6 +310,15 @@ def _execute(
     raise ValueError("unsupported command")
 
 
+class ServerError(RuntimeError):
+    """An HTTP error response from the findata server."""
+
+    def __init__(self, status: int, detail: str) -> None:
+        self.status = status
+        self.detail = detail
+        super().__init__(f"server returned {status}: {detail}")
+
+
 class _Client:
     def __init__(self, workspace: Path) -> None:
         try:
@@ -351,7 +341,7 @@ class _Client:
                 result = json.loads(response.read().decode("utf-8"))
         except HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
-            raise RuntimeError(f"server returned {exc.code}: {detail}") from exc
+            raise ServerError(exc.code, detail) from exc
         if not isinstance(result, dict):
             raise RuntimeError("server returned a non-object response")
         return result
@@ -359,8 +349,8 @@ class _Client:
     def optional_config(self, key: str) -> object | None:
         try:
             return self.request("GET", f"/v1/config?{urlencode({'key': key})}").get("value")
-        except RuntimeError as exc:
-            if "server returned 404:" in str(exc):
+        except ServerError as exc:
+            if exc.status == 404:
                 return None
             raise
 
@@ -628,32 +618,41 @@ def _params(
     return result
 
 
+def _extract_option(arguments: list[str], name: str) -> str | None:
+    """Remove every occurrence of a --name value / --name=value option; last one wins."""
+    value: str | None = None
+    index = 0
+    while index < len(arguments):
+        token = arguments[index]
+        if token == name:
+            if index + 1 >= len(arguments):
+                raise CLIUsageError(f"{name} requires a value")
+            value = arguments[index + 1]
+            del arguments[index : index + 2]
+        elif token.startswith(f"{name}="):
+            value = token.split("=", 1)[1]
+            del arguments[index]
+        else:
+            index += 1
+    return value
+
+
 def _extract_format(arguments: list[str]) -> str:
     if "--json" in arguments:
         arguments.remove("--json")
         return "json"
-    if "--format" in arguments:
-        index = arguments.index("--format")
-        try:
-            value = arguments[index + 1]
-        except IndexError as exc:
-            raise CLIUsageError("--format requires human, json, or jsonl") from exc
-        del arguments[index : index + 2]
-        if value not in {"human", "json", "jsonl"}:
-            raise CLIUsageError(f"unsupported format {value!r}")
-        return value
-    return "human"
+    value = _extract_option(arguments, "--format")
+    if value is None:
+        return "human"
+    if value not in {"human", "json", "jsonl"}:
+        raise CLIUsageError(f"unsupported format {value!r}")
+    return value
 
 
 def _extract_color(arguments: list[str]) -> str:
-    if "--color" not in arguments:
+    value = _extract_option(arguments, "--color")
+    if value is None:
         return "auto"
-    index = arguments.index("--color")
-    try:
-        value = arguments[index + 1]
-    except IndexError as exc:
-        raise CLIUsageError("--color requires auto, always, or never") from exc
-    del arguments[index : index + 2]
     if value not in {"auto", "always", "never"}:
         raise CLIUsageError("--color requires auto, always, or never")
     return value
