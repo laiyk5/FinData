@@ -91,6 +91,15 @@ identified as mock mode by provider status and readiness output.
 
 Real-provider E2E tests are opt-in, use dedicated credentials, respect the provider limiter, and never run as the default test suite.
 
+The Tushare real-provider gate accepts `TUSHARE_API_TOKEN` or `TUSHARE_API_KEY` only when
+`FINDATA_ALLOW_REAL_API=1` records the human approval. Run it serially with fail-fast behavior. Its
+bounded v1 smoke plan first makes one `trade_cal` canary request, then exact-code requests for
+`stock_basic`, `index_basic`, one month of `index_weight`, and one symbol-date of `daily_basic`.
+Only after those contracts pass may it run the isolated plugin/storage workflow: two one-day trade
+calendar requests, one exact index metadata request, and one index-month weight request. The normal
+maximum is nine provider requests, the HTTP client disables automatic retries, and the suite never
+expands index constituents, downloads a full market, or writes the user's workspace.
+
 Each automated E2E run creates a unique clean workspace through the operating system's temporary-
 directory facility, executes the quick start with that path substituted for `~/market-data`, and
 cleans it afterward. On failure, the harness may preserve the workspace as a named test artifact.
