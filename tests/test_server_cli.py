@@ -456,6 +456,10 @@ class ServerCLITests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("tushare_daily_basic", output.splitlines())
 
+        code, output = self.run_cli("_complete", "data", "coverage")
+        self.assertEqual(code, 0)
+        self.assertIn("tushare_daily_basic", output.splitlines())
+
     def run_cli(self, *arguments: str, stdin_text: str = "") -> tuple[int, str]:
         stdout = io.StringIO()
         stderr = io.StringIO()

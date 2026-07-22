@@ -123,6 +123,7 @@ class DataCLITests(unittest.TestCase):
         self.assertIn("2026-07-13", human.getvalue())
         self.assertIn("MISSING", human.getvalue())
 
+        (self.root / "datasets" / "STALE_DIRECTORY").mkdir()
         completion = io.StringIO()
         code = cli_main(
             [
@@ -139,6 +140,23 @@ class DataCLITests(unittest.TestCase):
         )
         self.assertEqual(code, 0)
         self.assertEqual(completion.getvalue(), "tushare_daily_basic\n")
+
+        completion = io.StringIO()
+        code = cli_main(
+            [
+                "--workspace",
+                str(self.root),
+                "_complete",
+                "data",
+                "coverage",
+            ],
+            stdout=completion,
+            stderr=io.StringIO(),
+            environ={},
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("tushare_daily_basic", completion.getvalue().splitlines())
+        self.assertNotIn("STALE_DIRECTORY", completion.getvalue().splitlines())
 
     def test_unknown_dataset_reads_never_create_directories(self) -> None:
         datasets = self.root / "datasets"

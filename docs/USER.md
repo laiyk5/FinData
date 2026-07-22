@@ -294,10 +294,27 @@ is changed.
 
 ### Completion
 
-`completion <bash|zsh|fish>` generates a shell-completion script. The installed script obtains dynamic dataset, operation, and operand candidates when the resolved workspace and server are available.
+`completion <bash|zsh|fish>` generates a shell-completion script. Generating it does not activate
+completion; the current shell must source it. Add the matching line to the shell startup file, or
+run it once to enable completion in the current session:
+
+```bash
+# zsh: add to ~/.zshrc
+eval "$(findata completion zsh)"
+
+# bash: add to ~/.bashrc
+eval "$(findata completion bash)"
+
+# fish: add to ~/.config/fish/config.fish
+findata completion fish | source
+```
+
+After reloading the shell, `findata <Tab>` completes command families and
+`findata data coverage <Tab>` completes registered local datasets. The completion script obtains dynamic dataset, operation, and operand candidates when the resolved workspace and server are available.
 Completion uses a credentialed hidden CLI query rather than putting a workspace token in the shell
 script. It completes dataset/provider names, operations, configuration keys, retained task IDs, and
-schema-declared operand flags, and falls back to static commands when no server is available.
+schema-declared operand flags, and falls back to static commands when no server is available. The
+protocol does not depend on a shell preserving a trailing empty argument.
 
 ## Discovering, previewing, and exporting committed data
 

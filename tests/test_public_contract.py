@@ -125,6 +125,11 @@ class WorkspaceResolutionTests(unittest.TestCase):
         self.assertIn("complete", stdout.getvalue())
         self.assertEqual(stderr.getvalue(), "")
 
+        stdout = io.StringIO()
+        code = cli_main(["completion", "zsh"], stdout=stdout, stderr=io.StringIO())
+        self.assertEqual(code, 0)
+        self.assertIn("compdef", stdout.getvalue())
+
     def test_dynamic_completion_falls_back_without_workspace_or_server(self) -> None:
         stdout = io.StringIO()
         stderr = io.StringIO()
@@ -134,6 +139,16 @@ class WorkspaceResolutionTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(stdout.getvalue(), "dataset\ndata\n")
         self.assertEqual(stderr.getvalue(), "")
+
+        stdout = io.StringIO()
+        code = cli_main(["_complete"], stdout=stdout, stderr=io.StringIO(), environ={})
+        self.assertEqual(code, 0)
+        self.assertIn("data", stdout.getvalue().splitlines())
+
+        stdout = io.StringIO()
+        code = cli_main(["_complete", "data"], stdout=stdout, stderr=io.StringIO(), environ={})
+        self.assertEqual(code, 0)
+        self.assertEqual(stdout.getvalue(), "schema\npreview\ncoverage\nexport\n")
 
     def test_event_ack_requires_an_id_or_all(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

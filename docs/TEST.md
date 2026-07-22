@@ -155,6 +155,12 @@ existing option positions, exit codes, injected streams, structured errors, comp
 and HTTP request bodies. No test may rely on Click's global process streams when explicit streams are
 injected.
 
+Completion tests exercise both forms emitted by shells at a token boundary: an explicit empty
+current word and no trailing word. Root completion must return command families, an exact family
+must return its actions, and `data coverage` must return registered dataset names with or without a
+running server. Generated bash, zsh, and fish scripts remain sourceable shell integration, while
+documentation makes activation an explicit user step.
+
 Data CLI tests cover schema metadata, bounded preview, supported and unsupported coverage, strict
 and explicitly partial reads, column and key selection, empty results, and actionable missing-range
 errors. Coverage tests verify stored dates remain visible in human tables and requested ranges report

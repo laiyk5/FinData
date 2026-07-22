@@ -19,6 +19,7 @@ from findata import __version__
 from findata.click_parser import command_tree
 from findata.data_access import ExportOutcome, execute_data_command
 from findata.presentation import CLIOutput
+from findata.storage import DATABASE_NAME
 
 
 class CLIUsageError(ValueError):
@@ -452,8 +453,10 @@ def _render_plan_preview(output: CLIOutput, plan: Mapping[str, object]) -> None:
 
 def _dynamic_completion(client: _Client, words: list[str]) -> list[str]:
     candidates: list[str]
+    prefix: str
     if not words:
         candidates = "task dataset data provider cron events config system completion".split()
+        prefix = ""
     elif (
         words[0] == "dataset"
         and len(words) >= 2
@@ -469,10 +472,17 @@ def _dynamic_completion(client: _Client, words: list[str]) -> list[str]:
         }
     ):
         candidates = [str(item["name"]) for item in client.request("GET", "/v1/datasets")["items"]]
-    elif words[0] == "provider" and len(words) >= 2:
+        prefix = words[2] if len(words) == 3 else ""
+    elif words[0] == "provider" and len(words) in {2, 3} and words[1] in {"status", "check"}:
         candidates = [str(item["name"]) for item in client.request("GET", "/v1/providers")["items"]]
-    elif words[0] == "data" and len(words) >= 2 and len(words) <= 3:
+        prefix = words[2] if len(words) == 3 else ""
+    elif (
+        words[0] == "data"
+        and len(words) in {2, 3}
+        and words[1] in {"schema", "preview", "coverage", "export"}
+    ):
         candidates = [str(item["name"]) for item in client.request("GET", "/v1/datasets")["items"]]
+        prefix = words[2] if len(words) == 3 else ""
     elif (
         words[0] == "task"
         and len(words) >= 2
@@ -489,19 +499,23 @@ def _dynamic_completion(client: _Client, words: list[str]) -> list[str]:
         candidates = [
             str(item["handle_id"]) for item in client.request("GET", "/v1/tasks?all=true")["items"]
         ]
-    elif words[0] == "config" and len(words) >= 2:
+        prefix = words[2] if len(words) == 3 else ""
+    elif words[0] == "config" and len(words) in {2, 3} and words[1] in {"get", "unset"}:
         values = client.request("GET", "/v1/config").get("values", {})
         candidates = list(values) if isinstance(values, Mapping) else []
+        prefix = words[2] if len(words) == 3 else ""
     elif (
-        words[0] == "dataset" and len(words) >= 4 and words[1] in {"update", "complete", "refresh"}
+        words[0] == "dataset"
+        and len(words) in {3, 4}
+        and words[1] in {"update", "complete", "refresh"}
     ):
         description = client.request("GET", f"/v1/datasets/{words[2]}/operations/{words[1]}")
         properties = description.get("properties", {})
         candidates = [f"--{name}" for name in properties] if isinstance(properties, Mapping) else []
         candidates.extend(["--from", "--to", "--wait", "--follow", "--dry-run"])
+        prefix = words[3] if len(words) == 4 else ""
     else:
         return _static_completion(words)
-    prefix = words[-1] if words else ""
     return [item for item in candidates if item.startswith(prefix)]
 
 
@@ -517,8 +531,20 @@ def _static_completion(words: list[str]) -> list[str]:
         "config": "ls get set unset".split(),
         "system": ["status"],
     }
-    candidates = groups if len(words) <= 1 else actions.get(words[0], []) if len(words) == 2 else []
-    prefix = words[-1] if words else ""
+    if not words:
+        candidates, prefix = groups, ""
+    elif len(words) == 1 and words[0] in actions:
+        candidates, prefix = actions[words[0]], ""
+    elif len(words) == 1:
+        candidates, prefix = groups, words[0]
+    elif len(words) == 2:
+        family_actions = actions.get(words[0], [])
+        if words[1] in family_actions:
+            candidates, prefix = [], ""
+        else:
+            candidates, prefix = family_actions, words[1]
+    else:
+        candidates, prefix = [], words[-1]
     return [item for item in candidates if item.startswith(prefix)]
 
 
@@ -528,15 +554,24 @@ def _local_data_completion(
     *,
     environ: Mapping[str, str],
 ) -> list[str]:
-    if not (words and words[0] == "data" and 2 <= len(words) <= 3):
+    if not (
+        words
+        and words[0] == "data"
+        and len(words) in {2, 3}
+        and words[1] in {"schema", "preview", "coverage", "export"}
+    ):
         return []
     try:
         workspace = resolve_workspace(explicit_workspace, environ=dict(environ))
     except RuntimeError:
         return []
     datasets = workspace / "datasets"
-    candidates = sorted(item.name for item in datasets.iterdir() if item.is_dir())
-    prefix = words[-1]
+    candidates = sorted(
+        item.name
+        for item in datasets.iterdir()
+        if item.is_dir() and (item / DATABASE_NAME).is_file()
+    )
+    prefix = words[2] if len(words) == 3 else ""
     return [item for item in candidates if item.startswith(prefix)]
 
 
