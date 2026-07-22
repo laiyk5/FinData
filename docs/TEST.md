@@ -225,6 +225,11 @@ fixtures prove provider-then-dataset entry-point discovery and that a dataset pl
 core contracts, its provider adapter, and selected toolkit components. Explicit mock mode is the
 only runtime path allowed to load `findata.testing`.
 
+Packaging tests assert the pinned Hatchling backend and explicit `src/findata` wheel selection.
+The release-readiness gate builds an sdist and then a wheel from that sdist, installs the wheel into
+an isolated environment, invokes both console scripts, and verifies that every declared
+`findata.datasets` and `findata.providers` entry point remains discoverable.
+
 ## Test ordering
 
 Use this default sequence:

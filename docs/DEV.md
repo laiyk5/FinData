@@ -192,6 +192,14 @@ given.
 Do not rewrite shared `main` or `dev` history. Keep unrelated changes out of feature and fix commits,
 and do not merge while required tests or documentation updates are incomplete.
 
+## Packaging and builds
+
+Hatchling is the sole PEP 517 build backend. Its version is pinned in `build-system.requires`, and
+the wheel target explicitly packages `src/findata`; do not add setuptools-specific configuration.
+Project scripts and plugin entry points remain standard `[project]` metadata and must be preserved
+identically in both the sdist and wheel. A build-tool change must verify a clean sdist-to-wheel build,
+wheel contents, console scripts, and dataset/provider plugin discovery before it is merged.
+
 ## CLI presentation development
 
 Click owns command grouping, argument and option parsing, validation, help, and the embeddable
