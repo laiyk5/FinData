@@ -294,6 +294,14 @@ DataLoader centrally owns:
 - eager `pyarrow.Table` and streamed `pyarrow.RecordBatch` results;
 - shared-gate, read-only connection, and database-transaction lifetime.
 
+The core `data` CLI is a presentation/export adapter over DataLoader, not a server API or task
+operation. Schema discovery reads registered dataset metadata from the committed database; preview
+materializes only its bounded result; coverage delegates to DataLoader's coverage table; export
+consumes `iter_batches` and writes CSV, Parquet, Arrow IPC, or JSONL. It never imports a dataset
+plugin, opens a write connection, submits maintenance, or infers that missing coverage should be
+downloaded. File exports use a sibling temporary file and atomic rename, while stdout exports keep
+stdout data-only and send diagnostics to stderr.
+
 An eager query holds a shared gate and read-only connection through Arrow-table materialization. A
 batch iterator holds both until its context manager closes. A reader therefore observes one committed
 database state for its complete query.
@@ -302,7 +310,7 @@ Alternative database engines, plugin-defined SQL, private reader adapters, and t
 entry points are outside v1. A future storage backend must preserve central query semantics, Arrow
 results, transactional data/coverage commits, and the DataLoader concurrency contract.
 
-The public API and examples live in [USER.md](USER.md#dataloader). Reader-strategy verification lives in [TEST.md](TEST.md#dataloader-contract-matrix).
+The public API and examples live in [USER.md](USER.md#discovering-previewing-and-exporting-committed-data). Reader-strategy verification lives in [TEST.md](TEST.md#dataloader-contract-matrix).
 
 ## Configuration and security
 

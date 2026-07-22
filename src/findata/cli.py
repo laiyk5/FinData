@@ -17,6 +17,7 @@ import click
 
 from findata import __version__
 from findata.click_parser import command_tree
+from findata.data_access import ExportOutcome, execute_data_command
 from findata.presentation import CLIOutput
 
 
@@ -79,11 +80,28 @@ def main(
                 completion_client = _Client(resolve_workspace(args.workspace, environ=environment))
                 items = _dynamic_completion(completion_client, list(args.words))
             except (RuntimeError, HTTPError, URLError, ValueError):
-                items = _static_completion(list(args.words))
+                items = _local_data_completion(
+                    args.workspace,
+                    list(args.words),
+                    environ=environment,
+                ) or _static_completion(list(args.words))
             stdout.write("".join(f"{item}\n" for item in items))
             return 0
         _validate_cli_args(args, output_format=output_format)
-        client = _Client(resolve_workspace(args.workspace, environ=environment))
+        workspace = resolve_workspace(args.workspace, environ=environment)
+        if args.group == "data":
+            result = execute_data_command(workspace, args, stdout=stdout)
+            if isinstance(result, ExportOutcome):
+                if result.path != "-":
+                    stderr.write(
+                        f"Exported {result.rows:,} rows to {result.path} "
+                        f"from publication {result.publication_id}\n"
+                    )
+                    stderr.flush()
+                return 0
+            output.result(result, record_type=f"data.{args.action}.result")
+            return 0
+        client = _Client(workspace)
         if output_format == "human":
             configured_timezone = client.optional_config("display.timezone")
             if isinstance(configured_timezone, str):
@@ -428,7 +446,7 @@ def _render_plan_preview(output: CLIOutput, plan: Mapping[str, object]) -> None:
 def _dynamic_completion(client: _Client, words: list[str]) -> list[str]:
     candidates: list[str]
     if not words:
-        candidates = "task dataset provider cron events config system completion".split()
+        candidates = "task dataset data provider cron events config system completion".split()
     elif (
         words[0] == "dataset"
         and len(words) >= 2
@@ -446,6 +464,8 @@ def _dynamic_completion(client: _Client, words: list[str]) -> list[str]:
         candidates = [str(item["name"]) for item in client.request("GET", "/v1/datasets")["items"]]
     elif words[0] == "provider" and len(words) >= 2:
         candidates = [str(item["name"]) for item in client.request("GET", "/v1/providers")["items"]]
+    elif words[0] == "data" and len(words) >= 2 and len(words) <= 3:
+        candidates = [str(item["name"]) for item in client.request("GET", "/v1/datasets")["items"]]
     elif (
         words[0] == "task"
         and len(words) >= 2
@@ -479,10 +499,11 @@ def _dynamic_completion(client: _Client, words: list[str]) -> list[str]:
 
 
 def _static_completion(words: list[str]) -> list[str]:
-    groups = "task dataset provider cron events config system completion".split()
+    groups = "task dataset data provider cron events config system completion".split()
     actions = {
         "task": "run ls status logs cancel watch retry explain".split(),
         "dataset": "ls describe operations operation status reset update complete refresh".split(),
+        "data": "schema preview coverage export".split(),
         "provider": "ls status check".split(),
         "cron": "ls enable disable set reset".split(),
         "events": "ls ack".split(),
@@ -491,6 +512,24 @@ def _static_completion(words: list[str]) -> list[str]:
     }
     candidates = groups if len(words) <= 1 else actions.get(words[0], []) if len(words) == 2 else []
     prefix = words[-1] if words else ""
+    return [item for item in candidates if item.startswith(prefix)]
+
+
+def _local_data_completion(
+    explicit_workspace: Path | None,
+    words: list[str],
+    *,
+    environ: Mapping[str, str],
+) -> list[str]:
+    if not (words and words[0] == "data" and 2 <= len(words) <= 3):
+        return []
+    try:
+        workspace = resolve_workspace(explicit_workspace, environ=dict(environ))
+    except RuntimeError:
+        return []
+    datasets = workspace / "datasets"
+    candidates = sorted(item.name for item in datasets.iterdir() if item.is_dir())
+    prefix = words[-1]
     return [item for item in candidates if item.startswith(prefix)]
 
 

@@ -155,6 +155,14 @@ existing option positions, exit codes, injected streams, structured errors, comp
 and HTTP request bodies. No test may rely on Click's global process streams when explicit streams are
 injected.
 
+Data CLI tests cover schema metadata, bounded preview, supported and unsupported coverage, strict
+and explicitly partial reads, column and key selection, empty results, and actionable missing-range
+errors. Export tests read outputs back with Arrow, exercise multiple record batches, verify CSV,
+Parquet, Arrow IPC, and JSONL schemas and row values, reject accidental overwrite, and prove atomic
+cleanup after failure. Spies assert no HTTP client, task record, provider transport, write gate,
+dataset revision, or publication change. Stdout exports assert byte-for-byte data-only output with
+all diagnostics on stderr.
+
 ## Crash and concurrency matrix
 
 Crash-safety claims require deterministic fault injection at least at:

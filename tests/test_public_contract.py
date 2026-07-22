@@ -132,7 +132,7 @@ class WorkspaceResolutionTests(unittest.TestCase):
         code = cli_main(["_complete", "d"], stdout=stdout, stderr=stderr, environ={})
 
         self.assertEqual(code, 0)
-        self.assertEqual(stdout.getvalue(), "dataset\n")
+        self.assertEqual(stdout.getvalue(), "dataset\ndata\n")
         self.assertEqual(stderr.getvalue(), "")
 
     def test_event_ack_requires_an_id_or_all(self) -> None:

@@ -110,6 +110,50 @@ def command_tree(*, version: str) -> click.Group:
             ],
         )
 
+    data = click.Group("data")
+    root.add_command(data)
+    attach(data, "data", "schema", [click.Argument(["dataset"])])
+    attach(
+        data,
+        "data",
+        "coverage",
+        [click.Argument(["dataset"]), click.Option(["--keys"], multiple=True)],
+    )
+
+    def query_options() -> list[click.Parameter]:
+        return [
+            click.Argument(["dataset"]),
+            click.Option(["--keys"], multiple=True),
+            click.Option(["--columns"], multiple=True),
+            click.Option(["--from", "range_start"]),
+            click.Option(["--to", "range_end"]),
+            click.Option(["--require-coverage", "require_coverage"], is_flag=True),
+            click.Option(["--allow-partial", "allow_partial"], is_flag=True),
+        ]
+
+    attach(
+        data,
+        "data",
+        "preview",
+        [*query_options(), click.Option(["--limit"], type=click.IntRange(0), default=20)],
+    )
+    attach(
+        data,
+        "data",
+        "export",
+        [
+            *query_options(),
+            click.Option(
+                ["--output-format", "export_format"],
+                type=click.Choice(["csv", "parquet", "arrow", "jsonl"]),
+                required=True,
+            ),
+            click.Option(["--output"], required=True),
+            click.Option(["--batch-size"], type=click.IntRange(1), default=65_536),
+            click.Option(["--force"], is_flag=True),
+        ],
+    )
+
     task = click.Group("task")
     root.add_command(task)
     attach(

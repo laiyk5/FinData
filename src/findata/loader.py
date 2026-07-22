@@ -49,7 +49,11 @@ class CoverageError(DataLoaderError):
     ) -> None:
         self.dataset = dataset
         self.missing_intervals = dict(missing_intervals)
-        super().__init__(f"{dataset} has unresolved coverage: {self.missing_intervals!r}")
+        rendered = {
+            key: [[start.isoformat(), end.isoformat()] for start, end in intervals]
+            for key, intervals in self.missing_intervals.items()
+        }
+        super().__init__(f"{dataset} has unresolved coverage: {rendered!r}")
 
 
 class DataLoader:
@@ -72,6 +76,32 @@ class DatasetReader:
             try:
                 metadata = self._ready_metadata(connection)
                 return str(metadata["publication_id"])
+            finally:
+                connection.close()
+
+    def describe(self) -> dict[str, Any]:
+        """Return storage-neutral schema and key metadata for one committed revision."""
+        with DatasetGate(self.dataset_root / "gate.lock", exclusive=False):
+            connection = self._connect()
+            try:
+                metadata = self._ready_metadata(connection)
+                schema = decode_schema(str(metadata["schema"]))
+                return {
+                    "dataset": self.name,
+                    "publication_id": str(metadata["publication_id"]),
+                    "fields": [
+                        {
+                            "name": field.name,
+                            "type": str(field.type),
+                            "nullable": field.nullable,
+                        }
+                        for field in schema
+                    ],
+                    "primary_key": list(metadata["primary_key"]),
+                    "partition_key": metadata.get("partition_key"),
+                    "time_field": metadata.get("time_field"),
+                    "coverage_supported": bool(metadata.get("time_field")),
+                }
             finally:
                 connection.close()
 
@@ -356,6 +386,12 @@ class BatchReader(AbstractContextManager["BatchReader"]):
         if self._reader is None:
             raise RuntimeError("batch reader must be used as a context manager")
         yield from self._reader
+
+    @property
+    def schema(self) -> pa.Schema:
+        if self._reader is None:
+            raise RuntimeError("batch reader must be used as a context manager")
+        return self._reader.schema
 
     def __exit__(self, exc_type: Any, exc: Any, traceback: Any) -> None:
         self._reader = None

@@ -641,4 +641,10 @@ def _error_suggestion(message: str) -> str | None:
         return "Check the server with: findata system status"
     if "task" in lowered:
         return "Inspect recent work with: findata task ls"
+    if "unresolved coverage" in lowered:
+        dataset = message.split(" has unresolved coverage", 1)[0]
+        return (
+            f"Inspect with: findata data coverage {dataset}; "
+            f"fetch missing ranges with: findata dataset complete {dataset}"
+        )
     return None
