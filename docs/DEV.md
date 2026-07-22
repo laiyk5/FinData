@@ -209,6 +209,13 @@ obtain human approval for that operation. Read-only inspection such as `git remo
 upload. Force pushes require an explicit force-push approval and should use `--force-with-lease`
 against a freshly inspected expected remote commit whenever the intended replacement permits it.
 
+Branch upload permission is scoped by ref. `main` and `dev` may be uploaded only when the human
+authorization names them or otherwise unambiguously covers them. Every other local branch,
+including every `feature/*`, fix, experiment, backup, or audit branch, is local-only by default and
+must not be uploaded unless a human explicitly names that branch or an exact set of such branches.
+Permission to push `main`, push `dev`, initialize a remote, or synchronize a repository never
+implicitly authorizes uploading any additional branch.
+
 ## Packaging and builds
 
 Hatchling is the sole PEP 517 build backend. Its version is pinned in `build-system.requires`, and
