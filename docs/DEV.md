@@ -194,6 +194,13 @@ and do not merge while required tests or documentation updates are incomplete.
 
 ## CLI presentation development
 
+Click owns command grouping, argument and option parsing, validation, help, and the embeddable
+command invocation boundary. Command callbacks return semantic invocation objects to the existing
+execution layer; they do not perform HTTP requests or render results. `main()` invokes Click without
+standalone process exits and preserves injected stdin, stdout, stderr, and environment mappings for
+tests and embedding. Live plugin metadata may extend completion and operation help without importing
+dataset implementations into the core CLI.
+
 Keep presentation separate from command execution. Commands produce semantic result or event
 objects; centralized human, JSON, and JSONL renderers decide how to display them. A shared terminal
 capability detector owns TTY, width, Unicode, color, and `NO_COLOR` handling. Command handlers must

@@ -9,6 +9,7 @@ from pathlib import Path
 from findata.cli import main as cli_main, resolve_workspace
 from findata.contracts import OperandError
 from findata.datasets.tushare.operations import normalize_operation
+from findata.server_cli import main as server_cli_main
 from findata.storage import Workspace
 
 
@@ -48,6 +49,44 @@ class OperationNormalizationTests(unittest.TestCase):
 
 
 class WorkspaceResolutionTests(unittest.TestCase):
+    def test_click_help_is_embeddable_and_lists_global_presentation_options(self) -> None:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+
+        code = cli_main(["--help"], stdout=stdout, stderr=stderr, environ={})
+
+        self.assertEqual(code, 0)
+        self.assertIn("--format", stdout.getvalue())
+        self.assertIn("--quiet", stdout.getvalue())
+        self.assertIn("--no-progress", stdout.getvalue())
+        self.assertEqual(stderr.getvalue(), "")
+
+    def test_click_nested_help_does_not_require_workspace(self) -> None:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+
+        code = cli_main(
+            ["dataset", "complete", "--help"],
+            stdout=stdout,
+            stderr=stderr,
+            environ={},
+        )
+
+        self.assertEqual(code, 0)
+        self.assertIn("--dry-run", stdout.getvalue())
+        self.assertIn("--symbols", stdout.getvalue())
+        self.assertEqual(stderr.getvalue(), "")
+
+    def test_server_click_help_is_embeddable(self) -> None:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+
+        code = server_cli_main(["start", "--help"], stdout=stdout, stderr=stderr)
+
+        self.assertEqual(code, 0)
+        self.assertIn("--provider-mode", stdout.getvalue())
+        self.assertEqual(stderr.getvalue(), "")
+
     def test_explicit_then_environment_then_nearest_parent(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

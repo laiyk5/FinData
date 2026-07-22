@@ -149,6 +149,12 @@ and progress metrics for provider requests, rows, checkpoints, elapsed time, and
 that dry-run creates no task record, provider request, event, configuration revision, dataset
 revision, or publication.
 
+Click migration tests invoke root and nested help through the embedded `main()` function and prove
+that help and version requests neither require a workspace nor raise `SystemExit`. Parity tests retain
+existing option positions, exit codes, injected streams, structured errors, completion candidates,
+and HTTP request bodies. No test may rely on Click's global process streams when explicit streams are
+injected.
+
 ## Crash and concurrency matrix
 
 Crash-safety claims require deterministic fault injection at least at:

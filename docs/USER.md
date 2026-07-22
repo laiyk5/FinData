@@ -177,6 +177,8 @@ an aggregated record is lossless only when its count preserves the total. JSON a
 apply the human visibility limit.
 
 Help, version, and shell-completion generation are not subject to structured output and do not require a workspace. Dynamic completion is best-effort and falls back to static command completion if a workspace or server is unavailable.
+Click provides the command hierarchy, validation, and help pages; invoking help or version from an
+embedded Python caller returns normally rather than terminating the host process.
 
 ### Operand conventions
 
