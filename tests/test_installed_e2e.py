@@ -11,6 +11,8 @@ from pathlib import Path
 
 from findata import DataLoader
 
+CLI_TIMEOUT = 120
+
 
 class InstalledQuickStartTests(unittest.TestCase):
     def test_console_scripts_run_mocked_failure_and_resume_story(self) -> None:
@@ -51,7 +53,7 @@ class InstalledQuickStartTests(unittest.TestCase):
                         capture_output=True,
                         text=True,
                         check=False,
-                        timeout=20,
+                        timeout=CLI_TIMEOUT,
                     )
 
                 configured = cli(

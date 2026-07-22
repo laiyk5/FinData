@@ -172,6 +172,8 @@ defaults are visible without a workspace.
 Task-process tests allow for cold interpreter and dependency imports from an isolated installed
 wheel. The production authenticated-channel launch budget is at least 30 seconds; focused test waits
 must not impose a shorter five-second deadline that can expire under multi-version release load.
+The installed quick-start E2E permits up to 120 seconds for a multi-dependency CLI task; this is a
+failure ceiling, not an expected duration, and prevents cold imports from masquerading as a hang.
 
 Completion tests exercise both forms emitted by shells at a token boundary: an explicit empty
 current word and no trailing word. Root completion must return command families, an exact family
