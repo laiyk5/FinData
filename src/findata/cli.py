@@ -9,15 +9,15 @@ import time
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, TextIO
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
-from urllib.request import Request, urlopen
+from urllib.request import ProxyHandler, Request, build_opener
 
 import click
 
 from findata import __version__
 from findata.click_parser import command_tree
-from findata.data_access import ExportOutcome, execute_data_command
+from findata.data_access import DataCommandUsageError, ExportOutcome, execute_data_command
 from findata.presentation import CLIOutput
 from findata.storage import DATABASE_NAME
 
@@ -102,10 +102,10 @@ def main(
         if args.group == "_complete":
             try:
                 completion_client = _Client(
-                    resolve_workspace(args.workspace, environ=environment), timeout=2
+                    resolve_workspace(args.workspace, environ=environment), timeout=1
                 )
                 items = _dynamic_completion(completion_client, list(args.words))
-            except (OSError, RuntimeError, ValueError):
+            except (OSError, RuntimeError, ValueError, KeyError, TypeError):
                 items = _local_dataset_completion(
                     args.workspace,
                     list(args.words),
@@ -119,9 +119,10 @@ def main(
             result = execute_data_command(workspace, args, stdout=stdout)
             if isinstance(result, ExportOutcome):
                 if result.path != "-":
+                    partial = " (partial coverage allowed)" if result.partial_allowed else ""
                     stderr.write(
                         f"Exported {result.rows:,} rows to {result.path} "
-                        f"from publication {result.publication_id}\n"
+                        f"from publication {result.publication_id}{partial}\n"
                     )
                     stderr.flush()
                 return 0
@@ -155,7 +156,13 @@ def main(
         renderer.stderr.write("Reset canceled.\n")
         renderer.stderr.flush()
         return 1
-    except CLIUsageError as exc:
+    except KeyboardInterrupt:
+        renderer = output or fallback_output()
+        renderer.finish_progress()
+        renderer.stderr.write("Interrupted.\n")
+        renderer.stderr.flush()
+        return 130
+    except (CLIUsageError, DataCommandUsageError) as exc:
         renderer = output or fallback_output()
         renderer.finish_progress()
         renderer.error(str(exc))
@@ -178,10 +185,19 @@ def _error_message(exc: BaseException) -> str:
         if isinstance(parsed, dict) and isinstance(parsed.get("error"), str):
             detail = parsed["error"]
         if exc.status == 401:
-            return "authentication failed; check that the server is running for this workspace"
+            return (
+                "authentication failed; the workspace token does not match the "
+                "running server — restart findata-server for this workspace"
+            )
         if 400 <= exc.status < 500:
             return detail
-        return f"server returned {exc.status}: {detail}"
+        suffix = f": {detail}" if detail.strip() else ""
+        return f"server returned {exc.status}{suffix}"
+    if isinstance(exc, URLError):
+        reason = getattr(exc, "reason", exc)
+        return f"cannot reach the server ({reason})"
+    if isinstance(exc, TimeoutError):
+        return "the server did not respond in time"
     return str(exc)
 
 
@@ -384,6 +400,10 @@ class ServerError(RuntimeError):
         super().__init__(f"server returned {status}: {detail}")
 
 
+# The API is always localhost; environment proxies must never see the bearer token.
+_LOCAL_OPENER = build_opener(ProxyHandler({}))
+
+
 class _Client:
     def __init__(self, workspace: Path, *, timeout: float = 30) -> None:
         try:
@@ -403,7 +423,7 @@ class _Client:
             headers={"Authorization": f"Bearer {self.token}", "Content-Type": "application/json"},
         )
         try:
-            with urlopen(request, timeout=self.timeout) as response:
+            with _LOCAL_OPENER.open(request, timeout=self.timeout) as response:
                 result = json.loads(response.read().decode("utf-8"))
         except HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
@@ -512,83 +532,167 @@ def _render_plan_preview(output: CLIOutput, plan: Mapping[str, object]) -> None:
             )
 
 
+def _option_value_candidates(words: list[str]) -> list[str] | None:
+    """Complete an option's value; None when the previous word is not a value-taking option."""
+    if len(words) < 2:
+        return None
+    tree = command_tree(version=__version__)
+    command: click.Command | None = tree.commands.get(words[0])
+    if isinstance(command, click.Group) and len(words) >= 3:
+        command = command.commands.get(words[1])
+    if command is None or isinstance(command, click.Group):
+        return None
+    previous = words[-2]
+    for parameter in command.params:
+        if not isinstance(parameter, click.Option):
+            continue
+        if previous not in [*parameter.opts, *parameter.secondary_opts]:
+            continue
+        if parameter.is_flag:
+            return None
+        prefix = words[-1]
+        if isinstance(parameter.type, click.Choice):
+            return [choice for choice in parameter.type.choices if choice.startswith(prefix)]
+        return []
+    return None
+
+
+def _completion_items(response: Mapping[str, object], key: str) -> list[str]:
+    items = response.get("items", [])
+    if not isinstance(items, list):
+        return []
+    return [str(item[key]) for item in items if isinstance(item, Mapping) and key in item]
+
+
 def _dynamic_completion(client: _Client, words: list[str]) -> list[str]:
-    candidates: list[str]
-    prefix: str
+    value_candidates = _option_value_candidates(words)
+    if value_candidates is not None:
+        return value_candidates
+    if words and words[-1].startswith("-"):
+        return _static_completion(words)
+
+    def dataset_names() -> list[str]:
+        return _completion_items(client.request("GET", "/v1/datasets"), "name")
+
+    def operation_names(dataset: str) -> list[str]:
+        return _completion_items(
+            client.request("GET", f"/v1/datasets/{dataset}/operations"), "name"
+        )
+
     if not words:
         tree = command_tree(version=__version__)
-        candidates = [name for name, command in tree.commands.items() if not command.hidden]
-        prefix = ""
-    elif (
-        words[0] == "dataset"
-        and len(words) >= 2
-        and len(words) <= 3
-        and words[1]
-        in {
+        return [name for name, command in tree.commands.items() if not command.hidden]
+
+    first, rest = words[0], words[1:]
+
+    if first == "dataset" and rest:
+        name_actions = {
             "update",
             "complete",
             "refresh",
             "describe",
             "operations",
+            "operation",
             "status",
+            "reset",
         }
-    ):
-        candidates = [str(item["name"]) for item in client.request("GET", "/v1/datasets")["items"]]
-        prefix = words[2] if len(words) == 3 else ""
-    elif words[0] == "task" and len(words) in {2, 3} and words[1] == "run":
-        candidates = [str(item["name"]) for item in client.request("GET", "/v1/datasets")["items"]]
-        prefix = words[2] if len(words) == 3 else ""
-    elif words[0] == "task" and len(words) == 4 and words[1] == "run":
-        operations = client.request("GET", f"/v1/datasets/{words[2]}/operations")["items"]
-        candidates = [str(item["name"]) for item in operations]
-        prefix = words[3]
-    elif words[0] == "provider" and len(words) in {2, 3} and words[1] in {"status", "check"}:
-        candidates = [str(item["name"]) for item in client.request("GET", "/v1/providers")["items"]]
-        prefix = words[2] if len(words) == 3 else ""
-    elif (
-        words[0] == "data"
-        and len(words) in {2, 3}
-        and words[1] in {"schema", "preview", "coverage", "export"}
-    ):
-        candidates = [str(item["name"]) for item in client.request("GET", "/v1/datasets")["items"]]
-        prefix = words[2] if len(words) == 3 else ""
-    elif (
-        words[0] == "task"
-        and len(words) >= 2
-        and words[1]
+        action = rest[0]
+        tail = rest[1:]
+        if action in name_actions:
+            if not tail:
+                return dataset_names()
+            names = dataset_names()
+            if tail[0] not in names:
+                return (
+                    [name for name in names if name.startswith(tail[0])] if len(tail) == 1 else []
+                )
+            prefix = tail[1] if len(tail) == 2 else ""
+            if action in {"update", "complete", "refresh"} and len(tail) in {1, 2}:
+                description = client.request("GET", f"/v1/datasets/{tail[0]}/operations/{action}")
+                properties = description.get("properties", {})
+                candidates = (
+                    [f"--{name}" for name in properties] if isinstance(properties, Mapping) else []
+                )
+                if isinstance(properties, Mapping) and "timerange" in properties:
+                    candidates.extend(["--from", "--to"])
+                candidates.extend(["--wait", "--follow", "--dry-run"])
+                return [item for item in candidates if item.startswith(prefix)]
+            if action == "operation" and len(tail) in {1, 2}:
+                return [name for name in operation_names(tail[0]) if name.startswith(prefix)]
+            return []
+        return []
+
+    if first == "task" and rest:
+        if rest[0] == "run":
+            tail = rest[1:]
+            if not tail:
+                return dataset_names()
+            names = dataset_names()
+            if tail[0] not in names:
+                return (
+                    [name for name in names if name.startswith(tail[0])] if len(tail) == 1 else []
+                )
+            prefix = tail[1] if len(tail) == 2 else ""
+            return [name for name in operation_names(tail[0]) if name.startswith(prefix)]
+        if rest[0] in {"status", "logs", "cancel", "watch", "retry", "explain"} and len(rest) in {
+            1,
+            2,
+        }:
+            prefix = rest[1] if len(rest) == 2 else ""
+            handles = _completion_items(client.request("GET", "/v1/tasks?all=true"), "handle_id")
+            return [handle for handle in handles if handle.startswith(prefix)]
+
+    if first == "provider" and len(rest) in {1, 2} and rest[0] in {"status", "check"}:
+        prefix = rest[1] if len(rest) == 2 else ""
+        names = _completion_items(client.request("GET", "/v1/providers"), "name")
+        return [name for name in names if name.startswith(prefix)]
+
+    if (
+        first == "data"
+        and len(rest) in {1, 2}
+        and rest[0]
         in {
-            "status",
-            "logs",
-            "cancel",
-            "watch",
-            "retry",
-            "explain",
+            "schema",
+            "preview",
+            "coverage",
+            "export",
         }
     ):
-        candidates = [
-            str(item["handle_id"]) for item in client.request("GET", "/v1/tasks?all=true")["items"]
-        ]
-        prefix = words[2] if len(words) == 3 else ""
-    elif words[0] == "config" and len(words) in {2, 3} and words[1] in {"get", "unset"}:
+        prefix = rest[1] if len(rest) == 2 else ""
+        return [name for name in dataset_names() if name.startswith(prefix)]
+
+    if first == "config" and len(rest) in {1, 2} and rest[0] in {"set", "get", "unset"}:
+        prefix = rest[1] if len(rest) == 2 else ""
         values = client.request("GET", "/v1/config").get("values", {})
-        candidates = list(values) if isinstance(values, Mapping) else []
-        prefix = words[2] if len(words) == 3 else ""
-    elif (
-        words[0] == "dataset"
-        and len(words) in {3, 4}
-        and words[1] in {"update", "complete", "refresh"}
+        keys = [str(key) for key in values] if isinstance(values, Mapping) else []
+        return [key for key in keys if key.startswith(prefix)]
+
+    if (
+        first == "cron"
+        and len(rest) in {1, 2}
+        and rest[0]
+        in {
+            "enable",
+            "disable",
+            "reset",
+            "set",
+        }
     ):
-        description = client.request("GET", f"/v1/datasets/{words[2]}/operations/{words[1]}")
-        properties = description.get("properties", {})
-        candidates = [f"--{name}" for name in properties] if isinstance(properties, Mapping) else []
-        candidates.extend(["--from", "--to", "--wait", "--follow", "--dry-run"])
-        prefix = words[3] if len(words) == 4 else ""
-    else:
-        return _static_completion(words)
-    return [item for item in candidates if item.startswith(prefix)]
+        prefix = rest[1] if len(rest) == 2 else ""
+        return [name for name in dataset_names() if name.startswith(prefix)]
+
+    if first == "events" and len(rest) in {1, 2} and rest[0] == "ack":
+        prefix = rest[1] if len(rest) == 2 else ""
+        events = _completion_items(client.request("GET", "/v1/events?unread=true"), "event_id")
+        return [event_id for event_id in events if event_id.startswith(prefix)]
+
+    return _static_completion(words)
 
 
 def _static_completion(words: list[str]) -> list[str]:
+    value_candidates = _option_value_candidates(words)
+    if value_candidates is not None:
+        return value_candidates
     tree = command_tree(version=__version__)
     groups = [name for name, command in tree.commands.items() if not command.hidden]
     actions = {
@@ -786,7 +890,7 @@ def _completion_script(shell: str) -> str:
     if shell == "zsh":
         return (
             "#compdef findata\n_findata_complete() { compadd -- "
-            '${(f)"$(findata _complete ${words[2,-1]} 2>/dev/null)"}; }\n'
+            '${(f)"$(findata _complete "${(@)words[2,-1]}" 2>/dev/null)"}; }\n'
             "compdef _findata_complete findata\n"
         )
     return "complete -c findata -f -a '(findata _complete (commandline -opc)[2..-1] 2>/dev/null)'\n"

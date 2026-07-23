@@ -12,7 +12,7 @@ import click
 
 from findata import __version__
 from findata.click_parser import DocumentedCommand, DocumentedGroup
-from findata.server import FindataServer, initialize_workspace
+from findata.server import FindataServer, ServerAlreadyRunningError, initialize_workspace
 
 
 def main(
@@ -47,12 +47,22 @@ def main(
         stdout.flush()
         return 0
     workspace = Path(args.workspace).expanduser().resolve()
-    server = FindataServer(
-        workspace,
-        host=args.host,
-        port=args.port,
-        provider_mode=args.provider_mode,
-    )
+    try:
+        server = FindataServer(
+            workspace,
+            host=args.host,
+            port=args.port,
+            provider_mode=args.provider_mode,
+        )
+        server.start_background()
+    except ServerAlreadyRunningError:
+        stderr.write(f"Error: workspace {workspace} already has a running server\n")
+        stderr.flush()
+        return 1
+    except OSError as exc:
+        stderr.write(f"Error: cannot start the server: {exc}\n")
+        stderr.flush()
+        return 1
     stopped = threading.Event()
 
     def stop(_signum: int, _frame: object) -> None:
@@ -60,7 +70,6 @@ def main(
 
     signal.signal(signal.SIGINT, stop)
     signal.signal(signal.SIGTERM, stop)
-    server.start_background()
     summaries = server.provider_summaries()
     labels = {
         str(item["name"]): (
@@ -140,10 +149,10 @@ def _command_tree() -> click.Group:
             provider_mode=provider_mode,
         )
 
-    for command in (initialize, start):
+    for command, verb in ((initialize, "create"), (start, "run")):
         for parameter in command.params:
             if isinstance(parameter, click.Argument) and parameter.name == "workspace":
-                parameter.help = "Workspace directory to create or run."
+                parameter.help = f"Workspace directory to {verb}."
 
     return root
 

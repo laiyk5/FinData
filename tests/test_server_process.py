@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import os
 import signal
 import subprocess
@@ -7,12 +8,29 @@ import sys
 import tempfile
 import time
 import unittest
+from datetime import date
 from pathlib import Path
 
-from findata.server import initialize_workspace
+from findata.server import FindataServer, initialize_workspace
+from findata.server_cli import main as server_cli_main
 
 
 class ServerProcessTests(unittest.TestCase):
+    def test_second_start_reports_a_clean_error_without_a_traceback(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            initialize_workspace(workspace)
+            server = FindataServer(workspace, port=0, provider_mode="mock", today=date(2026, 7, 20))
+            server.start_background()
+            try:
+                stdout, stderr = io.StringIO(), io.StringIO()
+                code = server_cli_main(["start", str(workspace)], stdout=stdout, stderr=stderr)
+                self.assertEqual(code, 1)
+                self.assertIn("already has a running server", stderr.getvalue())
+                self.assertNotIn("Traceback", stderr.getvalue())
+            finally:
+                server.shutdown()
+
     def test_sigterm_performs_clean_shutdown(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             workspace = Path(directory)

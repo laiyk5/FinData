@@ -437,10 +437,11 @@ class CLIOutput:
         return f"{_display(value, timezone=self.display_timezone)}\n"
 
     def _details(self, value: Mapping[object, object]) -> str:
+        labels = [_label(str(key)) for key in value]
+        pad = min(max((len(label) for label in labels), default=16), 24)
         lines: list[str] = []
-        for key, item in value.items():
-            label = _label(str(key))
-            padded = label.ljust(16)
+        for label, (key, item) in zip(labels, value.items(), strict=True):
+            padded = label.ljust(pad)
             lines.append(
                 f"{self._style(padded, ANSI_BOLD, terminal=self.out_terminal)}  "
                 f"{_display(item, field=str(key), timezone=self.display_timezone)}"
@@ -488,13 +489,22 @@ class CLIOutput:
         columns = [key for key in preferred if key in scalar_keys]
         columns.extend(key for key in scalar_keys if key not in columns)
         # Internal execution identifiers, redundant update timestamps, constant
-        # storage markers, secret-field declarations, and opaque publication IDs
-        # add width without helping listings; detail views and JSON keep them.
+        # storage markers, secret-field declarations, echoed request ranges, and
+        # opaque publication IDs add width without helping listings; detail
+        # views and JSON keep them.
         columns = [
             key
             for key in columns
             if key
-            not in {"execution_id", "updated_at", "publication_id", "storage", "secret_fields"}
+            not in {
+                "execution_id",
+                "updated_at",
+                "publication_id",
+                "storage",
+                "secret_fields",
+                "requested_start",
+                "requested_end",
+            }
         ]
         columns = columns[:7]
         while (
@@ -520,7 +530,9 @@ class CLIOutput:
             shrinkable = [
                 index
                 for index, column in enumerate(columns)
-                if widths[index] > 8 and column not in TIMESTAMP_FIELDS
+                # Missing coverage intervals are the point of the coverage
+                # view; timestamps stay whole. Shrink everything else first.
+                if widths[index] > 8 and column not in TIMESTAMP_FIELDS and column != "missing"
             ]
             if len(shrinkable) > 1 and 0 in shrinkable:
                 shrinkable.remove(0)
@@ -799,13 +811,15 @@ def _is_brief_cell(item: object) -> bool:
     if item is None or isinstance(item, (str, int, float, bool, date, datetime)):
         return True
     if isinstance(item, (list, tuple)):
-        return all(
-            not isinstance(element, (Mapping, list, tuple)) for element in item
-        ) and len(", ".join(str(element) for element in item)) <= 30
+        return (
+            all(not isinstance(element, (Mapping, list, tuple)) for element in item)
+            and len(", ".join(str(element) for element in item)) <= 30
+        )
     if isinstance(item, Mapping):
-        return all(
-            not isinstance(element, (Mapping, list, tuple)) for element in item.values()
-        ) and len(", ".join(f"{key}={value}" for key, value in item.items())) <= 30
+        return (
+            all(not isinstance(element, (Mapping, list, tuple)) for element in item.values())
+            and len(", ".join(f"{key}={value}" for key, value in item.items())) <= 30
+        )
     return False
 
 
@@ -831,8 +845,23 @@ def _truncate(value: str, width: int) -> str:
 
 def _error_suggestion(message: str) -> str | None:
     lowered = message.lower()
-    if "no running server" in lowered or "connection" in lowered:
-        return "Check the server with: findata system status"
+    if "findata " in message:
+        # The message already names a recovery command.
+        return None
+    if "no running server for workspace" in lowered:
+        workspace = message.split("for workspace", 1)[1].strip()
+        return f"Start the server with: findata-server start {workspace}"
+    if "cannot reach the server" in lowered or "did not respond" in lowered:
+        return (
+            "Check the server with: findata system status; "
+            "start it with: findata-server start <workspace>"
+        )
+    if "unresolved coverage" in lowered:
+        dataset = message.split(" has unresolved coverage", 1)[0]
+        return (
+            f"Inspect with: findata data coverage {dataset}; "
+            f"fetch missing ranges with: findata dataset complete {dataset}"
+        )
     if " is not ready" in lowered:
         if lowered.startswith("update for "):
             dataset = message[len("update for ") :].split(" is not ready", 1)[0].strip()
@@ -840,12 +869,12 @@ def _error_suggestion(message: str) -> str | None:
         if lowered.startswith("provider "):
             provider = message[len("provider ") :].split(" is not ready", 1)[0].strip()
             return f"Check configuration with: findata provider status {provider}"
+    if "unknown dataset" in lowered:
+        return "List datasets with: findata dataset ls"
+    if "unknown provider" in lowered:
+        return "List providers with: findata provider ls"
+    if "is not set" in lowered:
+        return "List configuration with: findata config ls"
     if "task" in lowered:
         return "Inspect recent work with: findata task ls"
-    if "unresolved coverage" in lowered:
-        dataset = message.split(" has unresolved coverage", 1)[0]
-        return (
-            f"Inspect with: findata data coverage {dataset}; "
-            f"fetch missing ranges with: findata dataset complete {dataset}"
-        )
     return None

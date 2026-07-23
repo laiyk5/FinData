@@ -210,7 +210,8 @@ class CLIPresentationTests(unittest.TestCase):
     def test_logs_follow_ctrl_c_detaches(self) -> None:
         submitted = json.loads(
             self.run_cli(
-                "--format", "json",
+                "--format",
+                "json",
                 "task",
                 "run",
                 "tushare_trade_cal",
@@ -272,6 +273,18 @@ class CLIPresentationTests(unittest.TestCase):
 
 
 class ProgressPresentationTests(unittest.TestCase):
+    def test_waiting_state_names_the_server_reported_reason(self) -> None:
+        stderr = io.StringIO()
+        output = CLIOutput(
+            output_format="human",
+            color_mode="auto",
+            stdout=io.StringIO(),
+            stderr=stderr,
+            environ={},
+        )
+        output.state({"status": "waiting", "reason": "provider_rate_limit"})
+        self.assertIn("provider_rate_limit", stderr.getvalue())
+
     @patch("findata.presentation.Progress")
     def test_interactive_progress_uses_one_transient_rich_live_task(self, progress_type) -> None:
         stderr = TTYBuffer()

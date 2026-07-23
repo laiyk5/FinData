@@ -50,9 +50,13 @@ def execute_data_command(
     raise ValueError(f"unsupported data action {args.action!r}")
 
 
+class DataCommandUsageError(ValueError):
+    """Invalid CLI usage of a data command; maps to exit code 2."""
+
+
 def _coverage(dataset: Any, args: Any) -> dict[str, object]:
     if bool(args.range_start) != bool(args.range_end):
-        raise ValueError("--from and --to must be supplied together")
+        raise DataCommandUsageError("--from and --to must be supplied together")
     keys = _values(args.keys)
     rows = dataset.coverage(keys=keys).to_pylist()
     if not args.range_start:
@@ -61,7 +65,7 @@ def _coverage(dataset: Any, args: Any) -> dict[str, object]:
     request_start = _date_argument(args.range_start, "--from")
     request_end = _date_argument(args.range_end, "--to")
     if request_start >= request_end:
-        raise ValueError("--from must be earlier than --to")
+        raise DataCommandUsageError("--from must be earlier than --to")
     by_key = {row["key"]: row for row in rows}
     selected_keys = keys or list(by_key)
     items: list[dict[str, object]] = []
@@ -96,14 +100,14 @@ def _date_argument(value: str, option: str) -> date:
     try:
         return date.fromisoformat(value)
     except ValueError as exc:
-        raise ValueError(f"{option} must be an ISO date (YYYY-MM-DD)") from exc
+        raise DataCommandUsageError(f"{option} must be an ISO date (YYYY-MM-DD)") from exc
 
 
 def _query_arguments(args: Any, description: dict[str, Any]) -> dict[str, Any]:
     if args.require_coverage and args.allow_partial:
-        raise ValueError("--require-coverage and --allow-partial are mutually exclusive")
+        raise DataCommandUsageError("--require-coverage and --allow-partial are mutually exclusive")
     if bool(args.range_start) != bool(args.range_end):
-        raise ValueError("--from and --to must be supplied together")
+        raise DataCommandUsageError("--from and --to must be supplied together")
     keys = _values(args.keys)
     time_range = (args.range_start, args.range_end) if args.range_start and args.range_end else None
     require_coverage = bool(
@@ -127,8 +131,16 @@ def _export(dataset: Any, args: Any, *, query: dict[str, Any], stdout: TextIO) -
     target_text = str(args.output)
     if target_text == "-":
         binary = getattr(stdout, "buffer", None)
-        if args.export_format in {"parquet", "arrow"} and binary is None:
-            raise ValueError(f"{args.export_format} stdout export requires a binary stdout stream")
+        if args.export_format in {"parquet", "arrow"}:
+            if bool(getattr(stdout, "isatty", lambda: False)()):
+                raise DataCommandUsageError(
+                    f"{args.export_format} export writes binary data; "
+                    "write to a file or redirect stdout"
+                )
+            if binary is None:
+                raise ValueError(
+                    f"{args.export_format} stdout export requires a binary stdout stream"
+                )
         sink: BinaryIO | TextIO = binary if binary is not None else stdout
         rows, publication = _write_batches(
             dataset,

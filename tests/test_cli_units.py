@@ -18,6 +18,7 @@ from findata.cli import (
     _dataset_operands,
     _declared_secret_keys,
     _duration_seconds,
+    _error_message,
     _extract_color,
     _extract_format,
     _extract_option,
@@ -28,6 +29,7 @@ from findata.cli import (
 )
 from findata.presentation import (
     _display,
+    _error_suggestion,
     _format_count,
     _format_duration,
     _format_measurement,
@@ -255,6 +257,42 @@ class DeclaredSecretKeyTests(unittest.TestCase):
         self.assertEqual(_declared_secret_keys(self.StubClient({"items": "broken"})), set())
 
 
+class ErrorMessageRenderingTests(unittest.TestCase):
+    def test_server_error_5xx_without_detail_has_no_trailing_colon(self) -> None:
+        self.assertEqual(_error_message(ServerError(502, "")), "server returned 502")
+        self.assertEqual(_error_message(ServerError(502, "broken")), "server returned 502: broken")
+
+    def test_urlerror_is_unwrapped_and_401_explains_token_mismatch(self) -> None:
+        self.assertEqual(
+            _error_message(URLError("connection refused")),
+            "cannot reach the server (connection refused)",
+        )
+        self.assertIn("token does not match", _error_message(ServerError(401, "")))
+
+    def test_error_suggestions_point_at_recovery_commands(self) -> None:
+        self.assertEqual(
+            _error_suggestion("no running server for workspace /tmp/ws"),
+            "Start the server with: findata-server start /tmp/ws",
+        )
+        self.assertEqual(
+            _error_suggestion("unknown dataset 'x'"), "List datasets with: findata dataset ls"
+        )
+        self.assertEqual(
+            _error_suggestion("unknown provider 'y'"), "List providers with: findata provider ls"
+        )
+        self.assertEqual(
+            _error_suggestion("configuration key 'k' is not set"),
+            "List configuration with: findata config ls",
+        )
+        # Messages that already name a command get no second suggestion.
+        self.assertIsNone(
+            _error_suggestion(
+                "lost contact with the server while waiting for task abc; "
+                "it may still be running — inspect with: findata task status abc"
+            )
+        )
+
+
 class EntryPointTests(unittest.TestCase):
     def test_bare_invocation_prints_help_to_stdout_and_exits_zero(self) -> None:
         stdout, stderr = io.StringIO(), io.StringIO()
@@ -326,13 +364,20 @@ class ErrorMappingTests(unittest.TestCase):
         self.assertIn("queue is full", record["error"])
 
     def test_network_failures_render_an_error_without_a_traceback(self) -> None:
-        for failure in (TimeoutError("timed out"), URLError("connection refused")):
-            with patch("findata.cli._Client") as client_type:
-                client_type.return_value.request.side_effect = failure
-                code, _, errors = self.run_cli("task", "ls")
-            self.assertEqual(code, 1, msg=repr(failure))
-            self.assertIn(str(failure.reason if isinstance(failure, URLError) else failure), errors)
-            self.assertNotIn("Traceback", errors)
+        with patch("findata.cli._Client") as client_type:
+            client_type.return_value.request.side_effect = URLError("connection refused")
+            code, _, errors = self.run_cli("task", "ls")
+        self.assertEqual(code, 1)
+        self.assertIn("cannot reach the server", errors)
+        self.assertIn("connection refused", errors)
+        self.assertNotIn("Traceback", errors)
+
+        with patch("findata.cli._Client") as client_type:
+            client_type.return_value.request.side_effect = TimeoutError("timed out")
+            code, _, errors = self.run_cli("task", "ls")
+        self.assertEqual(code, 1)
+        self.assertIn("did not respond", errors)
+        self.assertNotIn("Traceback", errors)
 
     def test_dynamic_completion_falls_back_to_static_candidates_on_timeout(self) -> None:
         with patch("findata.cli._Client") as client_type:

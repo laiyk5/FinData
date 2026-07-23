@@ -174,7 +174,7 @@ presentation behavior. Pure parsing, formatting, and transport-error cells live 
   `json_wait_is_exactly_one_document`, `jsonl_follow_emits_only_typed_records`,
   `json_error_is_structured_and_json_follow_is_rejected`.
 - Identifier prefixes, ambiguity without side effects, and handle-only resolution:
-  `test_public_contract.py` and `test_server_cli.py` prefix tests.
+  `test_cli_ux_contract.py` and `test_server_cli.py` prefix tests.
 - Human value formatting and unchanged JSON/JSONL values:
   `semantic_values_are_humanized_without_changing_json` and `test_cli_units.py`
   `HumanFormattingTests`.

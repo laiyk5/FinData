@@ -646,6 +646,143 @@ class ServerCLITests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(output.splitlines(), ["update", "complete", "refresh"])
 
+        # Fish form (no trailing empty word): an exact dataset name completes
+        # the next position rather than re-offering the name.
+        code, output = self.run_cli("_complete", "task", "run", "tushare_daily_basic")
+        self.assertEqual(code, 0)
+        self.assertEqual(output.splitlines(), ["update", "complete", "refresh"])
+
+        code, output = self.run_cli("_complete", "dataset", "complete", "tushare_daily_basic")
+        self.assertEqual(code, 0)
+        self.assertIn("--symbols", output.splitlines())
+        self.assertIn("--from", output.splitlines())
+
+        # update is parameterless: no operand flags, no --from/--to.
+        code, output = self.run_cli("_complete", "dataset", "update", "tushare_daily_basic")
+        self.assertEqual(code, 0)
+        self.assertNotIn("--from", output.splitlines())
+        self.assertNotIn("--symbols", output.splitlines())
+
+        code, output = self.run_cli("_complete", "dataset", "operation", "tushare_daily_basic", "")
+        self.assertEqual(code, 0)
+        self.assertIn("complete", output.splitlines())
+
+        code, output = self.run_cli("_complete", "cron", "enable", "")
+        self.assertEqual(code, 0)
+        self.assertIn("tushare_daily_basic", output.splitlines())
+
+        self.run_cli("config", "set", "display.timezone", "UTC")
+        code, output = self.run_cli("_complete", "config", "set", "")
+        self.assertEqual(code, 0)
+        self.assertIn("display.timezone", output.splitlines())
+
+        self.server.events.record("task_failed", "error", "injected failure")
+        code, output = self.run_cli("_complete", "events", "ack", "")
+        self.assertEqual(code, 0)
+        self.assertEqual(len(output.splitlines()), 1)
+
+        code, output = self.run_cli(
+            "_complete", "data", "export", "tushare_daily_basic", "--output-format", ""
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(output.splitlines(), ["csv", "parquet", "arrow", "jsonl"])
+
+        code, output = self.run_cli("_complete", "dataset", "status", "--a")
+        self.assertEqual(code, 0)
+        self.assertEqual(output.splitlines(), ["--all"])
+
+    def test_task_ls_status_is_a_validated_choice(self) -> None:
+        stdout, stderr = io.StringIO(), io.StringIO()
+        code = cli_main(
+            ["--workspace", str(self.root), "task", "ls", "--status", "bogus"],
+            stdout=stdout,
+            stderr=stderr,
+        )
+        self.assertEqual(code, 2)
+        self.assertIn("bogus", stderr.getvalue())
+
+    def test_events_filters_and_ack_all(self) -> None:
+        self.server.events.record(
+            "cron_skipped", "warning", "first warning", timestamp=time.time() - 300
+        )
+        self.server.events.record("task_failed", "error", "second error", timestamp=time.time())
+
+        errors_only = json.loads(
+            self.run_cli("--format", "json", "events", "ls", "--severity", "error")[1]
+        )
+        self.assertEqual({item["severity"] for item in errors_only["items"]}, {"error"})
+
+        recent = json.loads(self.run_cli("--format", "json", "events", "ls", "--since", "150s")[1])
+        messages = {item["message"] for item in recent["items"]}
+        self.assertIn("second error", messages)
+        self.assertNotIn("first warning", messages)
+
+        acknowledged = json.loads(self.run_cli("--format", "json", "events", "ack", "--all")[1])
+        self.assertEqual(acknowledged["acknowledged"], 2)
+        unread = json.loads(self.run_cli("--format", "json", "events", "ls", "--unread")[1])
+        self.assertEqual(unread["items"], [])
+
+    def test_cron_set_reset_disable_round_trip(self) -> None:
+        self.run_cli(
+            "--format",
+            "json",
+            "cron",
+            "set",
+            "tushare_trade_cal",
+            "--expression",
+            "30 6 * * 1",
+            "--timezone",
+            "UTC",
+        )
+        jobs = json.loads(self.run_cli("--format", "json", "cron", "ls")[1])["items"]
+        job = next(item for item in jobs if item["dataset"] == "tushare_trade_cal")
+        self.assertEqual(job["expression"], "30 6 * * 1")
+        self.assertEqual(job["timezone"], "UTC")
+        self.assertEqual(job["source"], "override")
+
+        self.run_cli("--format", "json", "cron", "enable", "tushare_trade_cal")
+        self.run_cli("--format", "json", "cron", "reset", "tushare_trade_cal")
+        jobs = json.loads(self.run_cli("--format", "json", "cron", "ls")[1])["items"]
+        job = next(item for item in jobs if item["dataset"] == "tushare_trade_cal")
+        self.assertEqual(job["expression"], "0 9 * * 1")
+        self.assertEqual(job["source"], "suggested")
+        self.assertTrue(job["enabled"])
+
+        self.run_cli("--format", "json", "cron", "disable", "tushare_trade_cal")
+        jobs = json.loads(self.run_cli("--format", "json", "cron", "ls")[1])["items"]
+        job = next(item for item in jobs if item["dataset"] == "tushare_trade_cal")
+        self.assertFalse(job["enabled"])
+
+    def test_execution_identifier_is_not_addressable(self) -> None:
+        submitted = json.loads(
+            self.run_cli(
+                "--format",
+                "json",
+                "task",
+                "run",
+                "tushare_trade_cal",
+                "complete",
+                "--param",
+                "exchanges=SSE",
+                "--param",
+                "timerange=2026-07-01:2026-07-03",
+                "--wait",
+            )[1]
+        )
+        execution_id = submitted["execution_id"]
+        with self.assertRaises(HTTPError) as caught:
+            self.request("GET", f"/v1/tasks/{execution_id}")
+        self.assertEqual(caught.exception.code, 404)
+        caught.exception.close()
+        with self.assertRaises(HTTPError) as caught:
+            self.request("POST", f"/v1/tasks/{execution_id}/cancel", {})
+        self.assertEqual(caught.exception.code, 404)
+        caught.exception.close()
+
+    def test_provider_check_reports_not_probed_in_mock_mode(self) -> None:
+        check = json.loads(self.run_cli("--format", "json", "provider", "check", "tushare")[1])
+        self.assertIsNone(check["authenticated"])
+
     def run_cli(self, *arguments: str, stdin_text: str = "") -> tuple[int, str]:
         stdout = io.StringIO()
         stderr = io.StringIO()
