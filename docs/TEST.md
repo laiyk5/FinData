@@ -150,6 +150,43 @@ Snapshot tests normalize nondeterministic timestamps, durations, paths, and iden
 their labels and shapes. Semantic assertions accompany snapshots so a cosmetically accepted update
 cannot hide a missing status, result, or recovery instruction.
 
+### CLI matrix coverage map
+
+Each matrix cell names its covering tests; extend the map in the same change that adds or alters
+presentation behavior. Pure parsing, formatting, and transport-error cells live in
+`tests/test_cli_units.py` and run without a server.
+
+- TTY and redirected streams, color modes, `NO_COLOR`, `TERM=dumb`, plain-text fallback:
+  `test_cli_presentation.py` color and pager tests.
+- Widths, long values, copyable identifiers:
+  `test_empty_and_narrow_human_views_remain_readable`.
+- Tables, labeled details, empty results, actionable errors, terminal summaries:
+  `test_human_collections_and_details_are_not_raw_json`, `test_cli_snapshots.py`.
+- Delayed commands, progress replacement, cleanup on success, failure, cancellation, connection
+  loss, and interruption: `test_cli_pty.py`, `wait_reports_acceptance_and_ctrl_c_detaches`,
+  `logs_follow_ctrl_c_detaches`, and `test_cli_units.py` error-mapping tests including
+  `test_connection_loss_while_waiting_names_the_inspection_command`.
+- Rich live-progress construction and fallback:
+  `test_interactive_progress_uses_one_transient_rich_live_task`,
+  `rich_rendering_failure_falls_back_to_plain_text`,
+  `persistent_follow_log_stops_live_progress_first`, and the PTY live-region transcript.
+- JSON as one document and JSONL as typed records under any terminal configuration:
+  `json_wait_is_exactly_one_document`, `jsonl_follow_emits_only_typed_records`,
+  `json_error_is_structured_and_json_follow_is_rejected`.
+- Identifier prefixes, ambiguity without side effects, and handle-only resolution:
+  `test_public_contract.py` and `test_server_cli.py` prefix tests.
+- Human value formatting and unchanged JSON/JSONL values:
+  `semantic_values_are_humanized_without_changing_json` and `test_cli_units.py`
+  `HumanFormattingTests`.
+- Diagnostic visibility limits, suppression, and lossless structured output:
+  `redirected_human_diagnostics_are_bounded_with_exact_totals`,
+  `jsonl_diagnostics_keep_every_logical_occurrence`, and the PTY suppression transcript.
+- Normalized snapshots with semantic assertions: `test_cli_snapshots.py`.
+- Workflow, completion, quiet/verbose/no-progress, dry-run, retry, explain, and watch coverage:
+  `test_server_cli.py`, `test_public_contract.py` completion tests, and `test_data_cli.py`.
+- Read-side commands leaving no filesystem trace:
+  `unknown_dataset_reads_never_create_directories` and `test_data_cli.py` side-effect tests.
+
 CLI workflow tests cover schema-derived dataset operation flags and their generic `task run`
 equivalence; side-effect-free dry runs with complete and incomplete local dependencies; retry using
 normalized historical operands and current configuration; read-only explanation of nested failures;
