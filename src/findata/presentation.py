@@ -424,8 +424,12 @@ class CLIOutput:
             return self._table(value["items"])
         if isinstance(value, Mapping) and "status" in value and "handle_id" in value:
             return self._task_summary(value)
-        if isinstance(value, Mapping) and set(value) == {"values"} and not value["values"]:
-            return "No configuration values set.\n"
+        if isinstance(value, Mapping) and set(value) == {"values"}:
+            values = value["values"]
+            if isinstance(values, Mapping):
+                if not values:
+                    return "No configuration values set.\n"
+                return self._table([{"key": key, "value": item} for key, item in values.items()])
         if isinstance(value, Mapping):
             return self._details(value)
         if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
@@ -455,6 +459,9 @@ class CLIOutput:
             "missing",
             "covered_start",
             "covered_end",
+            "covered_keys",
+            "coverage_start",
+            "coverage_end",
             "start",
             "end",
             "name",
@@ -472,18 +479,23 @@ class CLIOutput:
         ]
         scalar_keys: dict[str, None] = {}
         for row in rows:
-            for key, item in row.items():
-                if (
-                    item is None
-                    or isinstance(item, (str, int, float, bool, date, datetime))
-                    or (key == "missing" and isinstance(item, (list, tuple)))
-                ):
-                    scalar_keys.setdefault(str(key))
+            for key in row:
+                key = str(key)
+                if key in scalar_keys:
+                    continue
+                if key == "missing" or all(_is_brief_cell(item.get(key)) for item in rows):
+                    scalar_keys[key] = None
         columns = [key for key in preferred if key in scalar_keys]
         columns.extend(key for key in scalar_keys if key not in columns)
-        # Internal execution identifiers and redundant update timestamps add
-        # width without helping listings; detail views and JSON keep them.
-        columns = [key for key in columns if key not in {"execution_id", "updated_at"}]
+        # Internal execution identifiers, redundant update timestamps, constant
+        # storage markers, secret-field declarations, and opaque publication IDs
+        # add width without helping listings; detail views and JSON keep them.
+        columns = [
+            key
+            for key in columns
+            if key
+            not in {"execution_id", "updated_at", "publication_id", "storage", "secret_fields"}
+        ]
         columns = columns[:7]
         while (
             len(columns) > 1 and 8 * len(columns) + 2 * (len(columns) - 1) > self.out_terminal.width
@@ -510,6 +522,8 @@ class CLIOutput:
                 for index, column in enumerate(columns)
                 if widths[index] > 8 and column not in TIMESTAMP_FIELDS
             ]
+            if len(shrinkable) > 1 and 0 in shrinkable:
+                shrinkable.remove(0)
             if not shrinkable:
                 break
             widest = max(shrinkable, key=widths.__getitem__)
@@ -604,8 +618,15 @@ _LABEL_ACRONYMS = {
 }
 
 
+_LABEL_OVERRIDES = {
+    "tasks": "Retained tasks",
+}
+
+
 def _label(key: str) -> str:
     """Render a snake_case field name as a human label, preserving acronyms."""
+    if key in _LABEL_OVERRIDES:
+        return _LABEL_OVERRIDES[key]
     return " ".join(_LABEL_ACRONYMS.get(word, word.capitalize()) for word in key.split("_"))
 
 
@@ -773,6 +794,21 @@ def _format_measurement(value: float) -> str:
     return f"{value:.12f}".rstrip("0").rstrip(".") or "0"
 
 
+def _is_brief_cell(item: object) -> bool:
+    """Whether a value renders inline in a table cell without truncation harm."""
+    if item is None or isinstance(item, (str, int, float, bool, date, datetime)):
+        return True
+    if isinstance(item, (list, tuple)):
+        return all(
+            not isinstance(element, (Mapping, list, tuple)) for element in item
+        ) and len(", ".join(str(element) for element in item)) <= 30
+    if isinstance(item, Mapping):
+        return all(
+            not isinstance(element, (Mapping, list, tuple)) for element in item.values()
+        ) and len(", ".join(f"{key}={value}" for key, value in item.items())) <= 30
+    return False
+
+
 def _shorten_identifier(text: str) -> str:
     """Shorten full hex identifiers in tables; prefixes stay resolvable and detail views keep the full value."""
     if ":" in text:
@@ -797,6 +833,13 @@ def _error_suggestion(message: str) -> str | None:
     lowered = message.lower()
     if "no running server" in lowered or "connection" in lowered:
         return "Check the server with: findata system status"
+    if " is not ready" in lowered:
+        if lowered.startswith("update for "):
+            dataset = message[len("update for ") :].split(" is not ready", 1)[0].strip()
+            return f"Inspect with: findata dataset status {dataset}"
+        if lowered.startswith("provider "):
+            provider = message[len("provider ") :].split(" is not ready", 1)[0].strip()
+            return f"Check configuration with: findata provider status {provider}"
     if "task" in lowered:
         return "Inspect recent work with: findata task ls"
     if "unresolved coverage" in lowered:

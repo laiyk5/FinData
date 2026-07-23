@@ -63,10 +63,14 @@ class IdentifierResolutionTests(unittest.TestCase):
             store = EventStore(Path(directory))
             event = store.record("example", "warning", "example warning")
 
-            resolved = store.ack(event.event_id[:8])
+            resolved, already = store.ack(event.event_id[:8])
 
             self.assertEqual(resolved, event.event_id)
+            self.assertFalse(already)
             self.assertTrue(store.list_events()[0].acknowledged)
+
+            _, already = store.ack(event.event_id)
+            self.assertTrue(already)
 
 
 class PrefixHTTPTests(unittest.TestCase):

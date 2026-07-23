@@ -26,6 +26,10 @@ class CLIUsageError(ValueError):
     pass
 
 
+class UserCancelled(Exception):
+    """The user declined a destructive-operation confirmation."""
+
+
 @dataclass(frozen=True, slots=True)
 class TaskDetached(Exception):
     handle: str
@@ -145,6 +149,12 @@ def main(
         assert output is not None
         output.detached(exc.handle)
         return 130
+    except UserCancelled:
+        renderer = output or fallback_output()
+        renderer.finish_progress()
+        renderer.stderr.write("Reset canceled.\n")
+        renderer.stderr.flush()
+        return 1
     except CLIUsageError as exc:
         renderer = output or fallback_output()
         renderer.finish_progress()
@@ -246,11 +256,12 @@ def _execute(
             if output.output_format != "human" or not getattr(stdin, "isatty", lambda: False)():
                 raise CLIUsageError("dataset reset requires --yes in non-interactive use")
             output.stderr.write(
-                f"Reset dataset {args.dataset!r} and delete its committed data? [y/N] "
+                f"Reset dataset {args.dataset!r}? Committed data will be deleted; "
+                "settings and task history are preserved. [y/N] "
             )
             output.stderr.flush()
             if stdin.readline().strip().lower() not in {"y", "yes"}:
-                raise CLIUsageError("dataset reset canceled")
+                raise UserCancelled
         return client.request("POST", f"/v1/datasets/{args.dataset}/reset", {"confirm": True})
     if args.group == "dataset" and args.action in {"update", "complete", "refresh"}:
         operands = _dataset_operands(args)
@@ -653,7 +664,7 @@ def _params(
 ) -> dict[str, object]:
     if source is not None:
         if values:
-            raise ValueError("--param and --params are mutually exclusive")
+            raise CLIUsageError("--param and --params are mutually exclusive")
         if source == "-":
             text = stdin.read()
         elif source.startswith("@"):
@@ -663,17 +674,17 @@ def _params(
         try:
             parsed = json.loads(text)
         except json.JSONDecodeError as exc:
-            raise ValueError(f"invalid operands JSON: {exc.msg}") from exc
+            raise CLIUsageError(f"invalid operands JSON: {exc.msg}") from exc
         if not isinstance(parsed, dict):
-            raise ValueError("--params JSON must be an object")
+            raise CLIUsageError("--params JSON must be an object")
         return parsed
     result: dict[str, object] = {}
     for value in values:
         if "=" not in value:
-            raise ValueError(f"invalid --param {value!r}")
+            raise CLIUsageError(f"invalid --param {value!r}")
         key, item = value.split("=", 1)
         if not key:
-            raise ValueError("parameter name cannot be empty")
+            raise CLIUsageError("parameter name cannot be empty")
         if key in result:
             existing = result[key]
             result[key] = [*existing, item] if isinstance(existing, list) else [existing, item]
@@ -734,13 +745,13 @@ def _extract_presentation(arguments: list[str]) -> tuple[bool, bool, bool]:
 def _duration_seconds(value: str) -> float:
     units = {"s": 1, "m": 60, "h": 3600, "d": 86400}
     if len(value) < 2 or value[-1] not in units:
-        raise ValueError("duration must end in s, m, h, or d")
+        raise CLIUsageError("duration must end in s, m, h, or d")
     try:
         amount = float(value[:-1])
     except ValueError as exc:
-        raise ValueError(f"invalid duration {value!r}") from exc
+        raise CLIUsageError(f"invalid duration {value!r}") from exc
     if amount < 0:
-        raise ValueError("duration cannot be negative")
+        raise CLIUsageError("duration cannot be negative")
     return amount * units[value[-1]]
 
 
@@ -784,12 +795,12 @@ def _completion_script(shell: str) -> str:
 def _validate_cli_args(args: Any, *, output_format: str = "human") -> None:
     if args.group == "events" and args.action == "ack":
         if bool(args.event_id) == bool(args.all):
-            raise ValueError("events ack requires an event ID or --all")
+            raise CLIUsageError("events ack requires an event ID or --all")
     if args.group == "dataset" and args.action == "status":
         if bool(args.dataset) == bool(args.all):
-            raise ValueError("dataset status requires a dataset or --all")
+            raise CLIUsageError("dataset status requires a dataset or --all")
     if args.group == "task" and args.action == "run" and args.param and args.params:
-        raise ValueError("--param and --params are mutually exclusive")
+        raise CLIUsageError("--param and --params are mutually exclusive")
     if args.group == "task" and args.action in {"run", "logs", "retry", "watch"}:
         if (getattr(args, "follow", False) or args.action == "watch") and output_format == "json":
             raise CLIUsageError("--follow is a stream; use --format JSONL instead of JSON")
@@ -810,7 +821,7 @@ def _validate_cli_args(args: Any, *, output_format: str = "human") -> None:
             )
         )
         if sources != 1:
-            raise ValueError("config set requires exactly one value source")
+            raise CLIUsageError("config set requires exactly one value source")
 
 
 def _json_value(source: str, *, stdin: TextIO) -> object:
@@ -823,7 +834,7 @@ def _json_value(source: str, *, stdin: TextIO) -> object:
     try:
         return json.loads(text)
     except json.JSONDecodeError as exc:
-        raise ValueError(f"invalid configuration JSON: {exc.msg}") from exc
+        raise CLIUsageError(f"invalid configuration JSON: {exc.msg}") from exc
 
 
 def _result_record_type(args: Any) -> str:

@@ -13,7 +13,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Iterable
 from urllib.parse import parse_qs, urlparse
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from findata.cron import CronManager
 from findata.events import EventStore
@@ -200,34 +200,29 @@ class FindataServer:
             "provider": plugin.provider,
             "provider_ready": self._provider_ready(plugin.provider),
             "update_ready": self._update_ready(dataset),
+            "state": "uninitialized",
+            "publication_id": None,
+            "covered_keys": None,
+            "coverage_start": None,
+            "coverage_end": None,
         }
         reader = DataLoader(self.workspace.root).dataset(dataset)
         try:
-            status["publication_id"] = reader.publication_id
+            publication_id = reader.publication_id
         except DatasetNotReadyError:
-            status.update(
-                {
-                    "state": "uninitialized",
-                    "publication_id": None,
-                    "covered_keys": None,
-                    "coverage_start": None,
-                    "coverage_end": None,
-                }
-            )
             return status
         status["state"] = "ready"
+        status["publication_id"] = publication_id
         try:
             coverage = reader.coverage()
         except UnsupportedCoverageError:
             coverage = None
-        if coverage is None or not coverage.num_rows:
-            status["covered_keys"] = 0 if coverage is not None else None
-            status["coverage_start"] = None
-            status["coverage_end"] = None
-        else:
+        if coverage is not None and coverage.num_rows:
             status["covered_keys"] = len(set(coverage.column("key").to_pylist()))
             status["coverage_start"] = str(min(coverage.column("start").to_pylist()))
             status["coverage_end"] = str(max(coverage.column("end").to_pylist()))
+        elif coverage is not None:
+            status["covered_keys"] = 0
         return status
 
     def _update_ready(self, dataset: str) -> bool:
@@ -479,8 +474,13 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                     body = self._body()
                     key = str(body["key"])
                     value = body["value"]
+                    if _reserved_config_key(key):
+                        raise ValueError(f"configuration key {key!r} is reserved")
                     if key == "display.timezone":
-                        ZoneInfo(str(value))
+                        try:
+                            ZoneInfo(str(value))
+                        except ZoneInfoNotFoundError as exc:
+                            raise ValueError(f"unknown IANA timezone {value!r}") from exc
                     if key.startswith("dataset."):
                         components = key.split(".", 2)
                         if len(components) != 3 or components[1] not in app.plugins:
@@ -501,10 +501,17 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                     return
                 if method == "GET" and parts == ["v1", "config"]:
                     key = _query_one(query, "key")
-                    values = app.workspace.list_config()
+                    values = {
+                        name: value
+                        for name, value in app.workspace.list_config().items()
+                        if not _reserved_config_key(name)
+                    }
                     if key is not None:
                         if key not in values:
-                            self._send(HTTPStatus.NOT_FOUND, {"error": "config_not_found"})
+                            self._send(
+                                HTTPStatus.NOT_FOUND,
+                                {"error": f"configuration key {key!r} is not set"},
+                            )
                         else:
                             self._send(
                                 HTTPStatus.OK,
@@ -526,6 +533,8 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                     return
                 if method == "DELETE" and len(parts) == 3 and parts[:2] == ["v1", "config"]:
                     key = parts[2]
+                    if _reserved_config_key(key):
+                        raise ValueError(f"configuration key {key!r} is reserved")
                     if key.startswith("dataset."):
                         components = key.split(".", 2)
                         if (
@@ -558,7 +567,7 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                         {
                             "provider": provider_id,
                             "ready": ready,
-                            "authenticated": ready and not mock,
+                            "authenticated": (ready and not mock) if not mock else None,
                             "mode": "mock" if mock else "real",
                         },
                     )
@@ -732,9 +741,12 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                         count = app.events.ack_all()
                         response = {"acknowledged": count}
                     else:
-                        event_id = app.events.ack(str(body["event_id"]))
-                        count = 1
-                        response = {"acknowledged": count, "event_id": event_id}
+                        event_id, already = app.events.ack(str(body["event_id"]))
+                        response = {
+                            "acknowledged": 1,
+                            "already_acknowledged": already,
+                            "event_id": event_id,
+                        }
                     self._send(HTTPStatus.OK, response)
                     return
                 self._send(HTTPStatus.NOT_FOUND, {"error": "not_found"})
@@ -744,10 +756,18 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                 self._send(HTTPStatus.CONFLICT, {"error": str(exc)})
             except AmbiguousIdentifierError as exc:
                 self._send(HTTPStatus.CONFLICT, {"error": str(exc)})
-            except TaskNotFoundError:
-                self._send(HTTPStatus.NOT_FOUND, {"error": "task_not_found"})
-            except IdentifierNotFoundError:
-                self._send(HTTPStatus.NOT_FOUND, {"error": "event_not_found"})
+            except TaskNotFoundError as exc:
+                operand = exc.args[0] if exc.args else "unknown"
+                self._send(
+                    HTTPStatus.NOT_FOUND,
+                    {"error": f"no retained task matches {operand!r}"},
+                )
+            except IdentifierNotFoundError as exc:
+                operand = exc.args[0] if exc.args else "unknown"
+                self._send(
+                    HTTPStatus.NOT_FOUND,
+                    {"error": f"no retained event matches {operand!r}"},
+                )
             except (KeyError, TypeError, ValueError) as exc:
                 self._send(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
             except Exception as exc:
@@ -795,7 +815,18 @@ def secret_config_keys(providers: Iterable[Any]) -> frozenset[str]:
     )
 
 
+RESERVED_CONFIG_PREFIXES = ("cron.",)
+
+
+def _reserved_config_key(key: str) -> bool:
+    """Internal state keys (for example cron.jobs) are not user configuration."""
+    return any(key.startswith(prefix) for prefix in RESERVED_CONFIG_PREFIXES)
+
+
 def _redact(key: str, value: Any, secret_keys: frozenset[str] = frozenset()) -> Any:
+    if isinstance(value, dict) and set(value) == {"env"}:
+        # An environment-variable reference names a variable, not a secret.
+        return value
     if key in secret_keys:
         return "<redacted>"
     lowered = key.lower()

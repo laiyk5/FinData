@@ -175,7 +175,17 @@ class ServerCLITests(unittest.TestCase):
         config = json.loads(
             self.run_cli("--format", "json", "config", "get", "provider.tushare.token")[1]
         )
+        # Environment references name a variable, not a secret, and stay visible.
+        self.assertEqual(config["value"], {"env": "TUSHARE_API_TOKEN"})
+
+        self.run_cli(
+            "config", "set", "provider.tushare.token", "--stdin", stdin_text="literal-secret\n"
+        )
+        config = json.loads(
+            self.run_cli("--format", "json", "config", "get", "provider.tushare.token")[1]
+        )
         self.assertEqual(config["value"], "<redacted>")
+        self.run_cli("config", "unset", "provider.tushare.token")
 
         self.run_cli(
             "--format",
@@ -258,10 +268,60 @@ class ServerCLITests(unittest.TestCase):
             )[1]
         )
         self.assertEqual(operation["required"], ["symbols", "timerange"])
+        code, operations_table = self.run_cli("dataset", "operations", "tushare_daily_basic")
+        self.assertEqual(code, 0)
+        self.assertIn("REQUIRED", operations_table)
+        self.assertIn("symbols, timerange", operations_table)
         providers = json.loads(self.run_cli("--format", "json", "provider", "ls")[1])
         self.assertEqual(providers["items"][0]["name"], "tushare")
         statuses = json.loads(self.run_cli("--format", "json", "dataset", "status", "--all")[1])
         self.assertEqual(len(statuses["items"]), 5)
+
+    def test_config_ls_is_a_table_and_internal_keys_stay_internal(self) -> None:
+        self.run_cli("config", "set", "display.timezone", "UTC")
+        code, output = self.run_cli("config", "ls")
+        self.assertEqual(code, 0)
+        self.assertIn("KEY", output)
+        self.assertIn("display.timezone", output)
+        self.assertNotIn("cron.jobs", output)
+
+        self.run_cli("--format", "json", "cron", "enable", "tushare_trade_cal")
+        values = json.loads(self.run_cli("--format", "json", "config", "ls")[1])["values"]
+        self.assertNotIn("cron.jobs", values)
+
+        stdout, stderr = io.StringIO(), io.StringIO()
+        code = cli_main(
+            ["--workspace", str(self.root), "config", "set", "cron.jobs", "{}"],
+            stdout=stdout,
+            stderr=stderr,
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("reserved", stderr.getvalue())
+
+        stdout, stderr = io.StringIO(), io.StringIO()
+        code = cli_main(
+            ["--workspace", str(self.root), "config", "get", "missing.key"],
+            stdout=stdout,
+            stderr=stderr,
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("configuration key 'missing.key' is not set", stderr.getvalue())
+
+    def test_declining_reset_confirmation_cancels_neutrally(self) -> None:
+        class TTYInput(io.StringIO):
+            def isatty(self) -> bool:
+                return True
+
+        stdout, stderr = io.StringIO(), io.StringIO()
+        code = cli_main(
+            ["--workspace", str(self.root), "dataset", "reset", "tushare_trade_cal"],
+            stdin=TTYInput("n\n"),
+            stdout=stdout,
+            stderr=stderr,
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("Reset canceled.", stderr.getvalue())
+        self.assertNotIn("Error", stderr.getvalue())
 
     def test_dataset_status_reports_committed_state_not_the_contract(self) -> None:
         status = json.loads(

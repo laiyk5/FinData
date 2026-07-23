@@ -229,8 +229,21 @@ class WorkspaceResolutionTests(unittest.TestCase):
                 stdout=stdout,
                 stderr=stderr,
             )
-            self.assertEqual(code, 1)
+            self.assertEqual(code, 2)
             self.assertIn("requires an event ID or --all", stderr.getvalue())
+
+    def test_dataset_status_requires_a_dataset_or_all(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Workspace.init(Path(directory))
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            code = cli_main(
+                ["--workspace", str(workspace.root), "dataset", "status"],
+                stdout=stdout,
+                stderr=stderr,
+            )
+            self.assertEqual(code, 2)
+            self.assertIn("requires a dataset or --all", stderr.getvalue())
 
 
 if __name__ == "__main__":

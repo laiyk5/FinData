@@ -58,7 +58,7 @@ class EventStore:
         self._append(record)
         return EventRecord(**record)
 
-    def ack(self, event_id: str, *, timestamp: float | None = None) -> str:
+    def ack(self, event_id: str, *, timestamp: float | None = None) -> tuple[str, bool]:
         with self.lock_path.open("a+b") as lock:
             fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
             records = self._read_unlocked()
@@ -68,6 +68,11 @@ class EventStore:
                 if item.get("kind") != "acknowledgement" and item.get("event_id")
             ]
             resolved = resolve_identifier(event_id, primary_ids)
+            already_acknowledged = resolved in {
+                str(item["reference"])
+                for item in records
+                if item.get("kind") == "acknowledgement" and item.get("reference")
+            }
             self._append_unlocked(
                 {
                     "event_id": uuid.uuid4().hex,
@@ -80,7 +85,7 @@ class EventStore:
                 }
             )
             fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
-        return resolved
+        return resolved, already_acknowledged
 
     def ack_all(self, *, timestamp: float | None = None) -> int:
         unread = self.list_events(unread=True)

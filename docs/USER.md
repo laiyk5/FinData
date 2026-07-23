@@ -227,9 +227,9 @@ Canceling one coalesced handle makes that handle `canceled` immediately while an
 
 - `dataset ls`
 - `dataset describe <name>` — show provider readiness, capabilities, dependencies, declared
-  settings, timing, storage, and status metadata.
+  settings, storage, and status metadata.
 - `dataset operations <name>`
-- `dataset operation <name> <operation>` — show operand schema, defaults, syntax, and examples.
+- `dataset operation <name> <operation>` — show the operand schema and required operands.
 - `dataset status <name>` / `dataset status --all` — show committed maintenance state:
   provider and update readiness, initialization state, current publication, and a coverage
   summary (number of covered keys and the overall resolved range). This is the runtime
