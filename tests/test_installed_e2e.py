@@ -61,7 +61,7 @@ class InstalledQuickStartTests(unittest.TestCase):
                     input_text="findata-mock:fail=daily_basic@2\n",
                 )
                 self.assertEqual(configured.returncode, 0, configured.stderr)
-                provider = cli("--json", "provider", "check", "tushare")
+                provider = cli("--format", "json", "provider", "check", "tushare")
                 self.assertEqual(provider.returncode, 0, provider.stderr)
                 self.assertEqual(json.loads(provider.stdout)["mode"], "mock")
                 metadata = cli(
@@ -76,7 +76,7 @@ class InstalledQuickStartTests(unittest.TestCase):
                 self.assertEqual(setting.returncode, 0, setting.stderr)
 
                 task_arguments = (
-                    "--json", "task", "run", "tushare_daily_basic", "complete",
+                    "--format", "json", "task", "run", "tushare_daily_basic", "complete",
                     "--param", "symbols=tushare:000300.SH",
                     "--param", "timerange=2026-06-29:2026-07-04",
                     "--wait",

@@ -92,7 +92,7 @@ class DataCLITests(unittest.TestCase):
         stdout = io.StringIO()
         stderr = io.StringIO()
         code = cli_main(
-            ["--workspace", str(self.root), "--json", *arguments],
+            ["--workspace", str(self.root), "--format", "json", *arguments],
             stdout=stdout,
             stderr=stderr,
             environ={},
@@ -202,6 +202,23 @@ class DataCLITests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("tushare_daily_basic", completion.getvalue().splitlines())
         self.assertNotIn("STALE_DIRECTORY", completion.getvalue().splitlines())
+
+        completion = io.StringIO()
+        code = cli_main(
+            [
+                "--workspace",
+                str(self.root),
+                "_complete",
+                "task",
+                "run",
+                "tushare_daily_",
+            ],
+            stdout=completion,
+            stderr=io.StringIO(),
+            environ={},
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(completion.getvalue(), "tushare_daily_basic\n")
 
     def test_unknown_dataset_reads_never_create_directories(self) -> None:
         datasets = self.root / "datasets"

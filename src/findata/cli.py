@@ -102,7 +102,7 @@ def main(
                 )
                 items = _dynamic_completion(completion_client, list(args.words))
             except (OSError, RuntimeError, ValueError):
-                items = _local_data_completion(
+                items = _local_dataset_completion(
                     args.workspace,
                     list(args.words),
                     environ=environment,
@@ -232,7 +232,7 @@ def _execute(
         return client.request("GET", "/v1/datasets")
     if args.group == "dataset" and args.action in {"describe", "status"}:
         if args.action == "status" and args.all:
-            return client.request("GET", "/v1/datasets")
+            return client.request("GET", "/v1/datasets/status")
         suffix = "status" if args.action == "status" else ""
         return client.request(
             "GET", f"/v1/datasets/{args.dataset}{('/' + suffix) if suffix else ''}"
@@ -524,6 +524,13 @@ def _dynamic_completion(client: _Client, words: list[str]) -> list[str]:
     ):
         candidates = [str(item["name"]) for item in client.request("GET", "/v1/datasets")["items"]]
         prefix = words[2] if len(words) == 3 else ""
+    elif words[0] == "task" and len(words) in {2, 3} and words[1] == "run":
+        candidates = [str(item["name"]) for item in client.request("GET", "/v1/datasets")["items"]]
+        prefix = words[2] if len(words) == 3 else ""
+    elif words[0] == "task" and len(words) == 4 and words[1] == "run":
+        operations = client.request("GET", f"/v1/datasets/{words[2]}/operations")["items"]
+        candidates = [str(item["name"]) for item in operations]
+        prefix = words[3]
     elif words[0] == "provider" and len(words) in {2, 3} and words[1] in {"status", "check"}:
         candidates = [str(item["name"]) for item in client.request("GET", "/v1/providers")["items"]]
         prefix = words[2] if len(words) == 3 else ""
@@ -613,18 +620,19 @@ def _option_candidates(command: click.Command, prefix: str) -> list[str]:
     return sorted(option for option in candidates if option.startswith(prefix))
 
 
-def _local_data_completion(
+def _local_dataset_completion(
     explicit_workspace: Path | None,
     words: list[str],
     *,
     environ: Mapping[str, str],
 ) -> list[str]:
-    if not (
-        words
-        and words[0] == "data"
-        and len(words) in {2, 3}
-        and words[1] in {"schema", "preview", "coverage", "export"}
-    ):
+    """Complete dataset names from workspace storage when no server is available."""
+    if not (words and len(words) in {2, 3}):
+        return []
+    dataset_positions = (
+        words[0] == "data" and words[1] in {"schema", "preview", "coverage", "export"}
+    ) or (words[0] == "task" and words[1] == "run")
+    if not dataset_positions:
         return []
     try:
         workspace = resolve_workspace(explicit_workspace, environ=dict(environ))
@@ -694,9 +702,6 @@ def _extract_option(arguments: list[str], name: str) -> str | None:
 
 
 def _extract_format(arguments: list[str]) -> str:
-    if "--json" in arguments:
-        arguments.remove("--json")
-        return "json"
     value = _extract_option(arguments, "--format")
     if value is None:
         return "human"

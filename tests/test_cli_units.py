@@ -60,12 +60,13 @@ class GlobalOptionExtractionTests(unittest.TestCase):
         self.assertIsNone(_extract_option(arguments, "--format"))
         self.assertEqual(len(arguments), 4)
 
-    def test_extract_format_defaults_shorthand_and_validation(self) -> None:
+    def test_extract_format_defaults_and_validation(self) -> None:
         self.assertEqual(_extract_format([]), "human")
 
+        # --json was removed; the token is left for Click to reject.
         arguments = ["--json"]
-        self.assertEqual(_extract_format(arguments), "json")
-        self.assertEqual(arguments, [])
+        self.assertEqual(_extract_format(arguments), "human")
+        self.assertEqual(arguments, ["--json"])
 
         self.assertEqual(_extract_format(["--format=jsonl"]), "jsonl")
         with self.assertRaises(CLIUsageError):

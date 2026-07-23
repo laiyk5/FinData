@@ -210,7 +210,7 @@ class CLIPresentationTests(unittest.TestCase):
     def test_logs_follow_ctrl_c_detaches(self) -> None:
         submitted = json.loads(
             self.run_cli(
-                "--json",
+                "--format", "json",
                 "task",
                 "run",
                 "tushare_trade_cal",
@@ -256,7 +256,7 @@ class CLIPresentationTests(unittest.TestCase):
 
     def test_explain_and_status_of_failed_task_exit_zero_and_show_reason(self) -> None:
         code, output, _ = self.run_cli(
-            "--json", "task", "run", "tushare_daily_basic", "update", "--wait"
+            "--format", "json", "task", "run", "tushare_daily_basic", "update", "--wait"
         )
         self.assertEqual(code, 1)  # waiting on a failed task
         handle = str(json.loads(output)["handle_id"])

@@ -91,7 +91,8 @@ class ServerCLITests(unittest.TestCase):
         self.assertTrue(json.loads(provider)["ready"])
         self.assertEqual(
             self.run_cli(
-                "--json",
+                "--format",
+                "json",
                 "task",
                 "run",
                 "tushare_index_basic",
@@ -171,11 +172,14 @@ class ServerCLITests(unittest.TestCase):
         os.environ["TUSHARE_API_TOKEN"] = "not-used-by-mock"
         self.addCleanup(os.environ.pop, "TUSHARE_API_TOKEN", None)
         self.run_cli("config", "set", "provider.tushare.token", "--env", "TUSHARE_API_TOKEN")
-        config = json.loads(self.run_cli("--json", "config", "get", "provider.tushare.token")[1])
+        config = json.loads(
+            self.run_cli("--format", "json", "config", "get", "provider.tushare.token")[1]
+        )
         self.assertEqual(config["value"], "<redacted>")
 
         self.run_cli(
-            "--json",
+            "--format",
+            "json",
             "task",
             "run",
             "tushare_index_basic",
@@ -191,17 +195,19 @@ class ServerCLITests(unittest.TestCase):
             "--value-json",
             '["tushare:000300.SH@latest"]',
         )
-        enabled = json.loads(self.run_cli("--json", "cron", "enable", "tushare_daily_basic")[1])
+        enabled = json.loads(
+            self.run_cli("--format", "json", "cron", "enable", "tushare_daily_basic")[1]
+        )
         self.assertTrue(enabled["enabled"])
         self.server.cron.tick(datetime.fromisoformat(enabled["next_run"]))
         tasks = self.request("GET", "/v1/tasks")["items"]
         self.assertTrue(any(item["owner"] == "cron" for item in tasks))
 
         self.server.events.record("task_failed", "error", "injected task failure")
-        events = json.loads(self.run_cli("--json", "events", "ls", "--unread")[1])
+        events = json.loads(self.run_cli("--format", "json", "events", "ls", "--unread")[1])
         failure = next(item for item in events["items"] if item["kind"] == "task_failed")
         self.run_cli("events", "ack", failure["event_id"])
-        unread = json.loads(self.run_cli("--json", "events", "ls", "--unread")[1])
+        unread = json.loads(self.run_cli("--format", "json", "events", "ls", "--unread")[1])
         self.assertNotIn(failure["event_id"], {item["event_id"] for item in unread["items"]})
 
     def test_config_set_rejects_literal_values_for_declared_secret_keys(self) -> None:
@@ -236,10 +242,10 @@ class ServerCLITests(unittest.TestCase):
         self.assertEqual(code, 0)
 
     def test_dataset_and_provider_discovery_commands_report_registered_contracts(self) -> None:
-        datasets = json.loads(self.run_cli("--json", "dataset", "ls")[1])
+        datasets = json.loads(self.run_cli("--format", "json", "dataset", "ls")[1])
         self.assertEqual(len(datasets["items"]), 5)
         described = json.loads(
-            self.run_cli("--json", "dataset", "describe", "tushare_daily_basic")[1]
+            self.run_cli("--format", "json", "dataset", "describe", "tushare_daily_basic")[1]
         )
         self.assertEqual(described["provider"], "tushare")
         self.assertEqual(
@@ -247,13 +253,59 @@ class ServerCLITests(unittest.TestCase):
             {"update", "complete", "refresh"},
         )
         operation = json.loads(
-            self.run_cli("--json", "dataset", "operation", "tushare_daily_basic", "complete")[1]
+            self.run_cli(
+                "--format", "json", "dataset", "operation", "tushare_daily_basic", "complete"
+            )[1]
         )
         self.assertEqual(operation["required"], ["symbols", "timerange"])
-        providers = json.loads(self.run_cli("--json", "provider", "ls")[1])
+        providers = json.loads(self.run_cli("--format", "json", "provider", "ls")[1])
         self.assertEqual(providers["items"][0]["name"], "tushare")
-        statuses = json.loads(self.run_cli("--json", "dataset", "status", "--all")[1])
+        statuses = json.loads(self.run_cli("--format", "json", "dataset", "status", "--all")[1])
         self.assertEqual(len(statuses["items"]), 5)
+
+    def test_dataset_status_reports_committed_state_not_the_contract(self) -> None:
+        status = json.loads(
+            self.run_cli("--format", "json", "dataset", "status", "tushare_trade_cal")[1]
+        )
+        self.assertEqual(status["state"], "uninitialized")
+        self.assertIsNone(status["publication_id"])
+        self.assertNotIn("operations", status)
+        self.assertNotIn("capabilities", status)
+
+        self.run_cli(
+            "--format",
+            "json",
+            "task",
+            "run",
+            "tushare_trade_cal",
+            "complete",
+            "--param",
+            "exchanges=SSE",
+            "--param",
+            "timerange=2026-07-01:2026-07-10",
+            "--wait",
+        )
+        status = json.loads(
+            self.run_cli("--format", "json", "dataset", "status", "tushare_trade_cal")[1]
+        )
+        self.assertEqual(status["state"], "ready")
+        self.assertTrue(status["update_ready"])
+        self.assertEqual(status["covered_keys"], 1)
+        self.assertEqual(status["coverage_start"], "2026-07-01")
+        self.assertEqual(status["coverage_end"], "2026-07-10")
+
+        described = json.loads(
+            self.run_cli("--format", "json", "dataset", "describe", "tushare_trade_cal")[1]
+        )
+        self.assertIn("operations", described)
+        self.assertNotIn("covered_keys", described)
+
+        self.run_cli("--format", "json", "task", "run", "tushare_stock_basic", "update", "--wait")
+        status = json.loads(
+            self.run_cli("--format", "json", "dataset", "status", "tushare_stock_basic")[1]
+        )
+        self.assertEqual(status["state"], "ready")
+        self.assertIsNone(status["covered_keys"])
 
     def test_invalid_operation_is_rejected_without_creating_a_handle(self) -> None:
         with self.assertRaises(HTTPError) as caught:
@@ -269,7 +321,8 @@ class ServerCLITests(unittest.TestCase):
     def test_structured_params_and_typed_config_cli_forms(self) -> None:
         configured = json.loads(
             self.run_cli(
-                "--json",
+                "--format",
+                "json",
                 "config",
                 "set",
                 "dataset.tushare_daily_basic.update_symbols",
@@ -279,17 +332,20 @@ class ServerCLITests(unittest.TestCase):
         )
         self.assertEqual(configured["value"], ["000001.SZ"])
         direct = json.loads(
-            self.run_cli("--json", "config", "get", "dataset.tushare_daily_basic.update_symbols")[1]
+            self.run_cli(
+                "--format", "json", "config", "get", "dataset.tushare_daily_basic.update_symbols"
+            )[1]
         )
         self.assertEqual(direct["value"], ["000001.SZ"])
         cleared = json.loads(
-            self.run_cli("--json", "config", "unset", "dataset.tushare_daily_basic.update_symbols")[
-                1
-            ]
+            self.run_cli(
+                "--format", "json", "config", "unset", "dataset.tushare_daily_basic.update_symbols"
+            )[1]
         )
         self.assertTrue(cleared["removed"])
         code, output = self.run_cli(
-            "--json",
+            "--format",
+            "json",
             "task",
             "run",
             "tushare_trade_cal",
@@ -342,11 +398,12 @@ class ServerCLITests(unittest.TestCase):
             0,
         )
 
-        provider = json.loads(self.run_cli("--json", "provider", "check", "tushare")[1])
+        provider = json.loads(self.run_cli("--format", "json", "provider", "check", "tushare")[1])
         self.assertTrue(provider["ready"])
         self.assertEqual(provider["mode"], "mock")
         self.run_cli(
-            "--json",
+            "--format",
+            "json",
             "task",
             "run",
             "tushare_index_basic",
@@ -363,7 +420,8 @@ class ServerCLITests(unittest.TestCase):
             '["tushare:000300.SH@latest"]',
         )
         code, failed = self.run_cli(
-            "--json",
+            "--format",
+            "json",
             "task",
             "run",
             "tushare_daily_basic",
@@ -396,7 +454,8 @@ class ServerCLITests(unittest.TestCase):
             0,
         )
         code, resumed = self.run_cli(
-            "--json",
+            "--format",
+            "json",
             "task",
             "run",
             "tushare_daily_basic",
@@ -412,12 +471,14 @@ class ServerCLITests(unittest.TestCase):
 
     def test_dataset_reset_requires_confirmation_and_reinitializes_only_that_dataset(self) -> None:
         code, completed = self.run_cli(
-            "--json", "task", "run", "tushare_stock_basic", "update", "--wait"
+            "--format", "json", "task", "run", "tushare_stock_basic", "update", "--wait"
         )
         self.assertEqual(code, 0, completed)
         self.assertGreater(DataLoader(self.root).dataset("tushare_stock_basic").query().num_rows, 0)
 
-        code, reset = self.run_cli("--json", "dataset", "reset", "tushare_stock_basic", "--yes")
+        code, reset = self.run_cli(
+            "--format", "json", "dataset", "reset", "tushare_stock_basic", "--yes"
+        )
 
         self.assertEqual(code, 0, reset)
         self.assertEqual(json.loads(reset)["state"], "uninitialized")
@@ -456,7 +517,8 @@ class ServerCLITests(unittest.TestCase):
         before = self.request("GET", "/v1/tasks")["items"]
 
         code, rendered = self.run_cli(
-            "--json",
+            "--format",
+            "json",
             "dataset",
             "complete",
             "tushare_daily_basic",
@@ -499,7 +561,7 @@ class ServerCLITests(unittest.TestCase):
         self.assertIn("inspection", explained)
 
         code, rendered = self.run_cli(
-            "--json", "task", "retry", str(original["handle_id"])[:8], "--wait"
+            "--format", "json", "task", "retry", str(original["handle_id"])[:8], "--wait"
         )
         self.assertEqual(code, 0, rendered)
         terminal = json.loads(rendered)
@@ -515,6 +577,14 @@ class ServerCLITests(unittest.TestCase):
         code, output = self.run_cli("_complete", "data", "coverage")
         self.assertEqual(code, 0)
         self.assertIn("tushare_daily_basic", output.splitlines())
+
+        code, output = self.run_cli("_complete", "task", "run", "")
+        self.assertEqual(code, 0)
+        self.assertIn("tushare_daily_basic", output.splitlines())
+
+        code, output = self.run_cli("_complete", "task", "run", "tushare_daily_basic", "")
+        self.assertEqual(code, 0)
+        self.assertEqual(output.splitlines(), ["update", "complete", "refresh"])
 
     def run_cli(self, *arguments: str, stdin_text: str = "") -> tuple[int, str]:
         stdout = io.StringIO()

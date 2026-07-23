@@ -79,7 +79,7 @@ provider.
 
 ## CLI behavior
 
-Operational commands support `--format human|json|jsonl`; `--json` is shorthand for `--format json`, and `jsonl` is used for streams. Stdout contains command results and stderr contains diagnostics.
+Operational commands support `--format human|json|jsonl`; `jsonl` is used for streams. Stdout contains command results and stderr contains diagnostics.
 
 Human output is the default. Collection commands use compact tables, detail commands use labeled
 fields, and an empty result says what was not found rather than printing an empty JSON value. Human
@@ -230,7 +230,10 @@ Canceling one coalesced handle makes that handle `canceled` immediately while an
   settings, timing, storage, and status metadata.
 - `dataset operations <name>`
 - `dataset operation <name> <operation>` — show operand schema, defaults, syntax, and examples.
-- `dataset status <name>` / `dataset status --all`
+- `dataset status <name>` / `dataset status --all` — show committed maintenance state:
+  provider and update readiness, initialization state, current publication, and a coverage
+  summary (number of covered keys and the overall resolved range). This is the runtime
+  companion to `dataset describe`, which shows the static contract.
 - `dataset reset <name> [--yes]` — replace one dataset with a new uninitialized database while
   preserving its settings and task history. Human interactive mode requires confirmation;
   structured or non-interactive use requires `--yes`. Reset is rejected while that dataset has
@@ -370,7 +373,7 @@ records when `--output -` is used.
 
 Long human-readable results shown in an interactive terminal are automatically sent through the
 pager selected by `$PAGER` (normally `less`) instead of flooding the terminal. Paging is never used
-for redirected output, `--json`, `--jsonl`, or export data written to stdout. Set `PAGER=cat` when
+for redirected output, `--format json`, `--format jsonl`, or export data written to stdout. Set `PAGER=cat` when
 interactive paging is not wanted.
 
 ## DataLoader

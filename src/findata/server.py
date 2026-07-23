@@ -18,7 +18,7 @@ from zoneinfo import ZoneInfo
 from findata.cron import CronManager
 from findata.events import EventStore
 from findata.identifiers import AmbiguousIdentifierError, IdentifierNotFoundError
-from findata.loader import DataLoader, DatasetNotReadyError
+from findata.loader import DataLoader, DatasetNotReadyError, UnsupportedCoverageError
 from findata.storage import Workspace
 from findata.plugins import discover_dataset_plugins, discover_provider_plugins, register_plugins
 from findata.taskrunner import DatasetBusyError, QueueFullError, TaskNotFoundError, TaskRunner
@@ -188,6 +188,47 @@ class FindataServer:
             }
             for provider_id in self.providers
         ]
+
+    def _dataset_status(self, dataset: str) -> dict[str, object]:
+        """Committed maintenance state for one dataset, distinct from its static contract."""
+        try:
+            plugin = self.plugins[dataset]
+        except KeyError as exc:
+            raise ValueError(f"unknown dataset {dataset!r}") from exc
+        status: dict[str, object] = {
+            "name": dataset,
+            "provider": plugin.provider,
+            "provider_ready": self._provider_ready(plugin.provider),
+            "update_ready": self._update_ready(dataset),
+        }
+        reader = DataLoader(self.workspace.root).dataset(dataset)
+        try:
+            status["publication_id"] = reader.publication_id
+        except DatasetNotReadyError:
+            status.update(
+                {
+                    "state": "uninitialized",
+                    "publication_id": None,
+                    "covered_keys": None,
+                    "coverage_start": None,
+                    "coverage_end": None,
+                }
+            )
+            return status
+        status["state"] = "ready"
+        try:
+            coverage = reader.coverage()
+        except UnsupportedCoverageError:
+            coverage = None
+        if coverage is None or not coverage.num_rows:
+            status["covered_keys"] = 0 if coverage is not None else None
+            status["coverage_start"] = None
+            status["coverage_end"] = None
+        else:
+            status["covered_keys"] = len(set(coverage.column("key").to_pylist()))
+            status["coverage_start"] = str(min(coverage.column("start").to_pylist()))
+            status["coverage_end"] = str(max(coverage.column("end").to_pylist()))
+        return status
 
     def _update_ready(self, dataset: str) -> bool:
         if dataset == "tushare_index_weight":
@@ -608,6 +649,12 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                         {"dataset": dataset, "state": "uninitialized", "reset": True},
                     )
                     return
+                if method == "GET" and parts == ["v1", "datasets", "status"]:
+                    self._send(
+                        HTTPStatus.OK,
+                        {"items": [app._dataset_status(name) for name in app.plugins]},
+                    )
+                    return
                 if method == "GET" and len(parts) == 3 and parts[:2] == ["v1", "datasets"]:
                     self._send(
                         HTTPStatus.OK,
@@ -620,18 +667,16 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                     return
                 if method == "GET" and len(parts) == 4 and parts[:2] == ["v1", "datasets"]:
                     dataset, action = parts[2], parts[3]
-                    if action in {"operations", "status"}:
+                    if action == "status":
+                        self._send(HTTPStatus.OK, app._dataset_status(dataset))
+                        return
+                    if action == "operations":
                         description = app._runtime_for_dataset(dataset).dataset_description(
                             app.workspace,
                             dataset,
                             provider_ready=app._provider_ready(app.plugins[dataset].provider),
                         )
-                        self._send(
-                            HTTPStatus.OK,
-                            description
-                            if action == "status"
-                            else {"items": description["operations"]},
-                        )
+                        self._send(HTTPStatus.OK, {"items": description["operations"]})
                         return
                 if (
                     method == "GET"
