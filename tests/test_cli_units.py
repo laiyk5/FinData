@@ -305,6 +305,29 @@ class ErrorMappingTests(unittest.TestCase):
         self.assertEqual(output, "dataset\ndata\n")
         self.assertEqual(errors, "")
 
+    def test_connection_loss_while_waiting_names_the_inspection_command(self) -> None:
+        handle = "abcdef0123456789"
+        status_polls: list[str] = []
+
+        def route(method: str, path: str, body: object = None) -> dict[str, object]:
+            if path.startswith("/v1/config"):
+                return {}
+            if path.endswith("/logs"):
+                return {"items": []}
+            status_polls.append(path)
+            if len(status_polls) >= 2:
+                raise URLError("connection reset")
+            return {"status": "running", "handle_id": handle}
+
+        with patch("findata.cli._Client") as client_type:
+            client_type.return_value.request.side_effect = route
+            code, output, errors = self.run_cli("task", "watch", handle)
+        self.assertEqual(code, 1)
+        self.assertEqual(output, "")
+        self.assertIn("lost contact", errors)
+        self.assertIn(f"findata task status {handle}", errors)
+        self.assertNotIn("Traceback", errors)
+
 
 if __name__ == "__main__":
     unittest.main()

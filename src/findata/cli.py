@@ -429,6 +429,11 @@ def _wait_for_task(
             time.sleep(0.05)
     except KeyboardInterrupt as exc:
         raise TaskDetached(handle) from exc
+    except OSError as exc:
+        raise RuntimeError(
+            f"lost contact with the server while waiting for task {handle}; "
+            f"it may still be running — inspect with: findata task status {handle}"
+        ) from exc
 
 
 def _dataset_operands(args: Any) -> dict[str, object]:
