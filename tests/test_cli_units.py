@@ -228,7 +228,10 @@ class HumanFormattingTests(unittest.TestCase):
         self.assertEqual(_display(True), "yes")
         self.assertEqual(_display(12.3, field="progress_percent"), "12.3%")
         self.assertEqual(_display(12500, field="total"), "12,500")
-        self.assertEqual(_display(["a", 1]), '["a",1]')
+        self.assertEqual(_display(["a", 1]), "a, 1")
+        self.assertEqual(_display([]), "none")
+        self.assertEqual(_display({"row_limit": 6000}), "row_limit=6000")
+        self.assertEqual(_display({}), "none")
 
 
 class DeclaredSecretKeyTests(unittest.TestCase):
@@ -251,6 +254,22 @@ class DeclaredSecretKeyTests(unittest.TestCase):
         self.assertEqual(_declared_secret_keys(self.StubClient({"items": "broken"})), set())
 
 
+class EntryPointTests(unittest.TestCase):
+    def test_bare_invocation_prints_help_to_stdout_and_exits_zero(self) -> None:
+        stdout, stderr = io.StringIO(), io.StringIO()
+        code = cli_main([], stdout=stdout, stderr=stderr, environ={})
+        self.assertEqual(code, 0)
+        self.assertTrue(stdout.getvalue().startswith("Usage: findata"))
+        self.assertEqual(stderr.getvalue(), "")
+
+    def test_unknown_option_is_a_clean_usage_error(self) -> None:
+        stdout, stderr = io.StringIO(), io.StringIO()
+        code = cli_main(["--bogus"], stdout=stdout, stderr=stderr, environ={})
+        self.assertEqual(code, 2)
+        self.assertIn("No such option", stderr.getvalue())
+        self.assertNotIn("Error: Error", stderr.getvalue())
+
+
 class ErrorMappingTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tempdir = tempfile.TemporaryDirectory()
@@ -269,14 +288,31 @@ class ErrorMappingTests(unittest.TestCase):
         return code, stdout.getvalue(), stderr.getvalue()
 
     def test_server_error_statuses_map_to_exit_1_with_sanitized_message(self) -> None:
-        for status in (400, 401, 404, 409, 500):
+        expectations = {
+            400: "detail",
+            401: "authentication failed",
+            404: "detail",
+            409: "detail",
+            500: "server returned 500: detail",
+        }
+        for status, expected in expectations.items():
             with patch("findata.cli._Client") as client_type:
                 client_type.return_value.request.side_effect = ServerError(status, "detail")
                 code, output, errors = self.run_cli("task", "ls")
             self.assertEqual(code, 1, msg=f"status {status}")
             self.assertEqual(output, "")
-            self.assertIn(f"server returned {status}", errors)
+            self.assertIn(expected, errors, msg=f"status {status}")
             self.assertNotIn("Traceback", errors)
+
+    def test_server_error_json_detail_is_unwrapped_for_humans(self) -> None:
+        detail = '{"error":"unknown dataset \'tushare_daily\'"}'
+        with patch("findata.cli._Client") as client_type:
+            client_type.return_value.request.side_effect = ServerError(400, detail)
+            code, _, errors = self.run_cli("dataset", "describe", "tushare_daily")
+        self.assertEqual(code, 1)
+        self.assertIn("unknown dataset 'tushare_daily'", errors)
+        self.assertNotIn("server returned", errors)
+        self.assertNotIn("{", errors)
 
     def test_structured_format_keeps_error_object_on_stderr(self) -> None:
         with patch("findata.cli._Client") as client_type:

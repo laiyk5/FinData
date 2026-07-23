@@ -43,6 +43,51 @@ class DataCLITests(unittest.TestCase):
     def tearDown(self) -> None:
         self.tempdir.cleanup()
 
+    def test_preview_leads_with_key_columns_and_honors_column_order(self) -> None:
+        stdout = io.StringIO()
+        code = cli_main(
+            [
+                "--workspace",
+                str(self.root),
+                "data",
+                "preview",
+                "tushare_daily_basic",
+                "--keys",
+                "600000.SH",
+                "--limit",
+                "2",
+            ],
+            stdout=stdout,
+            stderr=io.StringIO(),
+            environ={},
+        )
+        self.assertEqual(code, 0)
+        header = stdout.getvalue().splitlines()[0].split()
+        self.assertEqual(header[:2], ["TS_CODE", "TRADE_DATE"])
+
+        stdout = io.StringIO()
+        code = cli_main(
+            [
+                "--workspace",
+                str(self.root),
+                "data",
+                "preview",
+                "tushare_daily_basic",
+                "--keys",
+                "600000.SH",
+                "--columns",
+                "close,ts_code",
+                "--limit",
+                "2",
+            ],
+            stdout=stdout,
+            stderr=io.StringIO(),
+            environ={},
+        )
+        self.assertEqual(code, 0)
+        header = stdout.getvalue().splitlines()[0].split()
+        self.assertEqual(header[:2], ["CLOSE", "TS_CODE"])
+
     def run_json(self, *arguments: str) -> dict[str, object]:
         stdout = io.StringIO()
         stderr = io.StringIO()

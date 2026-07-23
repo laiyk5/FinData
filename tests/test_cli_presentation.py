@@ -254,6 +254,22 @@ class CLIPresentationTests(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("--color", errors)
 
+    def test_explain_and_status_of_failed_task_exit_zero_and_show_reason(self) -> None:
+        code, output, _ = self.run_cli(
+            "--json", "task", "run", "tushare_daily_basic", "update", "--wait"
+        )
+        self.assertEqual(code, 1)  # waiting on a failed task
+        handle = str(json.loads(output)["handle_id"])
+
+        code, output, _ = self.run_cli("task", "status", handle)
+        self.assertEqual(code, 0)
+        self.assertIn("failed", output)
+
+        code, output, _ = self.run_cli("task", "explain", handle)
+        self.assertEqual(code, 0)
+        self.assertIn("update_symbols", output)
+        self.assertIn(f"findata task retry {handle}", output)
+
 
 class ProgressPresentationTests(unittest.TestCase):
     @patch("findata.presentation.Progress")

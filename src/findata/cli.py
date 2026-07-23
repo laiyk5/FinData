@@ -82,8 +82,12 @@ def main(
                 )
         except click.exceptions.Exit as exc:
             return exc.exit_code
+        except click.exceptions.NoArgsIsHelpError as exc:
+            stdout.write(exc.format_message())
+            stdout.flush()
+            return 0
         except click.UsageError as exc:
-            raise CLIUsageError(exc.format_message()) from exc
+            raise CLIUsageError(getattr(exc, "message", None) or exc.format_message()) from exc
         if isinstance(args, int):
             return args
         if args is None:
@@ -135,11 +139,8 @@ def main(
         )
         output.finish_diagnostics(handle)
         output.result(result, record_type=_result_record_type(args))
-        return (
-            0
-            if not (isinstance(result, dict) and result.get("status") in {"failed", "canceled"})
-            else 1
-        )
+        failed = isinstance(result, dict) and result.get("status") in {"failed", "canceled"}
+        return 1 if failed and _waited_for_task(args) else 0
     except TaskDetached as exc:
         assert output is not None
         output.detached(exc.handle)
@@ -152,8 +153,41 @@ def main(
     except (OSError, ValueError, RuntimeError) as exc:
         renderer = output or fallback_output()
         renderer.finish_progress()
-        renderer.error(str(exc))
+        renderer.error(_error_message(exc))
         return 1
+
+
+def _error_message(exc: BaseException) -> str:
+    """Render an operational failure without transport noise for human readers."""
+    if isinstance(exc, ServerError):
+        detail = exc.detail
+        try:
+            parsed = json.loads(detail)
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, dict) and isinstance(parsed.get("error"), str):
+            detail = parsed["error"]
+        if exc.status == 401:
+            return "authentication failed; check that the server is running for this workspace"
+        if 400 <= exc.status < 500:
+            return detail
+        return f"server returned {exc.status}: {detail}"
+    return str(exc)
+
+
+def _waited_for_task(args: Any) -> bool:
+    """Whether the command blocked on the task; only waits map a failed task to exit 1."""
+    if args.group == "dataset" and args.action in {"update", "complete", "refresh"}:
+        return bool(args.wait or args.follow)
+    if args.group != "task":
+        return False
+    if args.action == "watch":
+        return True
+    if args.action in {"run", "retry"}:
+        return bool(args.wait or args.follow)
+    if args.action == "logs":
+        return bool(args.follow)
+    return False
 
 
 def _page_output(text: str, *, color: bool, stdout: TextIO) -> None:

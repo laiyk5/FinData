@@ -156,8 +156,8 @@ class CLIOutput:
                 json.dumps({"type": "error", "error": message}, separators=(",", ":")) + "\n"
             )
         else:
-            marker = "✗" if self.err_terminal.unicode else "ERROR"
-            heading = self._style(f"{marker} Error", ANSI_RED, terminal=self.err_terminal)
+            heading_text = "✗ Error" if self.err_terminal.unicode else "ERROR"
+            heading = self._style(heading_text, ANSI_RED, terminal=self.err_terminal)
             self.stderr.write(f"{heading}: {message}\n")
             suggestion = _error_suggestion(message)
             if suggestion:
@@ -424,6 +424,8 @@ class CLIOutput:
             return self._table(value["items"])
         if isinstance(value, Mapping) and "status" in value and "handle_id" in value:
             return self._task_summary(value)
+        if isinstance(value, Mapping) and set(value) == {"values"} and not value["values"]:
+            return "No configuration values set.\n"
         if isinstance(value, Mapping):
             return self._details(value)
         if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
@@ -433,7 +435,7 @@ class CLIOutput:
     def _details(self, value: Mapping[object, object]) -> str:
         lines: list[str] = []
         for key, item in value.items():
-            label = str(key).replace("_", " ").title()
+            label = _label(str(key))
             padded = label.ljust(16)
             lines.append(
                 f"{self._style(padded, ANSI_BOLD, terminal=self.out_terminal)}  "
@@ -468,16 +470,20 @@ class CLIOutput:
             "kind",
             "message",
         ]
-        scalar_keys = {
-            str(key)
-            for row in rows
-            for key, item in row.items()
-            if item is None
-            or isinstance(item, (str, int, float, bool, date, datetime))
-            or (key == "missing" and isinstance(item, (list, tuple)))
-        }
+        scalar_keys: dict[str, None] = {}
+        for row in rows:
+            for key, item in row.items():
+                if (
+                    item is None
+                    or isinstance(item, (str, int, float, bool, date, datetime))
+                    or (key == "missing" and isinstance(item, (list, tuple)))
+                ):
+                    scalar_keys.setdefault(str(key))
         columns = [key for key in preferred if key in scalar_keys]
-        columns.extend(sorted(scalar_keys - set(columns)))
+        columns.extend(key for key in scalar_keys if key not in columns)
+        # Internal execution identifiers and redundant update timestamps add
+        # width without helping listings; detail views and JSON keep them.
+        columns = [key for key in columns if key not in {"execution_id", "updated_at"}]
         columns = columns[:7]
         while (
             len(columns) > 1 and 8 * len(columns) + 2 * (len(columns) - 1) > self.out_terminal.width
@@ -487,7 +493,9 @@ class CLIOutput:
             return "\n".join(_display(row, timezone=self.display_timezone) for row in rows) + "\n"
         rendered = [
             [
-                _display(row.get(column), field=column, timezone=self.display_timezone)
+                _shorten_identifier(
+                    _display(row.get(column), field=column, timezone=self.display_timezone)
+                )
                 for column in columns
             ]
             for row in rows
@@ -497,9 +505,14 @@ class CLIOutput:
             for index, column in enumerate(columns)
         ]
         while sum(widths) + 2 * (len(widths) - 1) > self.out_terminal.width:
-            widest = max(range(len(widths)), key=widths.__getitem__)
-            if widths[widest] <= 8:
+            shrinkable = [
+                index
+                for index, column in enumerate(columns)
+                if widths[index] > 8 and column not in TIMESTAMP_FIELDS
+            ]
+            if not shrinkable:
                 break
+            widest = max(shrinkable, key=widths.__getitem__)
             widths[widest] -= 1
         header = "  ".join(
             self._style(
@@ -547,12 +560,18 @@ class CLIOutput:
             error_count = diagnostic_counts.get("error", 0)
             if warning_count or error_count:
                 fields.append(("Diagnostics", f"{warning_count} warnings, {error_count} errors"))
-        if value.get("error"):
-            fields.append(("Reason", value["error"]))
+        reason = value.get("error") or value.get("reason")
+        if reason:
+            fields.append(("Reason", reason))
         created = value.get("created_at")
         updated = value.get("updated_at")
         if isinstance(created, (int, float)) and isinstance(updated, (int, float)):
             fields.append(("Elapsed", _format_duration(max(0.0, updated - created))))
+        inspection = value.get("inspection")
+        if isinstance(inspection, Mapping):
+            for key, label in (("status", "Inspect"), ("logs", "Logs"), ("retry", "Retry")):
+                if inspection.get(key):
+                    fields.append((label, inspection[key]))
         lines.extend(
             f"  {label:<12} {_display(item, timezone=self.display_timezone)}"
             for label, item in fields
@@ -572,6 +591,22 @@ class CLIOutput:
     @staticmethod
     def _style(value: str, code: str, *, terminal: TerminalCapabilities) -> str:
         return f"{code}{value}{ANSI_RESET}" if terminal.color else value
+
+
+_LABEL_ACRONYMS = {
+    "id": "ID",
+    "pid": "PID",
+    "json": "JSON",
+    "jsonl": "JSONL",
+    "api": "API",
+    "url": "URL",
+    "eta": "ETA",
+}
+
+
+def _label(key: str) -> str:
+    """Render a snake_case field name as a human label, preserving acronyms."""
+    return " ".join(_LABEL_ACRONYMS.get(word, word.capitalize()) for word in key.split("_"))
 
 
 def _without_decoration(value: TerminalCapabilities) -> TerminalCapabilities:
@@ -617,9 +652,87 @@ def _display(
         return f"{value:,}"
     if isinstance(value, float):
         return _format_measurement(value)
-    if isinstance(value, (Mapping, list, tuple)):
-        return json.dumps(value, ensure_ascii=False, separators=(",", ":"), default=str)
+    if isinstance(value, Mapping):
+        return _display_mapping(value, field=field, timezone=timezone)
+    if isinstance(value, (list, tuple)):
+        return _display_sequence(value, field=field, timezone=timezone)
     return str(value)
+
+
+def _display_mapping(
+    value: Mapping[object, object],
+    *,
+    field: str | None,
+    timezone: ZoneInfo | None,
+) -> str:
+    if not value:
+        return "none"
+    if field == "properties":
+        lines = []
+        for name, schema in value.items():
+            lines.append(f"  - {name}: {_operand_schema(schema)}")
+        return "\n" + "\n".join(lines)
+    if all(not isinstance(item, (Mapping, list, tuple)) for item in value.values()):
+        return ", ".join(
+            f"{key}={_display(item, timezone=timezone)}" for key, item in value.items()
+        )
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), default=str)
+
+
+def _operand_schema(schema: object) -> str:
+    if not isinstance(schema, Mapping):
+        return "value"
+    kind = str(schema.get("type", "value"))
+    if kind == "array" and isinstance(schema.get("items"), Mapping):
+        kind = f"array of {schema['items'].get('type', 'value')}"
+    if schema.get("format"):
+        kind = f"{kind} ({schema['format']})"
+    return kind
+
+
+def _display_sequence(
+    value: Sequence[object],
+    *,
+    field: str | None,
+    timezone: ZoneInfo | None,
+) -> str:
+    if not value:
+        return "none"
+    if field == "missing":
+        return ", ".join(
+            f"{_display(start, timezone=timezone)}:{_display(end, timezone=timezone)}"
+            for start, end, *_ in value
+        )
+    if field == "dependencies" and all(isinstance(item, Mapping) for item in value):
+        return ", ".join(
+            f"{item.get('dataset', item)} ({item.get('state', 'unknown')})" for item in value
+        )
+    if field == "settings":
+        lines = []
+        for item in value:
+            if isinstance(item, Mapping):
+                state = "configured" if item.get("configured") else "not configured"
+                help_text = f": {item['help']}" if item.get("help") else ""
+                lines.append(f"  - {item.get('key', item)} ({state}){help_text}")
+            else:
+                lines.append(f"  - {item}")
+        return "\n" + "\n".join(lines)
+    if field == "operations" and all(isinstance(item, Mapping) for item in value):
+        lines = []
+        for item in value:
+            required = item.get("required")
+            suffix = f" (required: {', '.join(str(name) for name in required)})" if required else ""
+            lines.append(f"  - {item.get('name', item)}{suffix}")
+        return "\n" + "\n".join(lines)
+    if field == "fields" and all(isinstance(item, Mapping) for item in value):
+        lines = []
+        for item in value:
+            nullable = " (nullable)" if item.get("nullable") else ""
+            lines.append(f"  - {item.get('name', item)}: {item.get('type', '?')}{nullable}")
+        return "\n" + "\n".join(lines)
+    if all(not isinstance(item, (Mapping, list, tuple)) for item in value):
+        return ", ".join(_display(item, timezone=timezone) for item in value)
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), default=str)
 
 
 def _format_timestamp(value: object, timezone: ZoneInfo) -> str:
@@ -658,6 +771,20 @@ def _format_measurement(value: float) -> str:
         coefficient = coefficient.rstrip("0").rstrip(".")
         return f"{coefficient}e{int(exponent):+03d}"
     return f"{value:.12f}".rstrip("0").rstrip(".") or "0"
+
+
+def _shorten_identifier(text: str) -> str:
+    """Shorten full hex identifiers in tables; prefixes stay resolvable and detail views keep the full value."""
+    if ":" in text:
+        prefix, _, suffix = text.rpartition(":")
+        if suffix and _is_hex_identifier(suffix):
+            return f"{prefix}:{suffix[:12]}"
+        return text
+    return text[:12] if _is_hex_identifier(text) else text
+
+
+def _is_hex_identifier(text: str) -> bool:
+    return len(text) == 32 and all(character in "0123456789abcdef" for character in text)
 
 
 def _truncate(value: str, width: int) -> str:

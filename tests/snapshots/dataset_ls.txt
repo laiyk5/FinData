@@ -1,6 +1,6 @@
-NAME                  PROVIDER  PROVIDER_READY  PUBLICATION_ID  STATE          STORAGE
-tushare_daily_basic   tushare   yes             —               uninitialized  duckdb 
-tushare_index_basic   tushare   yes             —               uninitialized  duckdb 
-tushare_index_weight  tushare   yes             —               uninitialized  duckdb 
-tushare_stock_basic   tushare   yes             —               uninitialized  duckdb 
-tushare_trade_cal     tushare   yes             —               uninitialized  duckdb 
+NAME                  PROVIDER  PROVIDER_READY  STORAGE  STATE          PUBLICATION_ID
+tushare_daily_basic   tushare   yes             duckdb   uninitialized  —             
+tushare_index_basic   tushare   yes             duckdb   uninitialized  —             
+tushare_index_weight  tushare   yes             duckdb   uninitialized  —             
+tushare_stock_basic   tushare   yes             duckdb   uninitialized  —             
+tushare_trade_cal     tushare   yes             duckdb   uninitialized  —             
