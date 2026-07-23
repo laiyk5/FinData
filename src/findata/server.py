@@ -422,7 +422,9 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                     if method == "POST" and parts[3:] == ["cancel"]:
                         current = app.taskrunner.status(handle_id)
                         if current.status in {"succeeded", "failed", "canceled"}:
-                            self._send(HTTPStatus.OK, _task_payload(current))
+                            payload = _task_payload(current)
+                            payload["already_terminal"] = True
+                            self._send(HTTPStatus.OK, payload)
                         else:
                             result = app.taskrunner.cancel(current.handle_id)
                             self._send(HTTPStatus.OK, asdict(result))

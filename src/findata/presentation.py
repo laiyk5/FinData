@@ -589,6 +589,8 @@ class CLIOutput:
         reason = value.get("error") or value.get("reason")
         if reason:
             fields.append(("Reason", reason))
+        if value.get("already_terminal"):
+            fields.append(("Cancel", "no-op — the task was already terminal"))
         created = value.get("created_at")
         updated = value.get("updated_at")
         if isinstance(created, (int, float)) and isinstance(updated, (int, float)):

@@ -783,6 +783,31 @@ class ServerCLITests(unittest.TestCase):
         check = json.loads(self.run_cli("--format", "json", "provider", "check", "tushare")[1])
         self.assertIsNone(check["authenticated"])
 
+    def test_cancel_of_terminal_task_is_reported_as_a_no_op(self) -> None:
+        submitted = json.loads(
+            self.run_cli(
+                "--format",
+                "json",
+                "task",
+                "run",
+                "tushare_trade_cal",
+                "complete",
+                "--param",
+                "exchanges=SSE",
+                "--param",
+                "timerange=2026-07-01:2026-07-03",
+                "--wait",
+            )[1]
+        )
+        handle = str(submitted["handle_id"])
+        canceled = json.loads(self.run_cli("--format", "json", "task", "cancel", handle)[1])
+        self.assertTrue(canceled["already_terminal"])
+        self.assertEqual(canceled["status"], "succeeded")
+
+        code, rendered = self.run_cli("task", "cancel", handle)
+        self.assertEqual(code, 0)
+        self.assertIn("no-op", rendered)
+
     def run_cli(self, *arguments: str, stdin_text: str = "") -> tuple[int, str]:
         stdout = io.StringIO()
         stderr = io.StringIO()
