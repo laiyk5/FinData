@@ -144,7 +144,7 @@ DAILY_BASIC_FIELDS = ("ts_code", "trade_date", *DAILY_BASIC_FLOAT_FIELDS, "limit
 
 
 def _stock_basic_schema() -> pa.Schema:
-    required = {"ts_code", "symbol", "name", "market", "exchange", "list_status"}
+    required = {"ts_code", "symbol", "name", "exchange", "list_status"}
     date_fields = {"list_date", "delist_date"}
     return pa.schema(
         [

@@ -164,7 +164,8 @@ class ServerCLITests(unittest.TestCase):
         listed = self.request("GET", "/v1/tasks")
         self.assertIn(handle, [item["handle_id"] for item in listed["items"]])
         logs = self.request("GET", f"/v1/tasks/{handle}/logs")
-        self.assertTrue(any("starting" in item for item in logs["items"]))
+        self.assertTrue(all(isinstance(item, dict) for item in logs["items"]))
+        self.assertTrue(any("starting" in item["message"] for item in logs["items"]))
         canceled = self.request("POST", f"/v1/tasks/{handle}/cancel", {})
         self.assertEqual(canceled["status"], "succeeded")
 
@@ -306,6 +307,84 @@ class ServerCLITests(unittest.TestCase):
         )
         self.assertEqual(code, 1)
         self.assertIn("configuration key 'missing.key' is not set", stderr.getvalue())
+
+    def test_config_keys_endpoint_lists_declared_keys(self) -> None:
+        items = self.request("GET", "/v1/config/keys")["items"]
+        by_key = {item["key"]: item for item in items}
+
+        self.assertIn("display.timezone", by_key)
+        self.assertEqual(
+            by_key["display.timezone"]["schema"],
+            {"type": "string", "format": "iana-timezone"},
+        )
+        self.assertFalse(by_key["display.timezone"]["secret"])
+
+        token = by_key["provider.tushare.token"]
+        self.assertTrue(token["secret"])
+        self.assertIn("secret", token["help"])
+        self.assertFalse(by_key["provider.tushare.rate_limit"]["secret"])
+
+        setting = by_key["dataset.tushare_daily_basic.update_symbols"]
+        self.assertTrue(setting["help"])
+        self.assertTrue(setting["schema"])
+        self.assertFalse(setting["configured"])
+        self.assertIn("dataset.tushare_index_weight.update_indexes", by_key)
+
+        self.assertFalse(any(key.startswith("cron.") for key in by_key))
+
+        self.run_cli("config", "set", "display.timezone", "UTC")
+        after = {
+            item["key"]: item for item in self.request("GET", "/v1/config/keys")["items"]
+        }
+        self.assertTrue(after["display.timezone"]["configured"])
+        self.assertFalse(after["dataset.tushare_daily_basic.update_symbols"]["configured"])
+
+    def test_unknown_dataset_setting_error_lists_declared_settings(self) -> None:
+        with self.assertRaises(HTTPError) as caught:
+            self.request(
+                "POST",
+                "/v1/config",
+                {"key": "dataset.tushare_daily_basic.foo", "value": ["600000.SH"]},
+            )
+        self.assertEqual(caught.exception.code, 400)
+        body = caught.exception.read().decode("utf-8")
+        caught.exception.close()
+        self.assertIn("unknown setting 'dataset.tushare_daily_basic.foo'", body)
+        self.assertIn("dataset.tushare_daily_basic.update_symbols", body)
+
+        with self.assertRaises(HTTPError) as caught:
+            self.request("DELETE", "/v1/config/dataset.tushare_index_weight.bar")
+        self.assertEqual(caught.exception.code, 400)
+        body = caught.exception.read().decode("utf-8")
+        caught.exception.close()
+        self.assertIn("unknown setting 'dataset.tushare_index_weight.bar'", body)
+        self.assertIn("dataset.tushare_index_weight.update_indexes", body)
+
+        with self.assertRaises(HTTPError) as caught:
+            self.request(
+                "POST",
+                "/v1/config",
+                {"key": "dataset.unknown_dataset.foo", "value": "x"},
+            )
+        self.assertEqual(caught.exception.code, 400)
+        body = caught.exception.read().decode("utf-8")
+        caught.exception.close()
+        self.assertIn("unknown dataset setting 'dataset.unknown_dataset.foo'", body)
+        self.assertNotIn("declared settings", body)
+
+    def test_config_completion_includes_declared_but_unset_keys(self) -> None:
+        code, output = self.run_cli("_complete", "config", "set", "")
+
+        self.assertEqual(code, 0)
+        candidates = output.splitlines()
+        self.assertIn("dataset.tushare_daily_basic.update_symbols", candidates)
+        self.assertIn("dataset.tushare_index_weight.update_indexes", candidates)
+        self.assertIn("provider.tushare.token", candidates)
+        self.assertIn("display.timezone", candidates)
+
+        code, output = self.run_cli("_complete", "config", "unset", "dataset.tushare_i")
+        self.assertEqual(code, 0)
+        self.assertEqual(output.splitlines(), ["dataset.tushare_index_weight.update_indexes"])
 
     def test_declining_reset_confirmation_cancels_neutrally(self) -> None:
         class TTYInput(io.StringIO):

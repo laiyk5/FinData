@@ -225,10 +225,14 @@ class DiagnosticPresentationTests(unittest.TestCase):
                 logs = runner.logs(handle)
 
         self.assertEqual(result.diagnostic_counts, {"warning": 3, "error": 0})
-        self.assertEqual(logs[0], "started")
+        self.assertEqual(logs[0]["type"], "log")
+        self.assertEqual(logs[0]["message"], "started")
+        self.assertIsInstance(logs[0]["time"], float)
         self.assertEqual(logs[1]["type"], "task.diagnostic")
         self.assertEqual(logs[1]["code"], "PARTIAL_DATA")
         self.assertEqual(logs[1]["count"], 3)
+        self.assertIsInstance(logs[1]["time"], float)
+        self.assertEqual(logs[-1]["message"], "succeeded")
 
     def test_redirected_human_diagnostics_are_bounded_with_exact_totals(self) -> None:
         stderr = io.StringIO()
@@ -271,6 +275,38 @@ class DiagnosticPresentationTests(unittest.TestCase):
         record = json.loads(stdout.getvalue())
         self.assertEqual(record["type"], "task.diagnostic")
         self.assertEqual(record["count"], 3)
+
+
+class TaskLogPresentationTests(unittest.TestCase):
+    def test_human_log_records_render_clock_in_display_timezone(self) -> None:
+        stdout = io.StringIO()
+        output = CLIOutput(
+            output_format="human",
+            color_mode="never",
+            stdout=stdout,
+            stderr=io.StringIO(),
+            display_timezone="Asia/Shanghai",
+        )
+        output.log_record({"type": "log", "time": 0.0, "message": "worker started"})
+        output.log_record({"type": "log", "message": "legacy without timestamp"})
+
+        self.assertEqual(
+            stdout.getvalue(),
+            "08:00:00 worker started\nlegacy without timestamp\n",
+        )
+
+    def test_jsonl_log_records_pass_through_unchanged(self) -> None:
+        stdout = io.StringIO()
+        output = CLIOutput(
+            output_format="jsonl",
+            color_mode="never",
+            stdout=stdout,
+            stderr=io.StringIO(),
+        )
+        record = {"type": "log", "time": 1784883136.5, "message": "succeeded"}
+        output.log_record(record)
+
+        self.assertEqual(json.loads(stdout.getvalue()), record)
 
 
 if __name__ == "__main__":

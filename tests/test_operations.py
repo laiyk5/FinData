@@ -3,11 +3,14 @@ from __future__ import annotations
 import tempfile
 import unittest
 from collections.abc import Mapping
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from findata import DataLoader
+from findata.contracts import OperandError
+from findata.datasets.tushare import TUSHARE_DATASETS
 from findata.datasets.tushare.operations import DatasetService, register_v1_datasets
 from findata.providers.tushare import TushareClient
 from findata.storage import Workspace
@@ -33,6 +36,25 @@ class DatedSnapshotTransport(MockTushareTransport):
         return []
 
 
+class SaturatedMarketTransport(MockTushareTransport):
+    """Full-market daily_basic responses always reach the declared 6000-row limit."""
+
+    def _daily_basic(self, params: Mapping[str, Any]) -> list[dict[str, Any]]:
+        if params.get("trade_date") and not params.get("ts_code"):
+            rows: list[dict[str, Any]] = []
+            for index in range(6000):
+                row: dict[str, Any] = {
+                    "ts_code": f"{index:06d}.SH",
+                    "trade_date": str(params["trade_date"]),
+                    "limit_status": 1,
+                }
+                for field in TUSHARE_DATASETS["tushare_daily_basic"].provider_fields[2:-1]:
+                    row[field] = 1.0
+                rows.append(row)
+            return rows
+        return super()._daily_basic(params)
+
+
 def _weight_row(index: str, constituent: str, trade_date: str) -> dict[str, Any]:
     return {
         "index_code": index,
@@ -40,6 +62,40 @@ def _weight_row(index: str, constituent: str, trade_date: str) -> dict[str, Any]
         "trade_date": trade_date,
         "weight": 100.0,
     }
+
+
+class RecordingReporter:
+    """Minimal OperationReporter that captures log messages for assertions."""
+
+    def __init__(self) -> None:
+        self.messages: list[str] = []
+
+    def checkpoint(self) -> None:
+        pass
+
+    def log(self, message: str) -> None:
+        self.messages.append(message)
+
+    def fulfill(self, dataset: str, requirement: dict[str, Any]) -> Any:
+        raise AssertionError(f"unexpected dependency on {dataset}")
+
+    def begin_subtask(self, *, timeout: float) -> None:
+        pass
+
+    def end_subtask(self) -> None:
+        pass
+
+    def waiting(self, reason: str) -> None:
+        pass
+
+    def running(self) -> None:
+        pass
+
+    def progress(self, current: int | float, total: int | float, **metrics: int | float) -> None:
+        pass
+
+    def stage(self, value: str) -> None:
+        pass
 
 
 class DatasetOperationTests(unittest.TestCase):
@@ -57,6 +113,39 @@ class DatasetOperationTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.tempdir.cleanup()
+
+    def test_operation_logs_plan_fetch_commit_and_completion(self) -> None:
+        reporter = RecordingReporter()
+        service = DatasetService(
+            self.workspace,
+            TushareClient(token="test-token", transport=self.transport),
+            today=date(2026, 7, 20),
+            reporter=reporter,
+        )
+        service.run(
+            "tushare_trade_cal",
+            "complete",
+            {"exchanges": ["SSE"], "timerange": "2026-07-17:2026-07-21"},
+        )
+
+        messages = reporter.messages
+        self.assertTrue(messages[0].startswith("plan: 1 exchanges over "))
+        fetch = next(message for message in messages if message.startswith("fetch trade_cal("))
+        self.assertIn("exchange=SSE", fetch)
+        fetched = next(message for message in messages if message.startswith("fetched trade_cal("))
+        self.assertRegex(fetched, r": [1-9]\d* rows$")
+        self.assertTrue(
+            any(
+                message.startswith("committed checkpoint: ") and " publication " in message
+                for message in messages
+            )
+        )
+        self.assertTrue(any(message.startswith("coverage: 1 keys, ") for message in messages))
+        self.assertRegex(
+            messages[-1],
+            r"^completed tushare_trade_cal complete: \d+ requests, \d+ rows, "
+            r"\d+ checkpoints in [\d.]+s → publication .+",
+        )
 
     def test_trade_calendar_complete_publishes_and_rerun_skips_coverage(self) -> None:
         first = self.service.run(
@@ -264,6 +353,231 @@ class DatasetOperationTests(unittest.TestCase):
             set(daily.column("ts_code").to_pylist()),
             {"000001.SZ", "600000.SH", "600519.SH"},
         )
+    def test_stock_basic_update_accepts_null_market_for_delisted_security(self) -> None:
+        self.service.run("tushare_stock_basic", "update", {})
+
+        table = DataLoader(self.root).dataset("tushare_stock_basic").query()
+        rows = {row["ts_code"]: row for row in table.to_pylist()}
+        self.assertIsNone(rows["600001.SH"]["market"])
+        self.assertEqual(rows["600001.SH"]["list_status"], "D")
+
+    def test_full_market_per_date_batches_many_symbols_into_one_request(self) -> None:
+        self.service.run(
+            "tushare_daily_basic",
+            "complete",
+            {"symbols": ["000001.SZ", "600000.SH"], "timerange": "2026-07-20:2026-07-21"},
+        )
+
+        requests = [
+            item["params"] for item in self.transport.requests if item["api_name"] == "daily_basic"
+        ]
+        self.assertEqual(requests, [{"trade_date": "20260720"}])
+        daily = DataLoader(self.root).dataset("tushare_daily_basic").query()
+        # The full-market mock universe includes 600519.SH; it is filtered out before commit.
+        self.assertEqual(set(daily.column("ts_code").to_pylist()), {"000001.SZ", "600000.SH"})
+        self.assertEqual(daily.column("trade_date").to_pylist(), [date(2026, 7, 20)] * 2)
+        coverage = {
+            row["key"]: (row["start"], row["end"])
+            for row in DataLoader(self.root).dataset("tushare_daily_basic").coverage().to_pylist()
+        }
+        self.assertEqual(
+            coverage,
+            {
+                "000001.SZ": (date(2026, 7, 20), date(2026, 7, 21)),
+                "600000.SH": (date(2026, 7, 20), date(2026, 7, 21)),
+            },
+        )
+
+    def test_per_symbol_shape_when_few_symbols_cover_many_dates(self) -> None:
+        self.service.run(
+            "tushare_daily_basic",
+            "complete",
+            {"symbols": ["000001.SZ"], "timerange": "2026-07-13:2026-07-21"},
+        )
+
+        requests = [
+            item["params"] for item in self.transport.requests if item["api_name"] == "daily_basic"
+        ]
+        self.assertEqual(
+            requests,
+            [{"ts_code": "000001.SZ", "start_date": "20260713", "end_date": "20260720"}],
+        )
+
+    def test_full_market_row_limit_falls_back_to_per_symbol_for_that_date(self) -> None:
+        transport = SaturatedMarketTransport(today=date(2026, 7, 20))
+        service = DatasetService(
+            self.workspace,
+            TushareClient(token="test-token", transport=transport),
+            today=date(2026, 7, 20),
+        )
+
+        service.run(
+            "tushare_daily_basic",
+            "complete",
+            {"symbols": ["000001.SZ", "600000.SH"], "timerange": "2026-07-20:2026-07-21"},
+        )
+
+        requests = [
+            item["params"] for item in transport.requests if item["api_name"] == "daily_basic"
+        ]
+        self.assertEqual(
+            requests,
+            [
+                {"trade_date": "20260720"},
+                {"ts_code": "000001.SZ", "start_date": "20260720", "end_date": "20260720"},
+                {"ts_code": "600000.SH", "start_date": "20260720", "end_date": "20260720"},
+            ],
+        )
+        daily = DataLoader(self.root).dataset("tushare_daily_basic").query()
+        self.assertEqual(set(daily.column("ts_code").to_pylist()), {"000001.SZ", "600000.SH"})
+        self.assertEqual(daily.num_rows, 2)
+
+    def test_full_market_absent_symbol_resolves_empty_only_after_the_window(self) -> None:
+        result = self.service.run(
+            "tushare_daily_basic",
+            "complete",
+            {
+                "symbols": ["000001.SZ", "600000.SH", "600519.SH", "999999.SH"],
+                "timerange": "2026-07-17:2026-07-18",
+            },
+        )
+
+        self.assertTrue(result.publication_id)
+        requests = [
+            item["params"] for item in self.transport.requests if item["api_name"] == "daily_basic"
+        ]
+        self.assertEqual(requests, [{"trade_date": "20260717"}])
+        daily = DataLoader(self.root).dataset("tushare_daily_basic").query()
+        self.assertEqual(
+            set(daily.column("ts_code").to_pylist()),
+            {"000001.SZ", "600000.SH", "600519.SH"},
+        )
+        coverage = DataLoader(self.root).dataset("tushare_daily_basic").coverage().to_pylist()
+        resolved = {row["key"] for row in coverage}
+        self.assertIn("999999.SH", resolved)
+
+    def test_inside_window_empty_full_market_response_fails_unresolved(self) -> None:
+        self.transport.empty_next("daily_basic")
+
+        with self.assertRaisesRegex(RuntimeError, "inside publication window"):
+            self.service.run(
+                "tushare_daily_basic",
+                "complete",
+                {
+                    "symbols": ["000001.SZ", "600000.SH"],
+                    "timerange": "2026-07-20:2026-07-21",
+                },
+            )
+        requests = [
+            item["params"] for item in self.transport.requests if item["api_name"] == "daily_basic"
+        ]
+        self.assertEqual(requests, [{"trade_date": "20260720"}])
+    def test_complete_clamps_tail_to_due_boundary_and_update_fetches_newly_due_date(self) -> None:
+        symbols = ["000001.SZ", "600000.SH", "600519.SH"]
+        self.service.run(
+            "tushare_daily_basic",
+            "complete",
+            {"symbols": symbols, "timerange": "2026-07-17:2026-07-25"},
+        )
+
+        requests = [
+            item["params"] for item in self.transport.requests if item["api_name"] == "daily_basic"
+        ]
+        self.assertEqual(requests, [{"trade_date": "20260717"}, {"trade_date": "20260720"}])
+        coverage = {
+            row["key"]: (row["start"], row["end"])
+            for row in DataLoader(self.root).dataset("tushare_daily_basic").coverage().to_pylist()
+        }
+        self.assertEqual(
+            coverage,
+            {symbol: (date(2026, 7, 17), date(2026, 7, 21)) for symbol in symbols},
+        )
+
+        next_day = DatasetService(
+            self.workspace,
+            TushareClient(token="test-token", transport=self.transport),
+            today=date(2026, 7, 21),
+        )
+        self.workspace.set_config("dataset.tushare_daily_basic.update_symbols", symbols)
+        next_day.run("tushare_daily_basic", "update", {})
+
+        requests = [
+            item["params"]
+            for item in self.transport.requests
+            if item["api_name"] == "daily_basic" and item["params"] not in requests
+        ]
+        # The clamped coverage left 2026-07-21 unresolved, so update fetches it.
+        self.assertIn({"trade_date": "20260721"}, requests)
+        stored = DataLoader(self.root).dataset("tushare_daily_basic").query(
+            time_range=("2026-07-21", "2026-07-22")
+        )
+        self.assertEqual(stored.num_rows, 3)
+
+    def test_per_symbol_shape_also_clamps_to_the_due_boundary(self) -> None:
+        self.service.run(
+            "tushare_daily_basic",
+            "complete",
+            {"symbols": ["000001.SZ"], "timerange": "2026-07-13:2026-07-25"},
+        )
+
+        requests = [
+            item["params"] for item in self.transport.requests if item["api_name"] == "daily_basic"
+        ]
+        self.assertEqual(
+            requests,
+            [{"ts_code": "000001.SZ", "start_date": "20260713", "end_date": "20260720"}],
+        )
+        coverage = DataLoader(self.root).dataset("tushare_daily_basic").coverage().to_pylist()
+        self.assertEqual(
+            [(row["key"], row["start"], row["end"]) for row in coverage],
+            [("000001.SZ", date(2026, 7, 13), date(2026, 7, 21))],
+        )
+
+    def test_update_before_publication_window_is_a_noop_on_initialized_dataset(self) -> None:
+        published = self.service.run(
+            "tushare_daily_basic",
+            "complete",
+            {"symbols": ["000001.SZ"], "timerange": "2026-07-17:2026-07-18"},
+        )
+        self.workspace.set_config(
+            "dataset.tushare_daily_basic.update_symbols", ["000001.SZ"]
+        )
+        morning = DatasetService(
+            self.workspace,
+            TushareClient(token="test-token", transport=self.transport),
+            today=date(2026, 7, 20),
+            now=datetime(2026, 7, 20, 10, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+        )
+        request_count = len(self.transport.requests)
+
+        result = morning.run("tushare_daily_basic", "update", {})
+
+        self.assertEqual(result.fetched_requests, 0)
+        self.assertEqual(result.publication_id, published.publication_id)
+        self.assertEqual(len(self.transport.requests), request_count)
+
+    def test_update_before_publication_window_on_uninitialized_dataset_fails(self) -> None:
+        self.workspace.set_config(
+            "dataset.tushare_daily_basic.update_symbols", ["000001.SZ"]
+        )
+        morning = DatasetService(
+            self.workspace,
+            TushareClient(token="test-token", transport=self.transport),
+            today=date(2026, 7, 20),
+            now=datetime(2026, 7, 20, 10, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+        )
+
+        with self.assertRaisesRegex(OperandError, "uninitialized"):
+            morning.run("tushare_daily_basic", "update", {})
+
+    def test_complete_with_entirely_future_range_raises(self) -> None:
+        with self.assertRaisesRegex(OperandError, "before the publication window"):
+            self.service.run(
+                "tushare_daily_basic",
+                "complete",
+                {"symbols": ["000001.SZ"], "timerange": "2026-07-21:2026-07-22"},
+            )
+        self.assertEqual(self.transport.requests, [])
 
 
 if __name__ == "__main__":

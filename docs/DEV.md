@@ -1,6 +1,6 @@
 # Development guide
 
-This file owns contributor workflow and implementation guidance. Architecture belongs to [DESIGN.md](DESIGN.md), dataset contracts to [DATASETS.md](DATASETS.md), toolkit contracts to [TOOLKITS.md](TOOLKITS.md), and verification policy to [TEST.md](TEST.md).
+This file owns contributor workflow and implementation guidance. Architecture belongs to [design/core.md](design/core.md), dataset contracts to [design/dataset/index.md](design/dataset/index.md), toolkit contracts to [design/toolkit/index.md](design/toolkit/index.md), and verification policy to [TEST.md](TEST.md).
 
 ## Development principles
 
@@ -39,7 +39,7 @@ Provider code never logs or returns credentials. Every external request, includi
 
 ## Adding a dataset plugin
 
-Before implementation, add its canonical entry to [DATASETS.md](DATASETS.md). Then define:
+Before implementation, add its canonical entry to [design/dataset/index.md](design/dataset/index.md). Then define:
 
 1. provider, logical Arrow schema, and keys;
 2. capabilities and any typed plugin settings, including defaults, normalization, help, and update-readiness rules;
@@ -91,7 +91,7 @@ Start with a private implementation in one dataset. On second use:
 
 1. document the common capability requirements;
 2. extract a dataset-neutral interface;
-3. document invariants and failure behavior in [TOOLKITS.md](TOOLKITS.md);
+3. document invariants and failure behavior in [design/toolkit/index.md](design/toolkit/index.md);
 4. retain provider-specific limits as parameters rather than branches on dataset names;
 5. add unit tests and integration tests for both consuming datasets.
 
@@ -137,7 +137,7 @@ checkpoint latency, reset, crash recovery, and wheel installation with the pinne
 
 Detailed workspace, database metadata, plugin, task-message, and HTTP schemas belong under
 `docs/specs/`. Specs may elaborate an architectural contract but may not override
-[DESIGN.md](DESIGN.md).
+[design/core.md](design/core.md).
 
 ## Documentation workflow
 
@@ -171,6 +171,31 @@ supported Python version and verify:
 The supported-version matrix must be explicit in the Nox configuration and CI rather than inferred
 from whichever interpreters happen to be installed locally. Add that configuration before treating
 the multi-version installation gate as complete.
+
+## WebUI development
+
+The WebUI source lives in `web/` (Vite, React, TypeScript) and builds into
+`src/findata/webui/`, which the server serves for non-`/v1` paths. The bundle is git-ignored but
+is shipped in the sdist and wheel through Hatchling `artifacts`, so a release build must run the
+UI build before packaging. UI work requires Node.js and npm; Python-only changes do not.
+
+```bash
+cd web
+npm ci
+npm run dev        # Vite dev server; proxies /v1 to http://127.0.0.1:8765
+npm run typecheck  # tsc --noEmit
+npm test           # vitest unit tests
+npm run build      # production bundle into src/findata/webui/
+```
+
+`nox -s webui` runs typecheck, unit tests, and the production build in one gate.
+
+The WebUI is a thin client: it must not add validation, lifecycle states, or policy that the
+server does not already expose. Operation forms are generated from server operation schemas, and
+live updates use polling only — do not introduce SSE, WebSockets, or new `/v1` endpoints for UI
+convenience. Static assets are served without the token by design (see
+[design/core.md](design/core.md#workspace-and-server)); never place secrets or workspace-specific values in
+the bundle.
 
 ## Git branch workflow
 

@@ -1,56 +1,4 @@
-# Documents
-
-findata uses six primary documents with exclusive ownership:
-
-- **[DESIGN.md](DESIGN.md)** — architecture, canonical terminology, boundaries, invariants, and major decisions
-- **[DEV.md](DEV.md)** — contributor workflow and implementation guidance
-- **[TEST.md](TEST.md)** — testing methodology and required verification
-- **[USER.md](USER.md)** — installation, workflows, CLI/DataLoader usage, and user-documentation principles
-- **[DATASETS.md](DATASETS.md)** — canonical contracts for dataset plugins
-- **[TOOLKITS.md](TOOLKITS.md)** — canonical contracts for reusable toolkit components
-
-Every fact has one owning document. Other documents link to it rather than copying it. Development-time schemas and protocol specifications may live under `docs/specs/`; they may elaborate but never override this design.
-
-# Design
-
-## Purpose and primary story
-
-findata serves two purposes:
-
-1. maintain datasets through plugins that are easy to install and run;
-2. provide one DataLoader interface so readers do not need to know physical storage layouts.
-
-The primary v1 user is a quantitative researcher who backfills daily valuation data for an index universe, opts into recurring maintenance, and queries covered data safely from Python. The story is complete when provider readiness is diagnosable, dependency data is fulfilled deterministically, failed work is resumable, automatic maintenance is explicit, and DataLoader either returns covered data or identifies exact missing intervals. The executable workflow lives in [USER.md](USER.md#quick-start).
-
-Features that do not materially support this story may be deferred from v1.
-
-## Glossary
-
-- **Workspace** — a dedicated local directory owned by exactly one server at a time
-- **Provider** — a modular data source with shared configuration and rate limiting
-- **Dataset** — a plugin defining how one logical dataset is maintained and described
-- **Operation / operands** — a maintenance callable / its validated parameters
-- **Task / checkpoint batch** — an operation executed in a process / a bounded unit committed in one database transaction
-- **Task handle / subscription** — one submission's ID / its interest in a possibly shared execution
-- **Triggered task** — a task submission made by another task to fulfill a declared dependency
-- **TaskRunner** — the server component that queues, executes, and monitors tasks
-- **Task mutex** — the per-dataset lock serializing task executions
-- **Write gate** — the cross-process per-dataset read-write lock protecting publication and readers
-- **crond** — the server component triggering enabled scheduled updates
-- **Event log** — the persistent append-only record of events requiring attention
-- **DataLoader** — the standalone uniform query interface over published workspace data
-- **Toolkit** — opt-in reusable helpers imported by dataset plugins
-- **Capabilities** — declared features or limits checked by reusable helpers
-- **Publication window** — the provider-defined interval in which target data becomes available
-- **Due** — data whose publication window has started
-- **Resolved / unresolved** — due data with a final fetch result / data never fetched, failed, or transiently empty
-- **Resolved-empty** — a due request whose empty result is recorded as final
-- **Missing-data policy** — `strict`, `accept-empty`, or `best-effort`
-- **Resolved coverage** — one continuous half-open `[start, end)` interval per partition key
-- **Coverage record** — the materialized per-key resolved coverage
-- **Dataset revision** — one committed, self-consistent database state containing data and matching coverage
-- **Dataset setting** — a typed, plugin-owned configuration value used by that dataset's operations
-- **Coverage requirement** — a target-dataset-defined declaration of data needed by a dependent task
+# Architecture
 
 ## Architectural boundaries
 
@@ -63,6 +11,10 @@ Features that do not materially support this story may be deferred from v1.
 - DataLoader owns uniform query semantics, coverage checks, database locking, SQL generation, and
   Arrow results.
 - The CLI is a thin HTTP client. It collects syntax and formats output; the server owns validation and policy.
+- The WebUI is a second thin client over the same HTTP API. It is a static single-page
+  application served by the server itself; it holds the workspace token in the browser session,
+  renders only server-reported semantics, and follows live work by polling. It adds no endpoints,
+  lifecycle states, or policy of its own.
 - Core modules load concrete providers and datasets only through registered contracts. They never
   import concrete plugin modules or the optional toolkit package.
 
@@ -72,7 +24,12 @@ One server controls one workspace. It acquires a non-blocking `flock` on a works
 
 v1 supports Linux and macOS on local POSIX filesystems providing `flock`, signals, permissions, directory flushing, and same-filesystem atomic rename. Network filesystems and Windows are outside the v1 contract.
 
-The server exposes a versioned localhost HTTP API on `127.0.0.1`. `findata-server init` creates the workspace with `0700` permissions and a cryptographically random bearer token in a `0600` file. Every request, including streams, requires the token in the `Authorization` header. Tokens never appear in URLs or logs.
+The server exposes a versioned localhost HTTP API on `127.0.0.1`. `findata-server init` creates the workspace with `0700` permissions and a cryptographically random bearer token in a `0600` file. Every API request, including streams, requires the token in the `Authorization` header. Tokens never appear in URLs or logs.
+
+The server also serves the WebUI's static assets (HTML, JavaScript, CSS) for non-API paths.
+Those assets carry no secrets and are served without the token; every data request made by the
+loaded page still requires it. The page never embeds the token in markup, and the build output
+contains no workspace-specific values.
 
 Filesystem creation has explicit ownership. Workspace initialization alone creates the workspace
 root and workspace-level files; dataset registration alone creates a dataset directory, its gate,
@@ -147,7 +104,7 @@ holds its task mutex and exclusive gate, replaces the database with a newly init
 leaves provider configuration, dataset settings, task history, and other datasets unchanged. The
 human CLI requires confirmation; structured or non-interactive use requires an explicit `--yes`.
 
-Canonical per-plugin contracts live in [DATASETS.md](DATASETS.md).
+Canonical per-plugin contracts live in [dataset/index.md](dataset/index.md).
 
 ## Update timing, coverage, and settings
 
@@ -229,7 +186,7 @@ transformation, and validation outside the write gate, then commits its accumula
 transaction. A later failure preserves completed batches and loses at most the in-flight batch.
 Progress distinguishes processed work from durably checkpointed work.
 
-Execution records contain state, progress, logs, PID, and process start time. Separate handle records contain each submission's subscriber, execution, and public handle state. Active records persist; after completion, the newest 1,000 terminal handles per dataset and every execution they still reference are retained. Public task states and listing behavior are defined in [USER.md](USER.md#task-lifecycle).
+Execution records contain state, progress, logs, PID, and process start time. Separate handle records contain each submission's subscriber, execution, and public handle state. Active records persist; after completion, the newest 1,000 terminal handles per dataset and every execution they still reference are retained. Public task states and listing behavior are defined in [USER.md](../USER.md#task-lifecycle).
 
 Each dataset operation exposes a pure planning entry point. Planning consumes normalized operands,
 captured configuration, capabilities, coverage, publication time, and locally committed dependency
@@ -267,7 +224,7 @@ One task execution holds the dataset mutex. Additional executions wait in that d
 
 ## crond and events
 
-Every suggested dataset schedule appears as a disabled default job; automatic maintenance is opt-in. Workspace configuration owns enabled state and schedule/timezone overrides. Schedules are evaluated in their declared IANA timezone using the daylight-saving behavior defined in [USER.md](USER.md#cron). Market jobs should use the exchange timezone. Enabling and firing validate the operation, provider readiness, and plugin-reported update readiness. A failed precondition skips submission and records an actionable event.
+Every suggested dataset schedule appears as a disabled default job; automatic maintenance is opt-in. Workspace configuration owns enabled state and schedule/timezone overrides. Schedules are evaluated in their declared IANA timezone using the daylight-saving behavior defined in [USER.md](../USER.md#cron). Market jobs should use the exchange timezone. Enabling and firing validate the operation, provider readiness, and plugin-reported update readiness. A failed precondition skips submission and records an actionable event.
 
 Enabled jobs missed during downtime are recorded but not run automatically. The user decides whether to submit the corresponding update.
 
@@ -323,7 +280,7 @@ Alternative database engines, plugin-defined SQL, private reader adapters, and t
 entry points are outside v1. A future storage backend must preserve central query semantics, Arrow
 results, transactional data/coverage commits, and the DataLoader concurrency contract.
 
-The public API and examples live in [USER.md](USER.md#discovering-previewing-and-exporting-committed-data). Reader-strategy verification lives in [TEST.md](TEST.md#dataloader-contract-matrix).
+The public API and examples live in [USER.md](../USER.md#discovering-previewing-and-exporting-committed-data). Reader-strategy verification lives in [TEST.md](../TEST.md#duckdb-storage-and-dataloader-contract-matrix).
 
 ## Configuration and security
 
@@ -360,23 +317,13 @@ notation is reserved for extreme generic measurements, not used as the default n
 Presentation never changes the values or types emitted by JSON and JSONL.
 
 Progress is transient, but warning and error diagnostics remain inspectable under the existing
-task and event retention rules. A live human view keeps a bounded set visible and reports exact
+task and event retention rules. Retained task logs record lifecycle transitions and plugin
+fetch, plan, and commit summaries with timestamps, so the history of a running or finished task
+stays reviewable. A live human view keeps a bounded set visible and reports exact
 additional counts without flooding the terminal; structured streaming preserves every logical
-diagnostic occurrence. Detailed behavior is defined in [USER.md](USER.md#cli-behavior).
+diagnostic occurrence. Detailed behavior is defined in [USER.md](../USER.md#cli-behavior).
 
 JSON and JSONL are stable, undecorated interfaces for scripts and tests. Structured output never
 contains terminal control sequences, progress animation, readiness banners, or explanatory prose.
-Detailed terminal behavior and examples are defined once in [USER.md](USER.md#cli-behavior), and
-their verification belongs in [TEST.md](TEST.md#cli-presentation-matrix).
-
-## v1 commitments and non-goals
-
-The architecture contract is closed for v1 around atomic per-dataset database revisions,
-checkpoint-batched transactions, subscriber-aware task coalescing, centralized DataLoader query
-semantics, and the dataset contracts in [DATASETS.md](DATASETS.md).
-
-Online data-layout migration, third-party reader engines, network filesystems, Windows, automatic
-execution of missed cron jobs, and features unrelated to the primary story are v1 non-goals.
-Concrete workspace, database-metadata, plugin, task-message, event, and HTTP schemas belong in
-implementation specifications; they may choose mechanisms and encodings but may not change the
-behavior or boundaries defined here.
+Detailed terminal behavior and examples are defined once in [USER.md](../USER.md#cli-behavior), and
+their verification belongs in [TEST.md](../TEST.md#cli-presentation-matrix).

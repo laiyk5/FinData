@@ -6,6 +6,7 @@ import json
 import os
 import secrets
 import threading
+from collections.abc import Mapping
 from dataclasses import asdict
 from datetime import date, datetime, time
 from http import HTTPStatus
@@ -20,12 +21,36 @@ from findata.events import EventStore
 from findata.identifiers import AmbiguousIdentifierError, IdentifierNotFoundError
 from findata.loader import DataLoader, DatasetNotReadyError, UnsupportedCoverageError
 from findata.storage import Workspace
-from findata.plugins import discover_dataset_plugins, discover_provider_plugins, register_plugins
+from findata.plugins import (
+    DatasetPlugin,
+    ProviderPlugin,
+    discover_dataset_plugins,
+    discover_provider_plugins,
+    register_plugins,
+)
 from findata.taskrunner import DatasetBusyError, QueueFullError, TaskNotFoundError, TaskRunner
 
 
 class ServerAlreadyRunningError(RuntimeError):
     pass
+
+
+WEBUI_ROOT = Path(__file__).resolve().parent / "webui"
+
+_WEBUI_CONTENT_TYPES = {
+    ".html": "text/html; charset=utf-8",
+    ".js": "text/javascript; charset=utf-8",
+    ".mjs": "text/javascript; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".json": "application/json",
+    ".map": "application/json",
+    ".svg": "image/svg+xml",
+    ".png": "image/png",
+    ".ico": "image/x-icon",
+    ".txt": "text/plain; charset=utf-8",
+    ".woff": "font/woff",
+    ".woff2": "font/woff2",
+}
 
 
 def initialize_workspace(root: Path) -> Workspace:
@@ -304,10 +329,18 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
             return
 
         def _dispatch(self, method: str) -> None:
+            parsed = urlparse(self.path)
+            if not parsed.path.startswith("/v1"):
+                # Static WebUI assets carry no secrets and are served without the
+                # token; every /v1 request below still requires it.
+                if method == "GET":
+                    self._serve_webui(parsed.path)
+                else:
+                    self._send(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+                return
             if not self._authenticated():
                 self._send(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
                 return
-            parsed = urlparse(self.path)
             parts = [part for part in parsed.path.split("/") if part]
             query = parse_qs(parsed.query)
             try:
@@ -484,10 +517,8 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                         except ZoneInfoNotFoundError as exc:
                             raise ValueError(f"unknown IANA timezone {value!r}") from exc
                     if key.startswith("dataset."):
-                        components = key.split(".", 2)
-                        if len(components) != 3 or components[1] not in app.plugins:
-                            raise ValueError(f"unknown dataset setting {key!r}")
-                        value = app.plugins[components[1]].normalize_setting(
+                        plugin = _dataset_plugin_for_key(app, key)
+                        value = plugin.normalize_setting(
                             key, value, workspace=app.workspace
                         )
                     app.workspace.set_config(key, value)
@@ -538,14 +569,11 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                     if _reserved_config_key(key):
                         raise ValueError(f"configuration key {key!r} is reserved")
                     if key.startswith("dataset."):
-                        components = key.split(".", 2)
-                        if (
-                            len(components) != 3
-                            or components[1] not in app.plugins
-                            or key not in app.plugins[components[1]].settings
-                        ):
-                            raise ValueError(f"unknown dataset setting {key!r}")
+                        _dataset_plugin_for_key(app, key)
                     self._send(HTTPStatus.OK, {"removed": app.workspace.unset_config(parts[2])})
+                    return
+                if method == "GET" and parts == ["v1", "config", "keys"]:
+                    self._send(HTTPStatus.OK, {"items": _declared_config_keys(app)})
                     return
                 if (
                     method == "GET"
@@ -789,6 +817,32 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                 raise ValueError("request body must be an object")
             return value
 
+        def _serve_webui(self, raw_path: str) -> None:
+            if not WEBUI_ROOT.is_dir():
+                self._send(
+                    HTTPStatus.NOT_FOUND,
+                    {"error": "web UI is not built; run npm run build in web/"},
+                )
+                return
+            root = WEBUI_ROOT.resolve()
+            candidate = (root / raw_path.lstrip("/")).resolve()
+            if not candidate.is_file() or root not in candidate.parents:
+                # Unknown and unsafe paths fall back to the SPA entry point.
+                candidate = root / "index.html"
+            content_type = _WEBUI_CONTENT_TYPES.get(
+                candidate.suffix.lower(), "application/octet-stream"
+            )
+            payload = candidate.read_bytes()
+            self.send_response(HTTPStatus.OK.value)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(payload)))
+            if candidate.name == "index.html":
+                self.send_header("Cache-Control", "no-cache")
+            elif raw_path.startswith("/assets/"):
+                self.send_header("Cache-Control", "public, max-age=31536000, immutable")
+            self.end_headers()
+            self.wfile.write(payload)
+
         def _send(self, status: HTTPStatus, value: Any) -> None:
             payload = json.dumps(value, separators=(",", ":"), default=str).encode("utf-8")
             self.send_response(status.value)
@@ -823,6 +877,72 @@ RESERVED_CONFIG_PREFIXES = ("cron.",)
 def _reserved_config_key(key: str) -> bool:
     """Internal state keys (for example cron.jobs) are not user configuration."""
     return any(key.startswith(prefix) for prefix in RESERVED_CONFIG_PREFIXES)
+
+
+CORE_CONFIG_KEYS: dict[str, dict[str, Any]] = {
+    "display.timezone": {
+        "schema": {"type": "string", "format": "iana-timezone"},
+        "help": "Display timezone for human CLI output (IANA name, for example Asia/Shanghai).",
+    },
+}
+
+
+def _dataset_plugin_for_key(app: FindataServer, key: str) -> DatasetPlugin:
+    """Resolve a dataset.<name>.* configuration key to its owning plugin."""
+    components = key.split(".", 2)
+    if len(components) != 3 or components[1] not in app.plugins:
+        raise ValueError(f"unknown dataset setting {key!r}")
+    plugin = app.plugins[components[1]]
+    if key not in plugin.settings:
+        declared = ", ".join(sorted(plugin.settings)) or "none"
+        raise ValueError(
+            f"unknown setting {key!r} for {plugin.name}; declared settings: {declared}"
+        )
+    return plugin
+
+
+def _provider_key_help(provider: ProviderPlugin, field: str) -> str:
+    if field in provider.secret_fields:
+        return (
+            f"{field.replace('_', ' ').capitalize()} for the {provider.provider_id} provider "
+            "(secret; set via --env or --stdin)."
+        )
+    if field == "rate_limit":
+        return (
+            f"Rate limit for the {provider.provider_id} provider "
+            f"(requests per {provider.period} seconds)."
+        )
+    return f"{field.replace('_', ' ').capitalize()} for the {provider.provider_id} provider."
+
+
+def _declared_config_keys(app: FindataServer) -> list[dict[str, Any]]:
+    """Declared configuration keys: core, provider, and plugin dataset settings."""
+    items: list[dict[str, Any]] = []
+
+    def item(key: str, help_text: str, schema: Any, *, secret: bool) -> dict[str, Any]:
+        return {
+            "key": key,
+            "help": help_text,
+            "schema": dict(schema) if isinstance(schema, Mapping) else {},
+            "configured": app.workspace.get_config(key) is not None,
+            "secret": secret,
+        }
+
+    for key, declaration in CORE_CONFIG_KEYS.items():
+        items.append(item(key, str(declaration["help"]), declaration["schema"], secret=False))
+    for provider_id, provider in sorted(app.providers.items()):
+        properties = provider.configuration_schema.get("properties", {})
+        if not isinstance(properties, Mapping):
+            continue
+        for field, schema in properties.items():
+            key = f"provider.{provider_id}.{field}"
+            items.append(
+                item(key, _provider_key_help(provider, str(field)), schema, secret=field in provider.secret_fields)
+            )
+    for name, plugin in sorted(app.plugins.items()):
+        for key, setting in sorted(plugin.settings.items()):
+            items.append(item(key, setting.help, setting.schema, secret=False))
+    return items
 
 
 def _redact(key: str, value: Any, secret_keys: frozenset[str] = frozenset()) -> Any:

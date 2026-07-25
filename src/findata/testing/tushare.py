@@ -141,7 +141,7 @@ class MockTushareTransport:
             _stock_row("000001.SZ", "000001", "平安银行", "SZSE", "主板", "L", "19910403"),
             _stock_row("430047.BJ", "430047", "诺思兰德", "BSE", "北交所", "L", "20201124"),
             _stock_row(
-                "600001.SH", "600001", "示例退市", "SSE", "主板", "D", "19910101", "20200101"
+                "600001.SH", "600001", "示例退市", "SSE", None, "D", "19910101", "20200101"
             ),
             _stock_row("920000.BJ", "920000", "示例待交易", "BSE", "北交所", "G", None),
         ]
@@ -201,9 +201,16 @@ class MockTushareTransport:
         ]
 
     def _daily_basic(self, params: Mapping[str, Any]) -> list[dict[str, Any]]:
-        symbols = [str(params["ts_code"])] if params.get("ts_code") else ["000001.SZ", "600000.SH"]
-        start = _provider_date(params.get("start_date"), fallback=self.today)
-        end = _provider_date(params.get("end_date"), fallback=start)
+        symbols = (
+            [str(params["ts_code"])]
+            if params.get("ts_code")
+            else ["000001.SZ", "600000.SH", "600519.SH"]
+        )
+        if params.get("trade_date"):
+            start = end = _provider_date(params["trade_date"], fallback=self.today)
+        else:
+            start = _provider_date(params.get("start_date"), fallback=self.today)
+            end = _provider_date(params.get("end_date"), fallback=start)
         result: list[dict[str, Any]] = []
         cursor = start
         while cursor <= end:
@@ -263,7 +270,7 @@ def _stock_row(
     symbol: str,
     name: str,
     exchange: str,
-    market: str,
+    market: str | None,
     list_status: str,
     list_date: str | None,
     delist_date: str | None = None,

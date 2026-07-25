@@ -399,6 +399,24 @@ class CLIOutput:
             self.stdout.write(f"{message}\n")
             self.stdout.flush()
 
+    def log_record(self, record: Mapping[str, object]) -> None:
+        """Render one typed task log record ({type: log, time, message})."""
+        if self.output_format == "jsonl":
+            self._jsonl(record, "log")
+            return
+        if self.output_format != "human":
+            return
+        message = str(record.get("message", ""))
+        stamp = record.get("time")
+        if isinstance(stamp, (int, float)):
+            clock = datetime.fromtimestamp(float(stamp), UTC).astimezone(self.display_timezone)
+            message = f"{clock:%H:%M:%S} {message}"
+        if self.quiet:
+            return
+        self.finish_progress()
+        self.stdout.write(f"{message}\n")
+        self.stdout.flush()
+
     def detached(self, handle: str) -> None:
         self.finish_progress()
         if self.output_format in {"json", "jsonl"}:
@@ -705,7 +723,10 @@ def _display_mapping(
     if field == "properties":
         lines = []
         for name, schema in value.items():
-            lines.append(f"  - {name}: {_operand_schema(schema)}")
+            rendered = _operand_schema(schema)
+            if isinstance(schema, Mapping) and schema.get("help"):
+                rendered = f"{rendered} — {schema['help']}"
+            lines.append(f"  - {name}: {rendered}")
         return "\n" + "\n".join(lines)
     if all(not isinstance(item, (Mapping, list, tuple)) for item in value.values()):
         return ", ".join(
@@ -757,7 +778,8 @@ def _display_sequence(
         for item in value:
             required = item.get("required")
             suffix = f" (required: {', '.join(str(name) for name in required)})" if required else ""
-            lines.append(f"  - {item.get('name', item)}{suffix}")
+            help_text = f" — {item['help']}" if item.get("help") else ""
+            lines.append(f"  - {item.get('name', item)}{suffix}{help_text}")
         return "\n" + "\n".join(lines)
     if field == "fields" and all(isinstance(item, Mapping) for item in value):
         lines = []

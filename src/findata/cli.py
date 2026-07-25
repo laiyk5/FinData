@@ -446,6 +446,8 @@ def _render_task_log(output: CLIOutput, item: object, *, handle_id: str) -> None
         diagnostic = dict(item)
         diagnostic.setdefault("handle_id", handle_id)
         output.diagnostic(diagnostic)
+    elif isinstance(item, Mapping) and item.get("type") == "log":
+        output.log_record(item)
     else:
         output.log(str(item))
 
@@ -663,8 +665,7 @@ def _dynamic_completion(client: _Client, words: list[str]) -> list[str]:
 
     if first == "config" and len(rest) in {1, 2} and rest[0] in {"set", "get", "unset"}:
         prefix = rest[1] if len(rest) == 2 else ""
-        values = client.request("GET", "/v1/config").get("values", {})
-        keys = [str(key) for key in values] if isinstance(values, Mapping) else []
+        keys = _config_key_candidates(client)
         return [key for key in keys if key.startswith(prefix)]
 
     if (
@@ -687,6 +688,24 @@ def _dynamic_completion(client: _Client, words: list[str]) -> list[str]:
         return [event_id for event_id in events if event_id.startswith(prefix)]
 
     return _static_completion(words)
+
+
+def _config_key_candidates(client: _Client) -> list[str]:
+    """Merge declared configuration keys with currently-set keys for completion."""
+    keys: set[str] = set()
+    try:
+        declared = client.request("GET", "/v1/config/keys").get("items", [])
+        if isinstance(declared, list):
+            for entry in declared:
+                if isinstance(entry, Mapping) and entry.get("key"):
+                    keys.add(str(entry["key"]))
+    except ServerError:
+        # Older servers lack /v1/config/keys; fall back to set keys only.
+        pass
+    values = client.request("GET", "/v1/config").get("values", {})
+    if isinstance(values, Mapping):
+        keys.update(str(key) for key in values)
+    return sorted(keys)
 
 
 def _static_completion(words: list[str]) -> list[str]:

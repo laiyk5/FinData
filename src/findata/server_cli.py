@@ -46,6 +46,19 @@ def main(
         stdout.write(f"Initialized FinData workspace at {workspace}\n")
         stdout.flush()
         return 0
+    if args.command == "token":
+        workspace = Path(args.workspace).expanduser().resolve()
+        token_path = workspace / "token"
+        if not token_path.is_file():
+            stderr.write(
+                f"Error: no workspace token at {token_path}; "
+                "run findata-server init <workspace> first\n"
+            )
+            stderr.flush()
+            return 1
+        stdout.write(token_path.read_text(encoding="utf-8"))
+        stdout.flush()
+        return 0
     workspace = Path(args.workspace).expanduser().resolve()
     try:
         server = FindataServer(
@@ -115,6 +128,15 @@ def _command_tree() -> click.Group:
         return SimpleNamespace(command="init", workspace=workspace)
 
     @root.command(
+        "token",
+        cls=DocumentedCommand,
+        help="Print the workspace API token, for example to sign in to the Web UI.",
+    )
+    @click.argument("workspace", type=click.Path(path_type=Path))
+    def token(workspace: Path) -> SimpleNamespace:
+        return SimpleNamespace(command="token", workspace=workspace)
+
+    @root.command(
         "start",
         cls=DocumentedCommand,
         help="Run the authenticated local API and task service in the foreground.",
@@ -149,7 +171,7 @@ def _command_tree() -> click.Group:
             provider_mode=provider_mode,
         )
 
-    for command, verb in ((initialize, "create"), (start, "run")):
+    for command, verb in ((initialize, "create"), (start, "run"), (token, "inspect")):
         for parameter in command.params:
             if isinstance(parameter, click.Argument) and parameter.name == "workspace":
                 parameter.help = f"Workspace directory to {verb}."

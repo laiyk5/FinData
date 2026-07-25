@@ -80,7 +80,9 @@ COMMAND_HELP = {
 }
 
 ARGUMENT_HELP = {
-    "key": "Configuration key, for example dataset.tushare_daily_basic.update_symbols.",
+    "key": "Configuration key, for example dataset.tushare_daily_basic.update_symbols; "
+    "declared keys are listed by 'findata dataset describe <dataset>' and suggested by "
+    "shell completion.",
     "value": "Plain string value; use an alternate input option for typed or secret values.",
     "name": "Registered provider identifier.",
     "dataset": "Registered dataset identifier.",
@@ -98,10 +100,13 @@ OPTION_HELP = {
     "env": "Read the configuration value from this environment variable.",
     "stdin": "Read the configuration value from stdin.",
     "all": "Apply to or include all matching resources.",
-    "symbols": "Repeat for each provider symbol to select.",
-    "indexes": "Repeat for each provider-qualified index to select.",
-    "exchanges": "Repeat for each exchange to select.",
-    "timerange": "Half-open date range in START:END form; dates are YYYY-MM-DD or today.",
+    "symbols": "Repeat for each provider symbol to select; accepts Tushare security codes like "
+    "600000.SH or constituent selectors tushare:<ts_code>[@latest|@YYYYMM].",
+    "indexes": "Repeat for each provider-qualified index to select, spelled tushare:<ts_code> "
+    "(for example tushare:000300.SH).",
+    "exchanges": "Repeat for each exchange to select; SSE and/or SZSE.",
+    "timerange": "Half-open date range in START:END form; dates are YYYY-MM-DD or today, the "
+    "end is exclusive, and today resolves in the dataset timezone.",
     "range_start": "Inclusive start date in YYYY-MM-DD form, or today.",
     "range_end": "Exclusive end date in YYYY-MM-DD form, or today.",
     "wait": "Wait until the submitted task reaches a terminal state.",

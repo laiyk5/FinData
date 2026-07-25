@@ -1,6 +1,6 @@
 # Testing
 
-This file owns findata's testing methodology and required verification. It tests contracts defined in [DESIGN.md](DESIGN.md), [DATASETS.md](DATASETS.md), [TOOLKITS.md](TOOLKITS.md), and [USER.md](USER.md) without redefining them.
+This file owns findata's testing methodology and required verification. It tests contracts defined in [design/index.md](design/index.md), [design/dataset/index.md](design/dataset/index.md), [design/toolkit/index.md](design/toolkit/index.md), and [USER.md](USER.md) without redefining them.
 
 ## Principles
 
@@ -75,7 +75,7 @@ After a change appears complete, run a minimal representative operation and quer
 
 ### End-to-end tests
 
-E2E tests use real user surfaces. CLI tests execute commands and inspect stdout, stderr, exit codes, and structured output. A future web UI must be tested by opening it and exercising the relevant controls.
+E2E tests use real user surfaces. CLI tests execute commands and inspect stdout, stderr, exit codes, and structured output. The WebUI is verified at three levels: `tests/test_webui_static.py` covers token-free static-asset serving, path-traversal rejection, SPA fallback, and continued `/v1` authentication; `nox -s webui` runs the vitest unit suite (API client, schema-driven form mapping, polling) and the production build; and a browser-driven E2E opens the built UI against a mock-provider server and exercises login, operation submission, live task following, cron enabling, and event acknowledgement.
 
 The primary required E2E scenario is the workflow in [USER.md](USER.md#quick-start): configure a
 mocked Tushare provider, materialize one exact index reference, backfill `tushare_daily_basic`,

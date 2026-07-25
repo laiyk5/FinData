@@ -1,6 +1,6 @@
 # User documentation
 
-This file is the canonical user-facing guide for findata. Architecture and invariants live in [DESIGN.md](DESIGN.md); individual dataset contracts live in [DATASETS.md](DATASETS.md).
+This file is the canonical user-facing guide for findata. Architecture and invariants live in [design/core.md](design/core.md); individual dataset contracts live in [design/dataset/index.md](design/dataset/index.md).
 
 ## Installation
 
@@ -76,6 +76,25 @@ query them through DataLoader and must not open them read/write, remove WAL file
 database as a backup. Findata retains only the current committed dataset revision; routine updates
 do not create historical storage copies. Dataset initialization is local and does not contact a
 provider.
+
+## Web UI
+
+While `findata-server start` is running, the server also serves a browser UI at its listening
+address (default `http://127.0.0.1:8765/`). Open it in a browser and paste the workspace token
+when prompted; `findata-server token <workspace>` prints it (it is also the `<workspace>/token`
+file). The token is held only in the browser session and is
+sent as an `Authorization` header, never in a URL.
+
+The WebUI is a thin client over the same HTTP API as the CLI and covers the same operational
+surface: system status, datasets (describe, status, schema-driven operation forms with dry-run
+and submit, confirmed reset), tasks (list, live status and logs, cancel, retry, explain),
+providers (status and authenticated check), cron (enable, disable, schedule editing, reset),
+events (filtering and acknowledgement), and configuration (list, set, unset — secrets can be
+entered but are never displayed). It follows live work by polling; no work is submitted
+implicitly, and every mutation corresponds to the CLI command documented in this guide.
+
+Reading committed data (`data schema`, `data preview`, `data coverage`, `data export`) remains a
+CLI and DataLoader workflow and is intentionally not part of the WebUI.
 
 ## CLI behavior
 
@@ -182,7 +201,9 @@ embedded Python caller returns normally rather than terminating the host process
 
 ### Operand conventions
 
-Dataset-specific operands are defined in [DATASETS.md](DATASETS.md). CLI date ranges use `start:end` and are half-open: the start is included and the end is excluded. Dates use `YYYY-MM-DD`; `today` is resolved once in the dataset timezone to the current date, so it excludes the current date when used as the end. For example, `2026-06-01:2026-07-01` covers all of June.
+Dataset-specific operands are defined in [design/dataset/index.md](design/dataset/index.md). `findata dataset operation
+<dataset> <operation>` and `findata dataset describe <dataset>` show per-operand help alongside
+the operand schema. CLI date ranges use `start:end` and are half-open: the start is included and the end is excluded. Dates use `YYYY-MM-DD`; `today` is resolved once in the dataset timezone to the current date, so it excludes the current date when used as the end. For example, `2026-06-01:2026-07-01` covers all of June.
 
 A scalar passed for an array operand is coerced to one element, so
 `--param symbols=tushare:000300.SH` is equivalent to
@@ -215,7 +236,10 @@ Canceling one coalesced handle makes that handle `canceled` immediately while an
   - The CLI collects input; the server applies schema coercion and defaults, validates the complete operands, and returns field-level errors.
 - `task ls [--all] [--dataset NAME] [--status STATUS]` — list handles; the default view contains every nonterminal handle and the 50 most recent terminal handles. `--all` means all retained handles, up to the newest 1,000 terminal handles per dataset. `STATUS` is one of the public lifecycle states above.
 - `task status <id>` — show status and progress. If work was coalesced, indicate whether other requesters remain.
-- `task logs <id> [--follow]` — print logs; `-f` aliases `--follow`.
+- `task logs <id> [--follow]` — print the retained task log; `-f` aliases `--follow`.
+  - Human output renders one line per record as `HH:MM:SS message` in the display timezone.
+  - The retained log records what a task actually did: lifecycle transitions (`waiting: <reason>`, `running`), dependency requests and their fulfillment or failure, the terminal state (`succeeded`, `failed: <error>`, `canceled`), and dataset plugin activity — a plan summary per operation, one fetch line per provider request with parameters and returned row counts, checkpoint commits with row and coverage totals, and a final completion summary.
+  - JSONL emits one typed record per line: `{"type":"log","time":<epoch seconds>,"message":...}` for log lines and `{"type":"task.diagnostic",...}` for diagnostics. Progress and stage updates are transient and not part of the retained log.
 - `task cancel <id>` — cancel this request and report whether shared execution continued for another requester.
 - `task watch <id>` — follow a retained task's progress and logs without submitting work.
 - `task retry <id> [--wait|--follow]` — submit a new handle using the retained task's normalized
@@ -229,7 +253,9 @@ Canceling one coalesced handle makes that handle `canceled` immediately while an
 - `dataset describe <name>` — show provider readiness, capabilities, dependencies, declared
   settings, storage, and status metadata.
 - `dataset operations <name>`
-- `dataset operation <name> <operation>` — show the operand schema and required operands.
+- `dataset operation <name> <operation>` — show the operand schema, required operands, and
+  per-operand help; `dataset describe <name>` shows the same operation-level and operand help
+  alongside the static contract.
 - `dataset status <name>` / `dataset status --all` — show committed maintenance state:
   provider and update readiness, initialization state, current publication, and a coverage
   summary (number of covered keys and the overall resolved range). This is the runtime
@@ -293,7 +319,13 @@ Keys under `dataset.<dataset-name>.*` are owned by that dataset plugin. Core fin
 stores the value but does not interpret it. The plugin declares its setting names and schemas,
 normalizes values, reports update readiness, and provides setting-specific help through
 `dataset describe`. Unknown dataset settings and invalid values are rejected before configuration
-is changed.
+is changed; the error for a registered dataset lists its declared setting keys.
+
+Declared keys can be discovered without knowing them in advance: shell completion for
+`config set|get|unset` suggests declared keys alongside already-set ones, `dataset describe
+<dataset>` shows that dataset's declared settings with help and whether each is configured, and
+the HTTP API exposes every declared core, provider, and dataset key at `GET /v1/config/keys`
+(with `key`, `help`, `schema`, `configured`, and `secret` per item).
 
 ### Completion
 

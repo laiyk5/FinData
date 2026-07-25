@@ -120,6 +120,36 @@ class CLIPresentationTests(unittest.TestCase):
         plain = output.replace("\x1b[1m", "").replace("\x1b[0m", "")
         self.assertTrue(all(len(line) <= 40 for line in plain.splitlines()))
 
+    def test_operation_and_describe_render_operand_help(self) -> None:
+        code, output, errors = self.run_cli(
+            "dataset", "operation", "tushare_daily_basic", "complete"
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(errors, "")
+        self.assertIn(
+            "symbols: array of string — Tushare security codes like 600000.SH", output
+        )
+        self.assertIn("timerange: string (half-open-date-range) — Half-open", output)
+
+        code, output, _ = self.run_cli(
+            "dataset", "operation", "tushare_index_weight", "update"
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("dataset.tushare_index_weight.update_indexes", output)
+
+        code, output, _ = self.run_cli("dataset", "describe", "tushare_daily_basic")
+        self.assertEqual(code, 0)
+        self.assertIn("update — Resolve the configured symbols", output)
+        self.assertIn("refresh (required: symbols, timerange) — Re-fetch", output)
+
+        code, output, _ = self.run_cli(
+            "--format", "json", "dataset", "operation", "tushare_daily_basic", "complete"
+        )
+        self.assertEqual(code, 0)
+        payload = json.loads(output)
+        self.assertNotIn("\x1b[", output)
+        self.assertIn("help", payload["properties"]["symbols"])
+
     def test_json_error_is_structured_and_json_follow_is_rejected(self) -> None:
         code, output, errors = self.run_cli(
             "--format", "json", "dataset", "describe", "does_not_exist"
