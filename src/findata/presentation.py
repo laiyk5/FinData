@@ -20,6 +20,34 @@ ANSI_GREEN = "\x1b[32m"
 ANSI_YELLOW = "\x1b[33m"
 ANSI_RED = "\x1b[31m"
 
+FALLBACK_DISPLAY_TIMEZONE = "Etc/GMT-8"  # fixed UTC+8, a valid IANA name
+
+
+def default_display_timezone() -> str:
+    """Probe the system timezone; fall back to fixed UTC+8 when unprobeable."""
+    candidates: list[str] = []
+    tz_env = os.environ.get("TZ")
+    if tz_env:
+        candidates.append(tz_env)
+    try:
+        link = os.readlink("/etc/localtime")
+        if "/zoneinfo/" in link:
+            candidates.append(link.split("/zoneinfo/", 1)[1])
+    except OSError:
+        pass
+    try:
+        with open("/etc/timezone", encoding="utf-8") as file:
+            candidates.append(file.read().strip())
+    except OSError:
+        pass
+    for name in candidates:
+        try:
+            ZoneInfo(name)
+        except (ZoneInfoNotFoundError, ValueError):
+            continue
+        return name
+    return FALLBACK_DISPLAY_TIMEZONE
+
 TIMESTAMP_FIELDS = {
     "created_at",
     "updated_at",
@@ -96,7 +124,7 @@ class CLIOutput:
         stdout: TextIO,
         stderr: TextIO,
         environ: Mapping[str, str] | None = None,
-        display_timezone: str = "UTC",
+        display_timezone: str | None = None,
         quiet: bool = False,
         verbose: bool = False,
         progress_enabled: bool = True,
@@ -110,7 +138,7 @@ class CLIOutput:
         self.progress_enabled = progress_enabled
         self.pager = pager
         try:
-            self.display_timezone = ZoneInfo(display_timezone)
+            self.display_timezone = ZoneInfo(display_timezone or default_display_timezone())
         except ZoneInfoNotFoundError as exc:
             raise ValueError(f"unknown display timezone {display_timezone!r}") from exc
         self.out_terminal = TerminalCapabilities.detect(

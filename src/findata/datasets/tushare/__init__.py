@@ -275,6 +275,7 @@ def builtin_plugins() -> list["DatasetPlugin"]:
                 schema={"type": "array", "minItems": 1, "items": {"type": "string"}},
                 normalize=_normalize_update_indexes,
                 help="Exact Tushare index references maintained by update.",
+                required=True,
             )
         },
         "tushare_daily_basic": {
@@ -282,6 +283,7 @@ def builtin_plugins() -> list["DatasetPlugin"]:
                 schema={"type": "array", "minItems": 1, "items": {"type": "string"}},
                 normalize=_normalize_update_symbols,
                 help="Direct securities and Tushare constituent selectors maintained by update.",
+                required=True,
             )
         },
     }

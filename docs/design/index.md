@@ -7,6 +7,8 @@ findata's primary documents have exclusive ownership. The canonical design docum
 
 - **[index.md](index.md)** (this file) — document map, purpose, glossary, and v1 commitments
 - **[core.md](core.md)** — architecture, canonical terminology, boundaries, invariants, and major decisions
+- **[ux/cli.md](ux/cli.md)** — CLI design: thin-client boundary, human output, and structured output
+- **[ux/webui.md](ux/webui.md)** — WebUI design: thin-client boundary, serving, pages, polling, and presentation policies
 - **[toolkit/index.md](toolkit/index.md)** — canonical contracts for reusable toolkit components
 - **[dataset/index.md](dataset/index.md)** — canonical contracts for dataset plugins
 

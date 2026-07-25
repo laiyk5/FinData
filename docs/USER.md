@@ -86,11 +86,14 @@ file). The token is held only in the browser session and is
 sent as an `Authorization` header, never in a URL.
 
 The WebUI is a thin client over the same HTTP API as the CLI and covers the same operational
-surface: system status, datasets (describe, status, schema-driven operation forms with dry-run
-and submit, confirmed reset), tasks (list, live status and logs, cancel, retry, explain),
-providers (status and authenticated check), cron (enable, disable, schedule editing, reset),
-events (filtering and acknowledgement), and configuration (list, set, unset — secrets can be
-entered but are never displayed). It follows live work by polling; no work is submitted
+surface: a home dashboard (attention queue, live work, dataset health), datasets (describe,
+status, schema-driven operation forms with dry-run and submit, typed settings editors, confirmed
+reset), tasks (list, live status and logs, cancel, retry, explain), providers (detail pages with
+configuration state, related datasets, and authenticated check), cron (guided schedule editing,
+enable, disable, reset), events (filtering, contextual actions, acknowledgement), configuration
+(grouped, filterable, fully generated from declared keys — secrets can be entered but are never
+displayed), and a server page (identity, uptime, workspace disk usage, task activity). It follows
+live work by polling; no work is submitted
 implicitly, and every mutation corresponds to the CLI command documented in this guide.
 
 Reading committed data (`data schema`, `data preview`, `data coverage`, `data export`) remains a

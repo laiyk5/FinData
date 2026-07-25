@@ -10,11 +10,10 @@
   never imports dataset maintenance plugins.
 - DataLoader owns uniform query semantics, coverage checks, database locking, SQL generation, and
   Arrow results.
-- The CLI is a thin HTTP client. It collects syntax and formats output; the server owns validation and policy.
-- The WebUI is a second thin client over the same HTTP API. It is a static single-page
-  application served by the server itself; it holds the workspace token in the browser session,
-  renders only server-reported semantics, and follows live work by polling. It adds no endpoints,
-  lifecycle states, or policy of its own.
+- The CLI is a thin HTTP client. It collects syntax and formats output; the server owns validation
+  and policy. Its design lives in [ux/cli.md](ux/cli.md).
+- The WebUI is a second thin client over the same HTTP API, served by the server itself. It adds no
+  endpoints, lifecycle states, or policy of its own. Its design lives in [ux/webui.md](ux/webui.md).
 - Core modules load concrete providers and datasets only through registered contracts. They never
   import concrete plugin modules or the optional toolkit package.
 
@@ -26,10 +25,8 @@ v1 supports Linux and macOS on local POSIX filesystems providing `flock`, signal
 
 The server exposes a versioned localhost HTTP API on `127.0.0.1`. `findata-server init` creates the workspace with `0700` permissions and a cryptographically random bearer token in a `0600` file. Every API request, including streams, requires the token in the `Authorization` header. Tokens never appear in URLs or logs.
 
-The server also serves the WebUI's static assets (HTML, JavaScript, CSS) for non-API paths.
-Those assets carry no secrets and are served without the token; every data request made by the
-loaded page still requires it. The page never embeds the token in markup, and the build output
-contains no workspace-specific values.
+The server also serves the WebUI's static assets for non-API paths under the contract defined in
+[ux/webui.md](ux/webui.md).
 
 Filesystem creation has explicit ownership. Workspace initialization alone creates the workspace
 root and workspace-level files; dataset registration alone creates a dataset directory, its gate,
@@ -63,7 +60,9 @@ Every dataset exposes a parameterless `update` operation. Additional operations 
 
 A plugin may declare typed settings under `dataset.<dataset-name>.*`. The generic configuration API
 stores values atomically but delegates schema validation, normalization, readiness, and meaning to
-the owning plugin. Core configuration and CLI code never parses selectors, symbols, constituent
+the owning plugin. Each declared setting is classified required or optional: a required setting
+gates update readiness, and only unconfigured required settings produce client warnings. Core
+configuration and CLI code never parses selectors, symbols, constituent
 references, or another dataset-specific value. An operation receives one immutable settings
 snapshot for its execution; changing a setting affects later submissions only.
 
@@ -259,18 +258,7 @@ DataLoader centrally owns:
 - shared-gate, read-only connection, and database-transaction lifetime.
 
 The core `data` CLI is a presentation/export adapter over DataLoader, not a server API or task
-operation. Schema discovery reads registered dataset metadata from the committed database; preview
-materializes only its bounded result; coverage delegates to DataLoader's coverage table; export
-consumes `iter_batches` and writes CSV, Parquet, Arrow IPC, or JSONL. It never imports a dataset
-plugin, opens a write connection, submits maintenance, or infers that missing coverage should be
-downloaded. File exports use a sibling temporary file and atomic rename, while stdout exports keep
-stdout data-only and send diagnostics to stderr.
-
-Coverage presentation preserves the stored half-open start and end dates. An optional requested
-half-open interval is compared with the same central coverage record to expose completeness and
-exact gaps without initiating maintenance. The human renderer treats dates as first-class table
-cells and sends output taller than an interactive terminal through the user's pager. Paging is a
-presentation concern only: structured, redirected, and export stdout remain deterministic streams.
+operation; its contract and coverage-presentation rules live in [ux/cli.md](ux/cli.md).
 
 An eager query holds a shared gate and read-only connection through Arrow-table materialization. A
 batch iterator holds both until its context manager closes. A reader therefore observes one committed
@@ -294,36 +282,7 @@ Workspace configuration is the single source of truth for:
 
 Secret values are stored only from stdin or as environment-variable references, are redacted from every read command, and never enter URLs or logs. Configuration mutations occur through the authenticated server API and are written atomically.
 
-## CLI principles
+## CLI and WebUI
 
-The server owns task state, progress meaning, warnings, and failure reasons. The CLI is a thin
-HTTP client that renders those semantics; it does not infer task policy or redefine lifecycle
-states. The server reports readiness only after workspace validation, recovery, plugin
-registration, and socket binding succeed.
-
-Human output is the default and favors concise tables, labeled detail views, explicit status
-words, and actionable errors. Stable command results go to stdout; transient progress and
-diagnostics go to stderr. Interactive decoration may improve presentation but must not carry
-meaning by itself or alter execution, task persistence, or cancellation behavior.
-
-Human task commands and event acknowledgement may use an unambiguous, server-resolved identifier
-prefix. Exact identifiers take precedence, prefixes used for state-changing operations have a
-minimum length, and every successful response returns the full resolved identifier. Prefix
-matching does not apply to dataset, provider, publication, or execution identifiers.
-
-Human rendering formats values according to declared field semantics: timestamps, durations,
-counts, percentages, and generic measurements have distinct presentation rules. Scientific
-notation is reserved for extreme generic measurements, not used as the default number format.
-Presentation never changes the values or types emitted by JSON and JSONL.
-
-Progress is transient, but warning and error diagnostics remain inspectable under the existing
-task and event retention rules. Retained task logs record lifecycle transitions and plugin
-fetch, plan, and commit summaries with timestamps, so the history of a running or finished task
-stays reviewable. A live human view keeps a bounded set visible and reports exact
-additional counts without flooding the terminal; structured streaming preserves every logical
-diagnostic occurrence. Detailed behavior is defined in [USER.md](../USER.md#cli-behavior).
-
-JSON and JSONL are stable, undecorated interfaces for scripts and tests. Structured output never
-contains terminal control sequences, progress animation, readiness banners, or explanatory prose.
-Detailed terminal behavior and examples are defined once in [USER.md](../USER.md#cli-behavior), and
-their verification belongs in [TEST.md](../TEST.md#cli-presentation-matrix).
+The CLI design — thin-client boundary, human output principles, and structured output contracts —
+lives in [ux/cli.md](ux/cli.md). The WebUI design lives in [ux/webui.md](ux/webui.md).

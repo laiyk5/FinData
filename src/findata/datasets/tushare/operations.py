@@ -1198,6 +1198,7 @@ def _dataset_settings(workspace: Workspace, dataset: str) -> list[dict[str, Any]
             "key": key,
             "schema": dict(setting.schema),
             "help": setting.help,
+            "required": setting.required,
             "configured": workspace.get_config(key) is not None,
         }
         for key, setting in plugin.settings.items()

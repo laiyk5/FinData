@@ -8,9 +8,10 @@ import secrets
 import threading
 from collections.abc import Mapping
 from dataclasses import asdict
-from datetime import date, datetime, time
+from datetime import UTC, date, datetime, time
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from importlib.metadata import PackageNotFoundError, version as package_version
 from pathlib import Path
 from typing import Any, Iterable
 from urllib.parse import parse_qs, urlparse
@@ -20,7 +21,8 @@ from findata.cron import CronManager
 from findata.events import EventStore
 from findata.identifiers import AmbiguousIdentifierError, IdentifierNotFoundError
 from findata.loader import DataLoader, DatasetNotReadyError, UnsupportedCoverageError
-from findata.storage import Workspace
+from findata.presentation import default_display_timezone
+from findata.storage import DATABASE_NAME, Workspace
 from findata.plugins import (
     DatasetPlugin,
     ProviderPlugin,
@@ -84,6 +86,7 @@ class FindataServer:
     ) -> None:
         self.root = Path(workspace)
         self.workspace = initialize_workspace(self.root)
+        self.started_at = datetime.now(UTC).timestamp()
         self.providers = {item.provider_id: item for item in discover_provider_plugins()}
         self.plugins = {
             item.name: item for item in discover_dataset_plugins(providers=self.providers.values())
@@ -230,6 +233,7 @@ class FindataServer:
             "covered_keys": None,
             "coverage_start": None,
             "coverage_end": None,
+            "storage_bytes": _dataset_storage_bytes(self.workspace, dataset),
         }
         reader = DataLoader(self.workspace.root).dataset(dataset)
         try:
@@ -351,6 +355,10 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                         {
                             "status": "running",
                             "pid": os.getpid(),
+                            "workspace": str(app.root),
+                            "started_at": app.started_at,
+                            "version": _server_version(),
+                            "workspace_disk": _workspace_disk_usage(app.root),
                             "tasks": len(app.taskrunner.list_handles()),
                             **runtime,
                         },
@@ -862,6 +870,60 @@ def _task_payload(record: Any) -> dict[str, Any]:
     return value
 
 
+def _server_version() -> str:
+    try:
+        return package_version("findata")
+    except PackageNotFoundError:
+        return "dev"
+
+
+def _workspace_disk_usage(root: Path) -> dict[str, Any]:
+    """On-disk size of the workspace itself, broken down by top-level entry."""
+    sizes: dict[str, int] = {}
+    total = 0
+    for entry in sorted(root.iterdir()):
+        size = _path_size(entry)
+        if size:
+            sizes[entry.name] = size
+            total += size
+    breakdown = [
+        {"name": name, "bytes": size}
+        for name, size in sorted(sizes.items(), key=lambda item: -item[1])
+    ]
+    return {"total_bytes": total, "breakdown": breakdown}
+
+
+def _path_size(path: Path) -> int:
+    if path.is_symlink():
+        return 0
+    if path.is_file():
+        return path.stat().st_size
+    size = 0
+    for dirpath, _dirnames, filenames in os.walk(path):
+        for filename in filenames:
+            candidate = Path(dirpath) / filename
+            if candidate.is_symlink():
+                continue
+            try:
+                size += candidate.stat().st_size
+            except OSError:
+                continue
+    return size
+
+
+def _dataset_storage_bytes(workspace: Workspace, dataset: str) -> int | None:
+    """On-disk size of the dataset's database (main file plus WAL), if present."""
+    dataset_root = workspace.datasets_root / dataset
+    database = dataset_root / DATABASE_NAME
+    if not database.exists():
+        return None
+    total = database.stat().st_size
+    wal = dataset_root / f"{DATABASE_NAME}.wal"
+    if wal.exists():
+        total += wal.stat().st_size
+    return total
+
+
 def secret_config_keys(providers: Iterable[Any]) -> frozenset[str]:
     """Configuration keys declared secret by registered provider plugins."""
     return frozenset(
@@ -929,19 +991,27 @@ def _declared_config_keys(app: FindataServer) -> list[dict[str, Any]]:
         }
 
     for key, declaration in CORE_CONFIG_KEYS.items():
-        items.append(item(key, str(declaration["help"]), declaration["schema"], secret=False))
+        entry = item(key, str(declaration["help"]), declaration["schema"], secret=False)
+        if key == "display.timezone":
+            entry["default"] = default_display_timezone()
+        items.append(entry)
     for provider_id, provider in sorted(app.providers.items()):
         properties = provider.configuration_schema.get("properties", {})
         if not isinstance(properties, Mapping):
             continue
         for field, schema in properties.items():
             key = f"provider.{provider_id}.{field}"
-            items.append(
-                item(key, _provider_key_help(provider, str(field)), schema, secret=field in provider.secret_fields)
+            entry = item(
+                key, _provider_key_help(provider, str(field)), schema, secret=field in provider.secret_fields
             )
+            if field == "rate_limit":
+                entry["default"] = provider.rate_limit
+            items.append(entry)
     for name, plugin in sorted(app.plugins.items()):
         for key, setting in sorted(plugin.settings.items()):
-            items.append(item(key, setting.help, setting.schema, secret=False))
+            entry = item(key, setting.help, setting.schema, secret=False)
+            entry["required"] = setting.required
+            items.append(entry)
     return items
 
 

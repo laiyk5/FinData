@@ -25,4 +25,9 @@ Datasets:
 - `symbols`, `indexes`, and `exchanges` are nonempty arrays of strings, deduplicated after canonicalization. A single CLI scalar is coerced to a one-element array.
 - `update` is always parameterless. Its dataset plugin alone interprets any settings needed to
   select work. A one-time `complete` or `refresh` never changes plugin settings.
+- Each declared plugin setting is classified as `required` or optional. A required setting gates
+  update readiness: `update` is not ready while a required setting is unconfigured, and clients
+  (CLI, WebUI) must warn only about unconfigured required settings. Optional settings never
+  produce warnings. The classification is part of the plugin's declared setting specification and
+  is exposed through dataset descriptions and the configuration-keys API.
 - Built-in `complete` and `refresh` operations declare their fully normalized operands as a stable coalescing identity. `update` never coalesces because its target depends on submission time, committed dataset state, and the plugin-settings revision.

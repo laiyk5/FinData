@@ -16,6 +16,7 @@ from findata import DataLoader
 from findata.cli import main as cli_main
 from findata.loader import DatasetNotReadyError
 from findata.plugins import ProviderPlugin
+from findata.presentation import default_display_timezone
 from findata.server import (
     FindataServer,
     ServerAlreadyRunningError,
@@ -318,17 +319,23 @@ class ServerCLITests(unittest.TestCase):
             {"type": "string", "format": "iana-timezone"},
         )
         self.assertFalse(by_key["display.timezone"]["secret"])
+        self.assertEqual(
+            by_key["display.timezone"]["default"], default_display_timezone()
+        )
 
         token = by_key["provider.tushare.token"]
         self.assertTrue(token["secret"])
         self.assertIn("secret", token["help"])
-        self.assertFalse(by_key["provider.tushare.rate_limit"]["secret"])
+        rate_limit = by_key["provider.tushare.rate_limit"]
+        self.assertFalse(rate_limit["secret"])
+        self.assertEqual(rate_limit["default"], 500)
 
         setting = by_key["dataset.tushare_daily_basic.update_symbols"]
         self.assertTrue(setting["help"])
         self.assertTrue(setting["schema"])
+        self.assertTrue(setting["required"])
         self.assertFalse(setting["configured"])
-        self.assertIn("dataset.tushare_index_weight.update_indexes", by_key)
+        self.assertTrue(by_key["dataset.tushare_index_weight.update_indexes"]["required"])
 
         self.assertFalse(any(key.startswith("cron.") for key in by_key))
 
@@ -408,6 +415,7 @@ class ServerCLITests(unittest.TestCase):
         )
         self.assertEqual(status["state"], "uninitialized")
         self.assertIsNone(status["publication_id"])
+        self.assertIsInstance(status["storage_bytes"], int)
         self.assertNotIn("operations", status)
         self.assertNotIn("capabilities", status)
 
@@ -432,6 +440,7 @@ class ServerCLITests(unittest.TestCase):
         self.assertEqual(status["covered_keys"], 1)
         self.assertEqual(status["coverage_start"], "2026-07-01")
         self.assertEqual(status["coverage_end"], "2026-07-10")
+        self.assertGreater(status["storage_bytes"], 0)
 
         described = json.loads(
             self.run_cli("--format", "json", "dataset", "describe", "tushare_trade_cal")[1]
@@ -651,6 +660,13 @@ class ServerCLITests(unittest.TestCase):
         status = self.request("GET", "/v1/system/status")
         self.assertEqual(status["running_tasks"], 0)
         self.assertEqual(status["queue_lengths"], {})
+        self.assertEqual(status["workspace"], str(self.root))
+        self.assertGreater(status["started_at"], 0)
+        self.assertTrue(status["version"])
+        workspace_disk = status["workspace_disk"]
+        self.assertGreater(workspace_disk["total_bytes"], 0)
+        breakdown = {item["name"]: item["bytes"] for item in workspace_disk["breakdown"]}
+        self.assertGreater(breakdown["datasets"], 0)
 
     def test_dataset_shortcut_dry_run_is_side_effect_free(self) -> None:
         before = self.request("GET", "/v1/tasks")["items"]
