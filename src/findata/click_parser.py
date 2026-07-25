@@ -80,13 +80,15 @@ COMMAND_HELP = {
 }
 
 ARGUMENT_HELP = {
-    "key": "Configuration key, for example dataset.tushare_daily_basic.update_symbols.",
+    "key": "Configuration key, for example dataset.tushare_daily_basic.update_symbols; "
+    "declared keys are listed by 'findata dataset describe <dataset>' and suggested by "
+    "shell completion.",
     "value": "Plain string value; use an alternate input option for typed or secret values.",
     "name": "Registered provider identifier.",
     "dataset": "Registered dataset identifier.",
     "operation": "Dataset operation identifier.",
-    "handle": "Full task handle or an unambiguous lowercase-hex prefix.",
-    "event_id": "Full event identifier or an unambiguous lowercase-hex prefix.",
+    "handle": "Full task handle or an unambiguous lowercase-hex prefix of at least eight characters.",
+    "event_id": "Full event identifier or an unambiguous lowercase-hex prefix of at least eight characters.",
     "shell": "Shell whose sourceable completion script should be generated.",
 }
 
@@ -94,16 +96,19 @@ OPTION_HELP = {
     "workspace": "Workspace path; otherwise use FINDATA_WORKSPACE or nearest parent workspace.",
     "output_format": "Presentation format written to stdout.",
     "color": "When human output may contain terminal colors.",
-    "value_json": "Read the configuration value as JSON.",
+    "value_json": "Configuration value as JSON, @file, or - for stdin.",
     "env": "Read the configuration value from this environment variable.",
     "stdin": "Read the configuration value from stdin.",
     "all": "Apply to or include all matching resources.",
-    "symbols": "Repeat for each provider symbol to select.",
-    "indexes": "Repeat for each provider-qualified index to select.",
-    "exchanges": "Repeat for each exchange to select.",
-    "timerange": "Half-open date range in START:END form.",
-    "range_start": "Inclusive start date in YYYY-MM-DD form.",
-    "range_end": "Exclusive end date in YYYY-MM-DD form.",
+    "symbols": "Repeat for each provider symbol to select; accepts Tushare security codes like "
+    "600000.SH or constituent selectors tushare:<ts_code>[@latest|@YYYYMM].",
+    "indexes": "Repeat for each provider-qualified index to select, spelled tushare:<ts_code> "
+    "(for example tushare:000300.SH).",
+    "exchanges": "Repeat for each exchange to select; SSE and/or SZSE.",
+    "timerange": "Half-open date range in START:END form; dates are YYYY-MM-DD or today, the "
+    "end is exclusive, and today resolves in the dataset timezone.",
+    "range_start": "Inclusive start date in YYYY-MM-DD form, or today.",
+    "range_end": "Exclusive end date in YYYY-MM-DD form, or today.",
     "wait": "Wait until the submitted task reaches a terminal state.",
     "follow": "Stream progress or logs while waiting.",
     "dry_run": "Validate and show the plan without submitting work.",
@@ -123,7 +128,7 @@ OPTION_HELP = {
     "expression": "Five-field cron expression.",
     "timezone": "IANA timezone used to evaluate the schedule.",
     "unread": "Show only unacknowledged events.",
-    "since": "Show events at or after this timestamp.",
+    "since": "Show only events newer than this duration, for example 30m, 12h, or 7d.",
     "severity": "Filter events by severity.",
     "yes": "Confirm the destructive reset without prompting.",
 }
@@ -254,18 +259,6 @@ def command_tree(*, version: str) -> click.Group:
 
     data = DocumentedGroup("data", help=GROUP_HELP["data"])
     root.add_command(data)
-    attach(data, "data", "schema", [click.Argument(["dataset"])])
-    attach(
-        data,
-        "data",
-        "coverage",
-        [
-            click.Argument(["dataset"]),
-            click.Option(["--keys"], multiple=True),
-            click.Option(["--from", "range_start"]),
-            click.Option(["--to", "range_end"]),
-        ],
-    )
 
     def query_options() -> list[click.Parameter]:
         return [
@@ -278,11 +271,26 @@ def command_tree(*, version: str) -> click.Group:
             click.Option(["--allow-partial", "allow_partial"], is_flag=True),
         ]
 
+    attach(data, "data", "schema", [click.Argument(["dataset"])])
     attach(
         data,
         "data",
         "preview",
-        [*query_options(), click.Option(["--limit"], type=click.IntRange(0), default=20)],
+        [
+            *query_options(),
+            click.Option(["--limit"], type=click.IntRange(0), default=20, show_default=True),
+        ],
+    )
+    attach(
+        data,
+        "data",
+        "coverage",
+        [
+            click.Argument(["dataset"]),
+            click.Option(["--keys"], multiple=True),
+            click.Option(["--from", "range_start"]),
+            click.Option(["--to", "range_end"]),
+        ],
     )
     attach(
         data,
@@ -296,7 +304,9 @@ def command_tree(*, version: str) -> click.Group:
                 required=True,
             ),
             click.Option(["--output"], required=True),
-            click.Option(["--batch-size"], type=click.IntRange(1), default=65_536),
+            click.Option(
+                ["--batch-size"], type=click.IntRange(1), default=65_536, show_default=True
+            ),
             click.Option(["--force"], is_flag=True),
         ],
     )
@@ -317,13 +327,30 @@ def command_tree(*, version: str) -> click.Group:
             click.Option(["--dry-run", "dry_run"], is_flag=True),
         ],
     )
+    for parameter in task.commands["run"].params:
+        if isinstance(parameter, click.Argument) and parameter.name == "operation":
+            parameter.help = "Dataset operation identifier; defaults to update."
     attach(
         task,
         "task",
         "ls",
         [
             click.Option(["--dataset"]),
-            click.Option(["--status"]),
+            click.Option(
+                ["--status"],
+                type=click.Choice(
+                    [
+                        "queued",
+                        "running",
+                        "waiting",
+                        "canceling",
+                        "succeeded",
+                        "failed",
+                        "canceled",
+                    ]
+                ),
+                help="Filter tasks by lifecycle status.",
+            ),
             click.Option(["--all"], is_flag=True),
         ],
     )

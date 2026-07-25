@@ -1,56 +1,4 @@
-# Documents
-
-findata uses six primary documents with exclusive ownership:
-
-- **[DESIGN.md](DESIGN.md)** — architecture, canonical terminology, boundaries, invariants, and major decisions
-- **[DEV.md](DEV.md)** — contributor workflow and implementation guidance
-- **[TEST.md](TEST.md)** — testing methodology and required verification
-- **[USER.md](USER.md)** — installation, workflows, CLI/DataLoader usage, and user-documentation principles
-- **[DATASETS.md](DATASETS.md)** — canonical contracts for dataset plugins
-- **[TOOLKITS.md](TOOLKITS.md)** — canonical contracts for reusable toolkit components
-
-Every fact has one owning document. Other documents link to it rather than copying it. Development-time schemas and protocol specifications may live under `docs/specs/`; they may elaborate but never override this design.
-
-# Design
-
-## Purpose and primary story
-
-findata serves two purposes:
-
-1. maintain datasets through plugins that are easy to install and run;
-2. provide one DataLoader interface so readers do not need to know physical storage layouts.
-
-The primary v1 user is a quantitative researcher who backfills daily valuation data for an index universe, opts into recurring maintenance, and queries covered data safely from Python. The story is complete when provider readiness is diagnosable, dependency data is fulfilled deterministically, failed work is resumable, automatic maintenance is explicit, and DataLoader either returns covered data or identifies exact missing intervals. The executable workflow lives in [USER.md](USER.md#quick-start).
-
-Features that do not materially support this story may be deferred from v1.
-
-## Glossary
-
-- **Workspace** — a dedicated local directory owned by exactly one server at a time
-- **Provider** — a modular data source with shared configuration and rate limiting
-- **Dataset** — a plugin defining how one logical dataset is maintained and described
-- **Operation / operands** — a maintenance callable / its validated parameters
-- **Task / checkpoint batch** — an operation executed in a process / a bounded unit committed in one database transaction
-- **Task handle / subscription** — one submission's ID / its interest in a possibly shared execution
-- **Triggered task** — a task submission made by another task to fulfill a declared dependency
-- **TaskRunner** — the server component that queues, executes, and monitors tasks
-- **Task mutex** — the per-dataset lock serializing task executions
-- **Write gate** — the cross-process per-dataset read-write lock protecting publication and readers
-- **crond** — the server component triggering enabled scheduled updates
-- **Event log** — the persistent append-only record of events requiring attention
-- **DataLoader** — the standalone uniform query interface over published workspace data
-- **Toolkit** — opt-in reusable helpers imported by dataset plugins
-- **Capabilities** — declared features or limits checked by reusable helpers
-- **Publication window** — the provider-defined interval in which target data becomes available
-- **Due** — data whose publication window has started
-- **Resolved / unresolved** — due data with a final fetch result / data never fetched, failed, or transiently empty
-- **Resolved-empty** — a due request whose empty result is recorded as final
-- **Missing-data policy** — `strict`, `accept-empty`, or `best-effort`
-- **Resolved coverage** — one continuous half-open `[start, end)` interval per partition key
-- **Coverage record** — the materialized per-key resolved coverage
-- **Dataset revision** — one committed, self-consistent database state containing data and matching coverage
-- **Dataset setting** — a typed, plugin-owned configuration value used by that dataset's operations
-- **Coverage requirement** — a target-dataset-defined declaration of data needed by a dependent task
+# Architecture
 
 ## Architectural boundaries
 
@@ -62,7 +10,10 @@ Features that do not materially support this story may be deferred from v1.
   never imports dataset maintenance plugins.
 - DataLoader owns uniform query semantics, coverage checks, database locking, SQL generation, and
   Arrow results.
-- The CLI is a thin HTTP client. It collects syntax and formats output; the server owns validation and policy.
+- The CLI is a thin HTTP client. It collects syntax and formats output; the server owns validation
+  and policy. Its design lives in [ux/cli.md](ux/cli.md).
+- The WebUI is a second thin client over the same HTTP API, served by the server itself. It adds no
+  endpoints, lifecycle states, or policy of its own. Its design lives in [ux/webui.md](ux/webui.md).
 - Core modules load concrete providers and datasets only through registered contracts. They never
   import concrete plugin modules or the optional toolkit package.
 
@@ -72,7 +23,10 @@ One server controls one workspace. It acquires a non-blocking `flock` on a works
 
 v1 supports Linux and macOS on local POSIX filesystems providing `flock`, signals, permissions, directory flushing, and same-filesystem atomic rename. Network filesystems and Windows are outside the v1 contract.
 
-The server exposes a versioned localhost HTTP API on `127.0.0.1`. `findata-server init` creates the workspace with `0700` permissions and a cryptographically random bearer token in a `0600` file. Every request, including streams, requires the token in the `Authorization` header. Tokens never appear in URLs or logs.
+The server exposes a versioned localhost HTTP API on `127.0.0.1`. `findata-server init` creates the workspace with `0700` permissions and a cryptographically random bearer token in a `0600` file. Every API request, including streams, requires the token in the `Authorization` header. Tokens never appear in URLs or logs.
+
+The server also serves the WebUI's static assets for non-API paths under the contract defined in
+[ux/webui.md](ux/webui.md).
 
 Filesystem creation has explicit ownership. Workspace initialization alone creates the workspace
 root and workspace-level files; dataset registration alone creates a dataset directory, its gate,
@@ -106,7 +60,9 @@ Every dataset exposes a parameterless `update` operation. Additional operations 
 
 A plugin may declare typed settings under `dataset.<dataset-name>.*`. The generic configuration API
 stores values atomically but delegates schema validation, normalization, readiness, and meaning to
-the owning plugin. Core configuration and CLI code never parses selectors, symbols, constituent
+the owning plugin. Each declared setting is classified required or optional: a required setting
+gates update readiness, and only unconfigured required settings produce client warnings. Core
+configuration and CLI code never parses selectors, symbols, constituent
 references, or another dataset-specific value. An operation receives one immutable settings
 snapshot for its execution; changing a setting affects later submissions only.
 
@@ -147,7 +103,7 @@ holds its task mutex and exclusive gate, replaces the database with a newly init
 leaves provider configuration, dataset settings, task history, and other datasets unchanged. The
 human CLI requires confirmation; structured or non-interactive use requires an explicit `--yes`.
 
-Canonical per-plugin contracts live in [DATASETS.md](DATASETS.md).
+Canonical per-plugin contracts live in [dataset/index.md](dataset/index.md).
 
 ## Update timing, coverage, and settings
 
@@ -229,7 +185,7 @@ transformation, and validation outside the write gate, then commits its accumula
 transaction. A later failure preserves completed batches and loses at most the in-flight batch.
 Progress distinguishes processed work from durably checkpointed work.
 
-Execution records contain state, progress, logs, PID, and process start time. Separate handle records contain each submission's subscriber, execution, and public handle state. Active records persist; after completion, the newest 1,000 terminal handles per dataset and every execution they still reference are retained. Public task states and listing behavior are defined in [USER.md](USER.md#task-lifecycle).
+Execution records contain state, progress, logs, PID, and process start time. Separate handle records contain each submission's subscriber, execution, and public handle state. Active records persist; after completion, the newest 1,000 terminal handles per dataset and every execution they still reference are retained. Public task states and listing behavior are defined in [USER.md](../USER.md#task-lifecycle).
 
 Each dataset operation exposes a pure planning entry point. Planning consumes normalized operands,
 captured configuration, capabilities, coverage, publication time, and locally committed dependency
@@ -267,7 +223,7 @@ One task execution holds the dataset mutex. Additional executions wait in that d
 
 ## crond and events
 
-Every suggested dataset schedule appears as a disabled default job; automatic maintenance is opt-in. Workspace configuration owns enabled state and schedule/timezone overrides. Schedules are evaluated in their declared IANA timezone using the daylight-saving behavior defined in [USER.md](USER.md#cron). Market jobs should use the exchange timezone. Enabling and firing validate the operation, provider readiness, and plugin-reported update readiness. A failed precondition skips submission and records an actionable event.
+Every suggested dataset schedule appears as a disabled default job; automatic maintenance is opt-in. Workspace configuration owns enabled state and schedule/timezone overrides. Schedules are evaluated in their declared IANA timezone using the daylight-saving behavior defined in [USER.md](../USER.md#cron). Market jobs should use the exchange timezone. Enabling and firing validate the operation, provider readiness, and plugin-reported update readiness. A failed precondition skips submission and records an actionable event.
 
 Enabled jobs missed during downtime are recorded but not run automatically. The user decides whether to submit the corresponding update.
 
@@ -302,18 +258,7 @@ DataLoader centrally owns:
 - shared-gate, read-only connection, and database-transaction lifetime.
 
 The core `data` CLI is a presentation/export adapter over DataLoader, not a server API or task
-operation. Schema discovery reads registered dataset metadata from the committed database; preview
-materializes only its bounded result; coverage delegates to DataLoader's coverage table; export
-consumes `iter_batches` and writes CSV, Parquet, Arrow IPC, or JSONL. It never imports a dataset
-plugin, opens a write connection, submits maintenance, or infers that missing coverage should be
-downloaded. File exports use a sibling temporary file and atomic rename, while stdout exports keep
-stdout data-only and send diagnostics to stderr.
-
-Coverage presentation preserves the stored half-open start and end dates. An optional requested
-half-open interval is compared with the same central coverage record to expose completeness and
-exact gaps without initiating maintenance. The human renderer treats dates as first-class table
-cells and sends output taller than an interactive terminal through the user's pager. Paging is a
-presentation concern only: structured, redirected, and export stdout remain deterministic streams.
+operation; its contract and coverage-presentation rules live in [ux/cli.md](ux/cli.md).
 
 An eager query holds a shared gate and read-only connection through Arrow-table materialization. A
 batch iterator holds both until its context manager closes. A reader therefore observes one committed
@@ -323,7 +268,7 @@ Alternative database engines, plugin-defined SQL, private reader adapters, and t
 entry points are outside v1. A future storage backend must preserve central query semantics, Arrow
 results, transactional data/coverage commits, and the DataLoader concurrency contract.
 
-The public API and examples live in [USER.md](USER.md#discovering-previewing-and-exporting-committed-data). Reader-strategy verification lives in [TEST.md](TEST.md#dataloader-contract-matrix).
+The public API and examples live in [USER.md](../USER.md#discovering-previewing-and-exporting-committed-data). Reader-strategy verification lives in [TEST.md](../TEST.md#duckdb-storage-and-dataloader-contract-matrix).
 
 ## Configuration and security
 
@@ -337,46 +282,7 @@ Workspace configuration is the single source of truth for:
 
 Secret values are stored only from stdin or as environment-variable references, are redacted from every read command, and never enter URLs or logs. Configuration mutations occur through the authenticated server API and are written atomically.
 
-## CLI principles
+## CLI and WebUI
 
-The server owns task state, progress meaning, warnings, and failure reasons. The CLI is a thin
-HTTP client that renders those semantics; it does not infer task policy or redefine lifecycle
-states. The server reports readiness only after workspace validation, recovery, plugin
-registration, and socket binding succeed.
-
-Human output is the default and favors concise tables, labeled detail views, explicit status
-words, and actionable errors. Stable command results go to stdout; transient progress and
-diagnostics go to stderr. Interactive decoration may improve presentation but must not carry
-meaning by itself or alter execution, task persistence, or cancellation behavior.
-
-Human task commands and event acknowledgement may use an unambiguous, server-resolved identifier
-prefix. Exact identifiers take precedence, prefixes used for state-changing operations have a
-minimum length, and every successful response returns the full resolved identifier. Prefix
-matching does not apply to dataset, provider, publication, or execution identifiers.
-
-Human rendering formats values according to declared field semantics: timestamps, durations,
-counts, percentages, and generic measurements have distinct presentation rules. Scientific
-notation is reserved for extreme generic measurements, not used as the default number format.
-Presentation never changes the values or types emitted by JSON and JSONL.
-
-Progress is transient, but warning and error diagnostics remain inspectable under the existing
-task and event retention rules. A live human view keeps a bounded set visible and reports exact
-additional counts without flooding the terminal; structured streaming preserves every logical
-diagnostic occurrence. Detailed behavior is defined in [USER.md](USER.md#cli-behavior).
-
-JSON and JSONL are stable, undecorated interfaces for scripts and tests. Structured output never
-contains terminal control sequences, progress animation, readiness banners, or explanatory prose.
-Detailed terminal behavior and examples are defined once in [USER.md](USER.md#cli-behavior), and
-their verification belongs in [TEST.md](TEST.md#cli-presentation-matrix).
-
-## v1 commitments and non-goals
-
-The architecture contract is closed for v1 around atomic per-dataset database revisions,
-checkpoint-batched transactions, subscriber-aware task coalescing, centralized DataLoader query
-semantics, and the dataset contracts in [DATASETS.md](DATASETS.md).
-
-Online data-layout migration, third-party reader engines, network filesystems, Windows, automatic
-execution of missed cron jobs, and features unrelated to the primary story are v1 non-goals.
-Concrete workspace, database-metadata, plugin, task-message, event, and HTTP schemas belong in
-implementation specifications; they may choose mechanisms and encodings but may not change the
-behavior or boundaries defined here.
+The CLI design — thin-client boundary, human output principles, and structured output contracts —
+lives in [ux/cli.md](ux/cli.md). The WebUI design lives in [ux/webui.md](ux/webui.md).

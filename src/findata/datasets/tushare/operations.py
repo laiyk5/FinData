@@ -13,7 +13,12 @@ import pyarrow as pa
 
 from findata.contracts import DateRange, DatasetSpec, OperandError
 from findata.datasets.tushare import TUSHARE_DATASETS
-from findata.loader import DataLoader, DatasetNotReadyError, UnsupportedCoverageError
+from findata.loader import (
+    DataLoader,
+    DataLoaderError,
+    DatasetNotReadyError,
+    UnsupportedCoverageError,
+)
 from findata.providers.tushare import TushareClient, TushareHTTPTransport
 from findata.publication import PublicationWindow, daily_window, monthly_window
 from findata.rate_limit import FileRateLimiter
@@ -204,7 +209,10 @@ class DatasetService:
     def run(
         self, dataset: str, operation: str = "update", operands: dict[str, Any] | None = None
     ) -> OperationResult:
-        before = self._request_count
+        started = monotonic()
+        before_requests = self._request_count
+        before_rows = self._row_count
+        before_checkpoints = self._checkpoint_count
         values = dict(operands or {})
         # Execution and dry-run share validation and planning. Mutable state is
         # read again here so a previous preview is never treated as a reservation.
@@ -221,12 +229,25 @@ class DatasetService:
             publication = self._daily_basic(operation, values)
         else:
             raise KeyError(dataset)
-        return OperationResult(dataset, operation, publication, self._request_count - before)
+        self._log(
+            f"completed {dataset} {operation}: "
+            f"{self._request_count - before_requests} requests, "
+            f"{self._row_count - before_rows} rows, "
+            f"{self._checkpoint_count - before_checkpoints} checkpoints "
+            f"in {monotonic() - started:.1f}s → publication {publication}"
+        )
+        return OperationResult(dataset, operation, publication, self._request_count - before_requests)
+
+    def _log(self, message: str) -> None:
+        if self._reporter is not None:
+            self._reporter.log(message)
 
     def _fetch(self, dataset: str, **params: Any) -> pa.Table:
+        api_name = TUSHARE_DATASETS[dataset].api_name
+        shape = f"{api_name}({', '.join(f'{key}={value}' for key, value in params.items())})"
         if self._reporter is not None:
             self._reporter.checkpoint()
-            self._reporter.log(f"fetch {dataset}")
+            self._reporter.log(f"fetch {shape}")
             if hasattr(self._reporter, "stage"):
                 self._reporter.stage(f"fetching:{dataset}")
             if hasattr(self._reporter, "begin_subtask"):
@@ -237,6 +258,7 @@ class DatasetService:
             self._row_count += table.num_rows
             if self._reporter is not None:
                 self._reporter.checkpoint()
+                self._reporter.log(f"fetched {shape}: {table.num_rows} rows")
             return table
         finally:
             if self._reporter is not None and hasattr(self._reporter, "end_subtask"):
@@ -277,6 +299,10 @@ class DatasetService:
             for exchange in exchanges
             for interval in _missing_for_continuity(existing_coverage.get(exchange), requested)
         ]
+        self._log(
+            f"plan: {len(exchanges)} exchanges over "
+            f"{requested.start.isoformat()}..{requested.end.isoformat()}"
+        )
         self._progress(0, len(jobs))
         for completed, (exchange, interval) in enumerate(jobs, start=1):
             start, end = interval.to_provider_inclusive()
@@ -321,6 +347,12 @@ class DatasetService:
             for status in ("L", "D", "P", "G")
             for exchange in ("SSE", "SZSE", "BSE")
         ]
+        statuses = dict.fromkeys(status for status, _ in jobs)
+        exchanges = dict.fromkeys(exchange for _, exchange in jobs)
+        self._log(
+            f"plan: {len(statuses)} statuses × {len(exchanges)} exchanges = {len(jobs)} "
+            "requests (complete-table replacement)"
+        )
         self._progress(0, len(jobs))
         for completed, (status, exchange) in enumerate(jobs, start=1):
             table = self._fetch("tushare_stock_basic", list_status=status, exchange=exchange)
@@ -356,6 +388,7 @@ class DatasetService:
         publication: str | None = None
         mutations: list[DataMutation] = []
         batch_started = monotonic()
+        self._log(f"plan: {len(indexes)} indexes")
         self._progress(0, len(indexes))
         for completed, reference in enumerate(indexes, start=1):
             code = _canonical_index(reference)
@@ -414,6 +447,7 @@ class DatasetService:
             if requested.start <= current_month < requested.end:
                 months.add(current_month)
             jobs.extend((index, month) for month in sorted(months))
+        self._log(f"plan: {len(jobs)} index-months across {len(indexes)} indexes")
         self._progress(0, len(jobs))
         for completed, (index, month) in enumerate(jobs, start=1):
             month_interval = _month_range(month, month)
@@ -463,6 +497,30 @@ class DatasetService:
         else:
             raise OperandError(f"unsupported daily basic operation {operation!r}")
 
+        # Only dates at or past their publication window are due; a before-window
+        # tail is pruned so coverage never extends over unresolved dates.
+        latest_due = self.today
+        if daily_window(self.today, self.now) == PublicationWindow.BEFORE:
+            latest_due -= timedelta(days=1)
+        due_end = min(requested.end, latest_due + timedelta(days=1))
+        pruned = due_end < requested.end
+        if due_end <= requested.start:
+            if operation != "update":
+                raise OperandError(
+                    f"tushare_daily_basic {operation} range is entirely before the "
+                    "publication window; nothing is due yet"
+                )
+            if self._reporter is not None:
+                self._reporter.log("no daily_basic data is due yet")
+            try:
+                return self.loader.dataset("tushare_daily_basic").publication_id
+            except DataLoaderError as exc:
+                raise OperandError(
+                    "tushare_daily_basic update has no due work and the dataset is "
+                    "uninitialized; run complete with a historical range first"
+                ) from exc
+        requested = DateRange(requested.start, due_end)
+
         trade_requirement = {
             "exchanges": ["SSE", "SZSE"],
             "timerange": _format_range(requested),
@@ -484,9 +542,6 @@ class DatasetService:
                 ):
                     raise OperandError(f"refresh range is outside coverage for {symbol}")
         next_coverage = dict(existing_coverage)
-        publication: str | None = None
-        mutations: list[DataMutation] = []
-        batch_started = monotonic()
         jobs = [
             (symbol, interval)
             for symbol in symbols
@@ -496,6 +551,62 @@ class DatasetService:
                 else _missing_for_continuity(existing_coverage.get(symbol), requested)
             )
         ]
+        open_dates = self._full_market_dates(jobs)
+        span = f"{requested.start.isoformat()}..{requested.end.isoformat()}"
+        clamp_note = "; requested end pruned to the due boundary" if pruned else ""
+        if open_dates is not None:
+            self._log(
+                f"plan: {len(symbols)} symbols over {span} "
+                f"({len(open_dates)} due open date{'s' if len(open_dates) != 1 else ''}); "
+                f"request shape: full-market per date "
+                f"({len(open_dates)} requests < {len(jobs)} per-symbol){clamp_note}"
+            )
+            publication = self._daily_basic_by_date(spec, jobs, open_dates, next_coverage)
+        else:
+            self._log(
+                f"plan: {len(symbols)} symbols over {span}; request shape: per-symbol "
+                f"({len(jobs)} requests; full-market per date unavailable or not cheaper)"
+                f"{clamp_note}"
+            )
+            publication = self._daily_basic_by_symbol(spec, jobs, next_coverage)
+        return publication or self.loader.dataset(spec.name).publication_id
+
+    def _full_market_dates(self, jobs: list[tuple[str, DateRange]]) -> list[date] | None:
+        """Open dates for a strictly cheaper full-market per-date plan, or None."""
+        if not jobs:
+            return None
+        start = min(interval.start for _, interval in jobs)
+        end = max(interval.end for _, interval in jobs)
+        try:
+            table = self.loader.dataset("tushare_trade_cal").query(
+                keys=["SSE", "SZSE"],
+                time_range=(start, end),
+                columns=["cal_date"],
+                filters=[("is_open", "=", True)],
+                require_coverage=True,
+            )
+        except DataLoaderError:
+            return None
+        dates = sorted(
+            {
+                value
+                for value in table.column("cal_date").to_pylist()
+                if any(interval.start <= value < interval.end for _, interval in jobs)
+            }
+        )
+        if not dates or len(dates) >= len(jobs):
+            return None
+        return dates
+
+    def _daily_basic_by_symbol(
+        self,
+        spec: DatasetSpec,
+        jobs: list[tuple[str, DateRange]],
+        next_coverage: dict[str, DateRange],
+    ) -> str | None:
+        publication: str | None = None
+        mutations: list[DataMutation] = []
+        batch_started = monotonic()
         self._progress(0, len(jobs))
         for completed, (symbol, interval) in enumerate(jobs, start=1):
             start, end = interval.to_provider_inclusive()
@@ -506,13 +617,7 @@ class DatasetService:
                 end_date=end,
             )
             if table.num_rows == 0:
-                latest_target = interval.end - timedelta(days=1)
-                window = daily_window(latest_target, self.now)
-                if window != PublicationWindow.AFTER:
-                    raise RuntimeError(
-                        f"daily_basic empty result remains unresolved in {window.value}; "
-                        f"target is {window.value.split('-', 1)[0]} publication window"
-                    )
+                self._require_resolvable_empty(interval.end - timedelta(days=1))
             next_coverage[symbol] = _merge_interval(next_coverage.get(symbol), interval)
             mutations.append(
                 DataMutation.replace_range(
@@ -534,7 +639,86 @@ class DatasetService:
         if mutations:
             publication = self._commit_mutations(spec, mutations, next_coverage)
             self._progress(len(jobs), len(jobs))
-        return publication or self.loader.dataset(spec.name).publication_id
+        return publication
+
+    def _daily_basic_by_date(
+        self,
+        spec: DatasetSpec,
+        jobs: list[tuple[str, DateRange]],
+        open_dates: list[date],
+        next_coverage: dict[str, DateRange],
+    ) -> str | None:
+        row_limit = int(spec.capabilities.get("row_limit", 6000))
+        accumulated: list[list[dict[str, Any]]] = [[] for _ in jobs]
+        self._progress(0, len(open_dates))
+        for completed, target in enumerate(open_dates, start=1):
+            relevant = [
+                index
+                for index, (_, interval) in enumerate(jobs)
+                if interval.start <= target < interval.end
+            ]
+            table = self._fetch(spec.name, trade_date=target.strftime("%Y%m%d"))
+            if table.num_rows >= row_limit:
+                if self._reporter is not None:
+                    self._reporter.log(
+                        "daily_basic full-market response reached the declared "
+                        f"{row_limit}-row limit on {target.isoformat()}; "
+                        "falling back to per-symbol requests for that date"
+                    )
+                for index in relevant:
+                    accumulated[index].extend(
+                        self._daily_basic_symbol_date(spec, jobs[index][0], target).to_pylist()
+                    )
+            else:
+                by_symbol: dict[str, list[dict[str, Any]]] = {}
+                for row in table.to_pylist():
+                    by_symbol.setdefault(str(row["ts_code"]), []).append(row)
+                for index in relevant:
+                    rows = by_symbol.get(jobs[index][0])
+                    if rows is None:
+                        self._require_resolvable_empty(target)
+                    else:
+                        accumulated[index].extend(rows)
+            self._progress(completed, len(open_dates))
+        publication: str | None = None
+        mutations: list[DataMutation] = []
+        batch_started = monotonic()
+        for (symbol, interval), rows in zip(jobs, accumulated, strict=True):
+            next_coverage[symbol] = _merge_interval(next_coverage.get(symbol), interval)
+            mutations.append(
+                DataMutation.replace_range(
+                    pa.Table.from_pylist(rows, schema=spec.schema),
+                    partition=symbol,
+                    start=interval.start,
+                    end=interval.end,
+                )
+            )
+            if _batch_due(
+                mutations,
+                batch_started,
+                request_limit=self.client.checkpoint_request_limit or 64,
+            ):
+                publication = self._commit_mutations(spec, mutations, next_coverage)
+                mutations = []
+                batch_started = monotonic()
+        if mutations:
+            publication = self._commit_mutations(spec, mutations, next_coverage)
+        return publication
+
+    def _daily_basic_symbol_date(self, spec: DatasetSpec, symbol: str, target: date) -> pa.Table:
+        stamp = target.strftime("%Y%m%d")
+        table = self._fetch(spec.name, ts_code=symbol, start_date=stamp, end_date=stamp)
+        if table.num_rows == 0:
+            self._require_resolvable_empty(target)
+        return table
+
+    def _require_resolvable_empty(self, target: date) -> None:
+        window = daily_window(target, self.now)
+        if window != PublicationWindow.AFTER:
+            raise RuntimeError(
+                f"daily_basic empty result remains unresolved in {window.value}; "
+                f"target is {window.value.split('-', 1)[0]} publication window"
+            )
 
     def _resolve_symbols(self, selectors: list[str], requested: DateRange) -> list[str]:
         direct: list[str] = []
@@ -650,6 +834,17 @@ class DatasetService:
             ),
         )
         self._checkpoint_count += 1
+        rows = sum(mutation.table.num_rows for mutation in mutations)
+        self._log(
+            f"committed checkpoint: {len(mutations)} scopes, {rows} rows, "
+            f"publication {publication}"
+        )
+        if spec.time_field is not None and coverage:
+            start = min(value.start for value in coverage.values())
+            end = max(value.end for value in coverage.values())
+            self._log(
+                f"coverage: {len(coverage)} keys, {start.isoformat()}..{end.isoformat()}"
+            )
         return publication
 
     def _publisher(self, dataset: str):
@@ -741,11 +936,70 @@ def dataset_description(
     }
 
 
+_OPERATION_HELP: dict[tuple[str, str], str] = {
+    (
+        "tushare_trade_cal",
+        "update",
+    ): "Extend both SSE and SZSE calendars through tomorrow; parameterless.",
+    (
+        "tushare_trade_cal",
+        "complete",
+    ): "Fetch the requested historical civil-date range for the selected exchanges.",
+    (
+        "tushare_stock_basic",
+        "update",
+    ): "Fetch the complete A-share security table and replace the committed snapshot; "
+    "parameterless.",
+    (
+        "tushare_index_basic",
+        "update",
+    ): "Refresh the already-committed tracked indexes; parameterless.",
+    (
+        "tushare_index_basic",
+        "complete",
+    ): "Fetch the explicitly requested index references and merge them into the tracked table.",
+    (
+        "tushare_index_weight",
+        "update",
+    ): "Extend the configured indexes through the current month; requires "
+    "dataset.tushare_index_weight.update_indexes.",
+    (
+        "tushare_index_weight",
+        "complete",
+    ): "Fetch every intersecting calendar month for the requested index references, extending "
+    "continuous monthly coverage.",
+    (
+        "tushare_daily_basic",
+        "update",
+    ): "Resolve the configured symbols for the latest due trading date; requires "
+    "dataset.tushare_daily_basic.update_symbols.",
+    (
+        "tushare_daily_basic",
+        "complete",
+    ): "Backfill or extend the requested symbols over the range; a disjoint range is extended "
+    "toward existing coverage until the intervals abut.",
+    (
+        "tushare_daily_basic",
+        "refresh",
+    ): "Re-fetch the requested symbols strictly inside their existing resolved coverage.",
+}
+
+_OPERAND_HELP: dict[str, str] = {
+    "symbols": "Tushare security codes like 600000.SH, or constituent selectors "
+    "tushare:<ts_code>[@latest|@YYYYMM].",
+    "indexes": "Index references spelled tushare:<ts_code>, for example tushare:000300.SH.",
+    "exchanges": "Exchanges to maintain; SSE and/or SZSE.",
+    "timerange": "Half-open YYYY-MM-DD:YYYY-MM-DD range; the end is exclusive and today "
+    "resolves in the dataset timezone.",
+}
+
+
 def operation_description(dataset: str, operation: str) -> dict[str, Any]:
     if operation not in _operation_names(dataset):
         raise OperandError(f"unsupported operation {operation!r} for {dataset}")
+    help_text = _OPERATION_HELP.get((dataset, operation), "")
     if operation == "update":
-        return {"name": operation, "required": [], "properties": {}}
+        return {"name": operation, "help": help_text, "required": [], "properties": {}}
     key = {
         "tushare_trade_cal": "exchanges",
         "tushare_index_basic": "indexes",
@@ -754,13 +1008,25 @@ def operation_description(dataset: str, operation: str) -> dict[str, Any]:
     }[dataset]
     return {
         "name": operation,
+        "help": help_text,
         "required": [key] if dataset == "tushare_index_basic" else [key, "timerange"],
         "properties": {
-            key: {"type": "array", "items": {"type": "string"}, "minItems": 1},
+            key: {
+                "type": "array",
+                "items": {"type": "string"},
+                "minItems": 1,
+                "help": _OPERAND_HELP[key],
+            },
             **(
                 {}
                 if dataset == "tushare_index_basic"
-                else {"timerange": {"type": "string", "format": "half-open-date-range"}}
+                else {
+                    "timerange": {
+                        "type": "string",
+                        "format": "half-open-date-range",
+                        "help": _OPERAND_HELP["timerange"],
+                    }
+                }
             ),
         },
     }
@@ -791,7 +1057,10 @@ def plan_operation(
     elif dataset == "tushare_daily_basic":
         symbols = list(normalized["symbols"])
         if all(not value.startswith("tushare:") for value in symbols):
-            strategy = "per-symbol bounded range"
+            strategy = (
+                "per-symbol bounded range or date-batched full-market, "
+                "whichever needs fewer requests"
+            )
             estimated_requests = len(symbols)
         else:
             strategy = "selector resolution required"
@@ -929,6 +1198,7 @@ def _dataset_settings(workspace: Workspace, dataset: str) -> list[dict[str, Any]
             "key": key,
             "schema": dict(setting.schema),
             "help": setting.help,
+            "required": setting.required,
             "configured": workspace.get_config(key) is not None,
         }
         for key, setting in plugin.settings.items()

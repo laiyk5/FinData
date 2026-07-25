@@ -33,8 +33,13 @@ dev = [
   "nox>=2025.5.1",
   "pytest>=8",
   "pytest-cov>=5",
-  "ruff>=0.9",
+  "ruff==0.15.22",
 ]
+
+[tool.hatch.build]
+# The WebUI bundle is built from web/ (npm run build) and git-ignored; it must
+# still ship in the sdist and wheel.
+artifacts = ["src/findata/webui/**"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/findata"]

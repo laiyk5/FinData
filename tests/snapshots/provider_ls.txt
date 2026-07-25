@@ -1,0 +1,2 @@
+NAME     READY  MODE
+tushare  yes    mock

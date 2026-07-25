@@ -1,0 +1,7 @@
+✓ Task succeeded
+  Dataset      tushare_trade_cal
+  Operation    complete
+  Task         <ID>
+  Publication  <ID>
+  Requests     1
+  Elapsed      <DURATION>

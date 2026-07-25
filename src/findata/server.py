@@ -6,26 +6,53 @@ import json
 import os
 import secrets
 import threading
+from collections.abc import Mapping
 from dataclasses import asdict
-from datetime import date, datetime, time
+from datetime import UTC, date, datetime, time
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from importlib.metadata import PackageNotFoundError, version as package_version
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 from urllib.parse import parse_qs, urlparse
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from findata.cron import CronManager
 from findata.events import EventStore
 from findata.identifiers import AmbiguousIdentifierError, IdentifierNotFoundError
-from findata.loader import DataLoader, DatasetNotReadyError
-from findata.storage import Workspace
-from findata.plugins import discover_dataset_plugins, discover_provider_plugins, register_plugins
+from findata.loader import DataLoader, DatasetNotReadyError, UnsupportedCoverageError
+from findata.presentation import default_display_timezone
+from findata.storage import DATABASE_NAME, Workspace
+from findata.plugins import (
+    DatasetPlugin,
+    ProviderPlugin,
+    discover_dataset_plugins,
+    discover_provider_plugins,
+    register_plugins,
+)
 from findata.taskrunner import DatasetBusyError, QueueFullError, TaskNotFoundError, TaskRunner
 
 
 class ServerAlreadyRunningError(RuntimeError):
     pass
+
+
+WEBUI_ROOT = Path(__file__).resolve().parent / "webui"
+
+_WEBUI_CONTENT_TYPES = {
+    ".html": "text/html; charset=utf-8",
+    ".js": "text/javascript; charset=utf-8",
+    ".mjs": "text/javascript; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".json": "application/json",
+    ".map": "application/json",
+    ".svg": "image/svg+xml",
+    ".png": "image/png",
+    ".ico": "image/x-icon",
+    ".txt": "text/plain; charset=utf-8",
+    ".woff": "font/woff",
+    ".woff2": "font/woff2",
+}
 
 
 def initialize_workspace(root: Path) -> Workspace:
@@ -59,10 +86,12 @@ class FindataServer:
     ) -> None:
         self.root = Path(workspace)
         self.workspace = initialize_workspace(self.root)
+        self.started_at = datetime.now(UTC).timestamp()
         self.providers = {item.provider_id: item for item in discover_provider_plugins()}
         self.plugins = {
             item.name: item for item in discover_dataset_plugins(providers=self.providers.values())
         }
+        self._secret_keys = secret_config_keys(self.providers.values())
         self.host = host
         self.port = port
         self.provider_mode = provider_mode
@@ -100,7 +129,7 @@ class FindataServer:
             submit=lambda dataset, operation, operands: self.taskrunner.submit(
                 dataset, operation, operands, owner="cron"
             ),
-            provider_ready=lambda _dataset: self._provider_ready(),
+            provider_ready=lambda dataset: self._provider_ready(self.plugins[dataset].provider),
             update_ready=self._update_ready,
         )
 
@@ -167,15 +196,63 @@ class FindataServer:
             except Exception as exc:
                 self.events.record("cron_loop_error", "error", f"cron scheduler tick failed: {exc}")
 
-    def _provider_ready(self) -> bool:
-        runtime = self.providers["tushare"].runtime
+    def _provider_ready(self, provider_id: str) -> bool:
+        runtime = self.providers[provider_id].runtime
         assert runtime is not None
         return bool(runtime.ready(self.workspace, self.provider_mode))
 
-    def _provider_is_mock(self) -> bool:
-        runtime = self.providers["tushare"].runtime
+    def _provider_is_mock(self, provider_id: str) -> bool:
+        runtime = self.providers[provider_id].runtime
         assert runtime is not None
         return bool(runtime.is_mock(self.workspace, self.provider_mode))
+
+    def provider_summaries(self) -> list[dict[str, object]]:
+        """Credential-free readiness for every registered provider."""
+        return [
+            {
+                "name": provider_id,
+                "ready": self._provider_ready(provider_id),
+                "mode": "mock" if self._provider_is_mock(provider_id) else "real",
+            }
+            for provider_id in self.providers
+        ]
+
+    def _dataset_status(self, dataset: str) -> dict[str, object]:
+        """Committed maintenance state for one dataset, distinct from its static contract."""
+        try:
+            plugin = self.plugins[dataset]
+        except KeyError as exc:
+            raise ValueError(f"unknown dataset {dataset!r}") from exc
+        status: dict[str, object] = {
+            "name": dataset,
+            "provider": plugin.provider,
+            "provider_ready": self._provider_ready(plugin.provider),
+            "update_ready": self._update_ready(dataset),
+            "state": "uninitialized",
+            "publication_id": None,
+            "covered_keys": None,
+            "coverage_start": None,
+            "coverage_end": None,
+            "storage_bytes": _dataset_storage_bytes(self.workspace, dataset),
+        }
+        reader = DataLoader(self.workspace.root).dataset(dataset)
+        try:
+            publication_id = reader.publication_id
+        except DatasetNotReadyError:
+            return status
+        status["state"] = "ready"
+        status["publication_id"] = publication_id
+        try:
+            coverage = reader.coverage()
+        except UnsupportedCoverageError:
+            coverage = None
+        if coverage is not None and coverage.num_rows:
+            status["covered_keys"] = len(set(coverage.column("key").to_pylist()))
+            status["coverage_start"] = str(min(coverage.column("start").to_pylist()))
+            status["coverage_end"] = str(max(coverage.column("end").to_pylist()))
+        elif coverage is not None:
+            status["covered_keys"] = 0
+        return status
 
     def _update_ready(self, dataset: str) -> bool:
         if dataset == "tushare_index_weight":
@@ -256,10 +333,18 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
             return
 
         def _dispatch(self, method: str) -> None:
+            parsed = urlparse(self.path)
+            if not parsed.path.startswith("/v1"):
+                # Static WebUI assets carry no secrets and are served without the
+                # token; every /v1 request below still requires it.
+                if method == "GET":
+                    self._serve_webui(parsed.path)
+                else:
+                    self._send(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+                return
             if not self._authenticated():
                 self._send(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
                 return
-            parsed = urlparse(self.path)
             parts = [part for part in parsed.path.split("/") if part]
             query = parse_qs(parsed.query)
             try:
@@ -270,6 +355,10 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                         {
                             "status": "running",
                             "pid": os.getpid(),
+                            "workspace": str(app.root),
+                            "started_at": app.started_at,
+                            "version": _server_version(),
+                            "workspace_disk": _workspace_disk_usage(app.root),
                             "tasks": len(app.taskrunner.list_handles()),
                             **runtime,
                         },
@@ -277,9 +366,13 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                     return
                 if method == "POST" and parts == ["v1", "tasks"]:
                     body = self._body()
-                    if not app._provider_ready():
-                        raise ValueError("provider tushare is not ready")
                     dataset = str(body["dataset"])
+                    try:
+                        provider_id = app.plugins[dataset].provider
+                    except KeyError as exc:
+                        raise ValueError(f"unknown dataset {dataset!r}") from exc
+                    if not app._provider_ready(provider_id):
+                        raise ValueError(f"provider {provider_id} is not ready")
                     operation = str(body.get("operation") or "update")
                     operands = app._runtime_for_dataset(dataset).normalize_operation(
                         dataset,
@@ -370,7 +463,9 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                     if method == "POST" and parts[3:] == ["cancel"]:
                         current = app.taskrunner.status(handle_id)
                         if current.status in {"succeeded", "failed", "canceled"}:
-                            self._send(HTTPStatus.OK, _task_payload(current))
+                            payload = _task_payload(current)
+                            payload["already_terminal"] = True
+                            self._send(HTTPStatus.OK, payload)
                         else:
                             result = app.taskrunner.cancel(current.handle_id)
                             self._send(HTTPStatus.OK, asdict(result))
@@ -422,13 +517,16 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                     body = self._body()
                     key = str(body["key"])
                     value = body["value"]
+                    if _reserved_config_key(key):
+                        raise ValueError(f"configuration key {key!r} is reserved")
                     if key == "display.timezone":
-                        ZoneInfo(str(value))
+                        try:
+                            ZoneInfo(str(value))
+                        except ZoneInfoNotFoundError as exc:
+                            raise ValueError(f"unknown IANA timezone {value!r}") from exc
                     if key.startswith("dataset."):
-                        components = key.split(".", 2)
-                        if len(components) != 3 or components[1] not in app.plugins:
-                            raise ValueError(f"unknown dataset setting {key!r}")
-                        value = app.plugins[components[1]].normalize_setting(
+                        plugin = _dataset_plugin_for_key(app, key)
+                        value = plugin.normalize_setting(
                             key, value, workspace=app.workspace
                         )
                     app.workspace.set_config(key, value)
@@ -437,42 +535,53 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                         {
                             "updated": True,
                             "key": key,
-                            "value": _redact(key, value),
+                            "value": _redact(key, value, app._secret_keys),
                             "revision": app.workspace.config_snapshot()["revision"],
                         },
                     )
                     return
                 if method == "GET" and parts == ["v1", "config"]:
                     key = _query_one(query, "key")
-                    values = app.workspace.list_config()
+                    values = {
+                        name: value
+                        for name, value in app.workspace.list_config().items()
+                        if not _reserved_config_key(name)
+                    }
                     if key is not None:
                         if key not in values:
-                            self._send(HTTPStatus.NOT_FOUND, {"error": "config_not_found"})
+                            self._send(
+                                HTTPStatus.NOT_FOUND,
+                                {"error": f"configuration key {key!r} is not set"},
+                            )
                         else:
                             self._send(
-                                HTTPStatus.OK, {"key": key, "value": _redact(key, values[key])}
+                                HTTPStatus.OK,
+                                {
+                                    "key": key,
+                                    "value": _redact(key, values[key], app._secret_keys),
+                                },
                             )
                     else:
                         self._send(
                             HTTPStatus.OK,
                             {
                                 "values": {
-                                    name: _redact(name, value) for name, value in values.items()
+                                    name: _redact(name, value, app._secret_keys)
+                                    for name, value in values.items()
                                 }
                             },
                         )
                     return
                 if method == "DELETE" and len(parts) == 3 and parts[:2] == ["v1", "config"]:
                     key = parts[2]
+                    if _reserved_config_key(key):
+                        raise ValueError(f"configuration key {key!r} is reserved")
                     if key.startswith("dataset."):
-                        components = key.split(".", 2)
-                        if (
-                            len(components) != 3
-                            or components[1] not in app.plugins
-                            or key not in app.plugins[components[1]].settings
-                        ):
-                            raise ValueError(f"unknown dataset setting {key!r}")
+                        _dataset_plugin_for_key(app, key)
                     self._send(HTTPStatus.OK, {"removed": app.workspace.unset_config(parts[2])})
+                    return
+                if method == "GET" and parts == ["v1", "config", "keys"]:
+                    self._send(HTTPStatus.OK, {"items": _declared_config_keys(app)})
                     return
                 if (
                     method == "GET"
@@ -496,7 +605,7 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                         {
                             "provider": provider_id,
                             "ready": ready,
-                            "authenticated": ready and not mock,
+                            "authenticated": (ready and not mock) if not mock else None,
                             "mode": "mock" if mock else "real",
                         },
                     )
@@ -518,6 +627,7 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                                         )
                                         else "real"
                                     ),
+                                    "secret_fields": list(provider.secret_fields),
                                 }
                                 for provider_id, provider in app.providers.items()
                             ]
@@ -532,13 +642,16 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                         raise ValueError(f"unknown provider {provider_id!r}") from exc
                     runtime = provider.runtime
                     assert runtime is not None
-                    configured = app.workspace.get_config(f"provider.{provider_id}.token")
+                    configured = app.provider_mode == "mock" or any(
+                        app.workspace.get_config(f"provider.{provider_id}.{field}") is not None
+                        for field in provider.secret_fields
+                    )
                     self._send(
                         HTTPStatus.OK,
                         {
                             "name": provider_id,
                             "ready": bool(runtime.ready(app.workspace, app.provider_mode)),
-                            "configured": configured is not None or app.provider_mode == "mock",
+                            "configured": configured,
                             "mode": (
                                 "mock"
                                 if runtime.is_mock(app.workspace, app.provider_mode)
@@ -553,7 +666,9 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                         {
                             "items": [
                                 app._runtime_for_dataset(name).dataset_description(
-                                    app.workspace, name, provider_ready=app._provider_ready()
+                                    app.workspace,
+                                    name,
+                                    provider_ready=app._provider_ready(app.plugins[name].provider),
                                 )
                                 for name in app.plugins
                             ]
@@ -581,26 +696,34 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                         {"dataset": dataset, "state": "uninitialized", "reset": True},
                     )
                     return
+                if method == "GET" and parts == ["v1", "datasets", "status"]:
+                    self._send(
+                        HTTPStatus.OK,
+                        {"items": [app._dataset_status(name) for name in app.plugins]},
+                    )
+                    return
                 if method == "GET" and len(parts) == 3 and parts[:2] == ["v1", "datasets"]:
                     self._send(
                         HTTPStatus.OK,
                         app._runtime_for_dataset(parts[2]).dataset_description(
-                            app.workspace, parts[2], provider_ready=app._provider_ready()
+                            app.workspace,
+                            parts[2],
+                            provider_ready=app._provider_ready(app.plugins[parts[2]].provider),
                         ),
                     )
                     return
                 if method == "GET" and len(parts) == 4 and parts[:2] == ["v1", "datasets"]:
                     dataset, action = parts[2], parts[3]
-                    if action in {"operations", "status"}:
+                    if action == "status":
+                        self._send(HTTPStatus.OK, app._dataset_status(dataset))
+                        return
+                    if action == "operations":
                         description = app._runtime_for_dataset(dataset).dataset_description(
-                            app.workspace, dataset, provider_ready=app._provider_ready()
+                            app.workspace,
+                            dataset,
+                            provider_ready=app._provider_ready(app.plugins[dataset].provider),
                         )
-                        self._send(
-                            HTTPStatus.OK,
-                            description
-                            if action == "status"
-                            else {"items": description["operations"]},
-                        )
+                        self._send(HTTPStatus.OK, {"items": description["operations"]})
                         return
                 if (
                     method == "GET"
@@ -656,9 +779,12 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                         count = app.events.ack_all()
                         response = {"acknowledged": count}
                     else:
-                        event_id = app.events.ack(str(body["event_id"]))
-                        count = 1
-                        response = {"acknowledged": count, "event_id": event_id}
+                        event_id, already = app.events.ack(str(body["event_id"]))
+                        response = {
+                            "acknowledged": 1,
+                            "already_acknowledged": already,
+                            "event_id": event_id,
+                        }
                     self._send(HTTPStatus.OK, response)
                     return
                 self._send(HTTPStatus.NOT_FOUND, {"error": "not_found"})
@@ -668,10 +794,18 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                 self._send(HTTPStatus.CONFLICT, {"error": str(exc)})
             except AmbiguousIdentifierError as exc:
                 self._send(HTTPStatus.CONFLICT, {"error": str(exc)})
-            except TaskNotFoundError:
-                self._send(HTTPStatus.NOT_FOUND, {"error": "task_not_found"})
-            except IdentifierNotFoundError:
-                self._send(HTTPStatus.NOT_FOUND, {"error": "event_not_found"})
+            except TaskNotFoundError as exc:
+                operand = exc.args[0] if exc.args else "unknown"
+                self._send(
+                    HTTPStatus.NOT_FOUND,
+                    {"error": f"no retained task matches {operand!r}"},
+                )
+            except IdentifierNotFoundError as exc:
+                operand = exc.args[0] if exc.args else "unknown"
+                self._send(
+                    HTTPStatus.NOT_FOUND,
+                    {"error": f"no retained event matches {operand!r}"},
+                )
             except (KeyError, TypeError, ValueError) as exc:
                 self._send(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
             except Exception as exc:
@@ -690,6 +824,32 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
             if not isinstance(value, dict):
                 raise ValueError("request body must be an object")
             return value
+
+        def _serve_webui(self, raw_path: str) -> None:
+            if not WEBUI_ROOT.is_dir():
+                self._send(
+                    HTTPStatus.NOT_FOUND,
+                    {"error": "web UI is not built; run npm run build in web/"},
+                )
+                return
+            root = WEBUI_ROOT.resolve()
+            candidate = (root / raw_path.lstrip("/")).resolve()
+            if not candidate.is_file() or root not in candidate.parents:
+                # Unknown and unsafe paths fall back to the SPA entry point.
+                candidate = root / "index.html"
+            content_type = _WEBUI_CONTENT_TYPES.get(
+                candidate.suffix.lower(), "application/octet-stream"
+            )
+            payload = candidate.read_bytes()
+            self.send_response(HTTPStatus.OK.value)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(payload)))
+            if candidate.name == "index.html":
+                self.send_header("Cache-Control", "no-cache")
+            elif raw_path.startswith("/assets/"):
+                self.send_header("Cache-Control", "public, max-age=31536000, immutable")
+            self.end_headers()
+            self.wfile.write(payload)
 
         def _send(self, status: HTTPStatus, value: Any) -> None:
             payload = json.dumps(value, separators=(",", ":"), default=str).encode("utf-8")
@@ -710,7 +870,157 @@ def _task_payload(record: Any) -> dict[str, Any]:
     return value
 
 
-def _redact(key: str, value: Any) -> Any:
+def _server_version() -> str:
+    try:
+        return package_version("findata")
+    except PackageNotFoundError:
+        return "dev"
+
+
+def _workspace_disk_usage(root: Path) -> dict[str, Any]:
+    """On-disk size of the workspace itself, broken down by top-level entry."""
+    sizes: dict[str, int] = {}
+    total = 0
+    for entry in sorted(root.iterdir()):
+        size = _path_size(entry)
+        if size:
+            sizes[entry.name] = size
+            total += size
+    breakdown = [
+        {"name": name, "bytes": size}
+        for name, size in sorted(sizes.items(), key=lambda item: -item[1])
+    ]
+    return {"total_bytes": total, "breakdown": breakdown}
+
+
+def _path_size(path: Path) -> int:
+    if path.is_symlink():
+        return 0
+    if path.is_file():
+        return path.stat().st_size
+    size = 0
+    for dirpath, _dirnames, filenames in os.walk(path):
+        for filename in filenames:
+            candidate = Path(dirpath) / filename
+            if candidate.is_symlink():
+                continue
+            try:
+                size += candidate.stat().st_size
+            except OSError:
+                continue
+    return size
+
+
+def _dataset_storage_bytes(workspace: Workspace, dataset: str) -> int | None:
+    """On-disk size of the dataset's database (main file plus WAL), if present."""
+    dataset_root = workspace.datasets_root / dataset
+    database = dataset_root / DATABASE_NAME
+    if not database.exists():
+        return None
+    total = database.stat().st_size
+    wal = dataset_root / f"{DATABASE_NAME}.wal"
+    if wal.exists():
+        total += wal.stat().st_size
+    return total
+
+
+def secret_config_keys(providers: Iterable[Any]) -> frozenset[str]:
+    """Configuration keys declared secret by registered provider plugins."""
+    return frozenset(
+        f"provider.{provider.provider_id}.{field}"
+        for provider in providers
+        for field in provider.secret_fields
+    )
+
+
+RESERVED_CONFIG_PREFIXES = ("cron.",)
+
+
+def _reserved_config_key(key: str) -> bool:
+    """Internal state keys (for example cron.jobs) are not user configuration."""
+    return any(key.startswith(prefix) for prefix in RESERVED_CONFIG_PREFIXES)
+
+
+CORE_CONFIG_KEYS: dict[str, dict[str, Any]] = {
+    "display.timezone": {
+        "schema": {"type": "string", "format": "iana-timezone"},
+        "help": "Display timezone for human CLI output (IANA name, for example Asia/Shanghai).",
+    },
+}
+
+
+def _dataset_plugin_for_key(app: FindataServer, key: str) -> DatasetPlugin:
+    """Resolve a dataset.<name>.* configuration key to its owning plugin."""
+    components = key.split(".", 2)
+    if len(components) != 3 or components[1] not in app.plugins:
+        raise ValueError(f"unknown dataset setting {key!r}")
+    plugin = app.plugins[components[1]]
+    if key not in plugin.settings:
+        declared = ", ".join(sorted(plugin.settings)) or "none"
+        raise ValueError(
+            f"unknown setting {key!r} for {plugin.name}; declared settings: {declared}"
+        )
+    return plugin
+
+
+def _provider_key_help(provider: ProviderPlugin, field: str) -> str:
+    if field in provider.secret_fields:
+        return (
+            f"{field.replace('_', ' ').capitalize()} for the {provider.provider_id} provider "
+            "(secret; set via --env or --stdin)."
+        )
+    if field == "rate_limit":
+        return (
+            f"Rate limit for the {provider.provider_id} provider "
+            f"(requests per {provider.period} seconds)."
+        )
+    return f"{field.replace('_', ' ').capitalize()} for the {provider.provider_id} provider."
+
+
+def _declared_config_keys(app: FindataServer) -> list[dict[str, Any]]:
+    """Declared configuration keys: core, provider, and plugin dataset settings."""
+    items: list[dict[str, Any]] = []
+
+    def item(key: str, help_text: str, schema: Any, *, secret: bool) -> dict[str, Any]:
+        return {
+            "key": key,
+            "help": help_text,
+            "schema": dict(schema) if isinstance(schema, Mapping) else {},
+            "configured": app.workspace.get_config(key) is not None,
+            "secret": secret,
+        }
+
+    for key, declaration in CORE_CONFIG_KEYS.items():
+        entry = item(key, str(declaration["help"]), declaration["schema"], secret=False)
+        if key == "display.timezone":
+            entry["default"] = default_display_timezone()
+        items.append(entry)
+    for provider_id, provider in sorted(app.providers.items()):
+        properties = provider.configuration_schema.get("properties", {})
+        if not isinstance(properties, Mapping):
+            continue
+        for field, schema in properties.items():
+            key = f"provider.{provider_id}.{field}"
+            entry = item(
+                key, _provider_key_help(provider, str(field)), schema, secret=field in provider.secret_fields
+            )
+            if field == "rate_limit":
+                entry["default"] = provider.rate_limit
+            items.append(entry)
+    for name, plugin in sorted(app.plugins.items()):
+        for key, setting in sorted(plugin.settings.items()):
+            entry = item(key, setting.help, setting.schema, secret=False)
+            entry["required"] = setting.required
+            items.append(entry)
+    return items
+
+
+def _redact(key: str, value: Any, secret_keys: frozenset[str] = frozenset()) -> Any:
+    if isinstance(value, dict) and set(value) == {"env"}:
+        # An environment-variable reference names a variable, not a secret.
+        return value
+    if key in secret_keys:
+        return "<redacted>"
     lowered = key.lower()
     if any(word in lowered for word in ("token", "secret", "password", "credential")):
         return "<redacted>"

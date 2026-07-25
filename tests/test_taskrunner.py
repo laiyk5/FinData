@@ -78,6 +78,17 @@ def rate_wait_worker(request: dict[str, object], context: TaskContext) -> dict[s
     return {"permit": True}
 
 
+def waiting_worker(request: dict[str, object], context: TaskContext) -> dict[str, object]:
+    context.waiting("blocked_on_test")
+    context.waiting("blocked_on_test")
+    context.running()
+    return {"ok": True}
+
+
+def failing_worker(request: dict[str, object], context: TaskContext) -> dict[str, object]:
+    raise RuntimeError("boom")
+
+
 class TaskRunnerTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tempdir = tempfile.TemporaryDirectory()
@@ -103,8 +114,69 @@ class TaskRunnerTests(unittest.TestCase):
             self.assertEqual(result.status, "succeeded")
             self.assertNotEqual(result.result["pid"], os.getpid())
             self.assertEqual(result.progress, {"current": 2, "total": 2})
-            self.assertEqual(runner.logs(handle_id), ["worker started"])
+            logs = runner.logs(handle_id)
+            self.assertEqual(
+                [item["message"] for item in logs],
+                ["worker started", "succeeded"],
+            )
+            self.assertTrue(
+                all(item["type"] == "log" and isinstance(item["time"], float) for item in logs)
+            )
             self.assertTrue((self.root / "tasks" / "handles" / f"{handle_id}.json").is_file())
+
+    def test_state_transitions_are_logged_once_per_change(self) -> None:
+        with TaskRunner(self.root, waiting_worker) as runner:
+            handle_id = runner.submit("example", "update", {})
+            result = runner.wait(handle_id, timeout=TASK_TIMEOUT)
+
+            self.assertEqual(result.status, "succeeded")
+            self.assertEqual(
+                [item["message"] for item in runner.logs(handle_id)],
+                ["waiting: blocked_on_test", "running", "succeeded"],
+            )
+
+    def test_dependency_lifecycle_is_logged_on_the_parent(self) -> None:
+        with TaskRunner(
+            self.root,
+            dependency_worker,
+            global_concurrency=1,
+            dependency_resolver=dependency_resolver,
+        ) as runner:
+            parent = runner.submit("parent", "complete", {})
+            result = runner.wait(parent, timeout=TASK_TIMEOUT)
+
+            self.assertEqual(result.status, "succeeded", result.error)
+            self.assertEqual(
+                [item["message"] for item in runner.logs(parent)],
+                [
+                    'dependency requested: child {"timerange":"2026-07-01:2026-07-02"}',
+                    "dependency fulfilled: child",
+                    "succeeded",
+                ],
+            )
+
+    def test_failed_execution_logs_the_terminal_error(self) -> None:
+        with TaskRunner(self.root, failing_worker) as runner:
+            handle_id = runner.submit("example", "update", {})
+            result = runner.wait(handle_id, timeout=TASK_TIMEOUT)
+
+            self.assertEqual(result.status, "failed")
+            self.assertEqual(
+                [item["message"] for item in runner.logs(handle_id)],
+                ["failed: RuntimeError: boom"],
+            )
+
+    def test_canceled_execution_logs_the_terminal_state(self) -> None:
+        with TaskRunner(self.root, slow_worker, cancel_grace=0.2) as runner:
+            handle_id = runner.submit("tushare_daily_basic", "complete", {"duration": 10.0})
+            runner.wait_for_status(handle_id, {"running"}, timeout=TASK_TIMEOUT)
+            runner.cancel(handle_id)
+
+            self.assertEqual(runner.wait(handle_id, timeout=TASK_TIMEOUT).status, "canceled")
+            self.assertEqual(
+                [item["message"] for item in runner.logs(handle_id)],
+                ["canceled"],
+            )
 
     def test_execution_receives_submission_time_settings_snapshot(self) -> None:
         current = {

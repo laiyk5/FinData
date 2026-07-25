@@ -1,6 +1,6 @@
 # User documentation
 
-This file is the canonical user-facing guide for findata. Architecture and invariants live in [DESIGN.md](DESIGN.md); individual dataset contracts live in [DATASETS.md](DATASETS.md).
+This file is the canonical user-facing guide for findata. Architecture and invariants live in [design/core.md](design/core.md); individual dataset contracts live in [design/dataset/index.md](design/dataset/index.md).
 
 ## Installation
 
@@ -77,9 +77,31 @@ database as a backup. Findata retains only the current committed dataset revisio
 do not create historical storage copies. Dataset initialization is local and does not contact a
 provider.
 
+## Web UI
+
+While `findata-server start` is running, the server also serves a browser UI at its listening
+address (default `http://127.0.0.1:8765/`). Open it in a browser and paste the workspace token
+when prompted; `findata-server token <workspace>` prints it (it is also the `<workspace>/token`
+file). The token is held only in the browser session and is
+sent as an `Authorization` header, never in a URL.
+
+The WebUI is a thin client over the same HTTP API as the CLI and covers the same operational
+surface: a home dashboard (attention queue, live work, dataset health), datasets (describe,
+status, schema-driven operation forms with dry-run and submit, typed settings editors, confirmed
+reset), tasks (list, live status and logs, cancel, retry, explain), providers (detail pages with
+configuration state, related datasets, and authenticated check), cron (guided schedule editing,
+enable, disable, reset), events (filtering, contextual actions, acknowledgement), configuration
+(grouped, filterable, fully generated from declared keys — secrets can be entered but are never
+displayed), and a server page (identity, uptime, workspace disk usage, task activity). It follows
+live work by polling; no work is submitted
+implicitly, and every mutation corresponds to the CLI command documented in this guide.
+
+Reading committed data (`data schema`, `data preview`, `data coverage`, `data export`) remains a
+CLI and DataLoader workflow and is intentionally not part of the WebUI.
+
 ## CLI behavior
 
-Operational commands support `--format human|json|jsonl`; `--json` is shorthand for `--format json`, and `jsonl` is used for streams. Stdout contains command results and stderr contains diagnostics.
+Operational commands support `--format human|json|jsonl`; `jsonl` is used for streams. Stdout contains command results and stderr contains diagnostics.
 
 Human output is the default. Collection commands use compact tables, detail commands use labeled
 fields, and an empty result says what was not found rather than printing an empty JSON value. Human
@@ -182,7 +204,9 @@ embedded Python caller returns normally rather than terminating the host process
 
 ### Operand conventions
 
-Dataset-specific operands are defined in [DATASETS.md](DATASETS.md). CLI date ranges use `start:end` and are half-open: the start is included and the end is excluded. Dates use `YYYY-MM-DD`; `today` is resolved once in the dataset timezone to the current date, so it excludes the current date when used as the end. For example, `2026-06-01:2026-07-01` covers all of June.
+Dataset-specific operands are defined in [design/dataset/index.md](design/dataset/index.md). `findata dataset operation
+<dataset> <operation>` and `findata dataset describe <dataset>` show per-operand help alongside
+the operand schema. CLI date ranges use `start:end` and are half-open: the start is included and the end is excluded. Dates use `YYYY-MM-DD`; `today` is resolved once in the dataset timezone to the current date, so it excludes the current date when used as the end. For example, `2026-06-01:2026-07-01` covers all of June.
 
 A scalar passed for an array operand is coerced to one element, so
 `--param symbols=tushare:000300.SH` is equivalent to
@@ -215,7 +239,10 @@ Canceling one coalesced handle makes that handle `canceled` immediately while an
   - The CLI collects input; the server applies schema coercion and defaults, validates the complete operands, and returns field-level errors.
 - `task ls [--all] [--dataset NAME] [--status STATUS]` — list handles; the default view contains every nonterminal handle and the 50 most recent terminal handles. `--all` means all retained handles, up to the newest 1,000 terminal handles per dataset. `STATUS` is one of the public lifecycle states above.
 - `task status <id>` — show status and progress. If work was coalesced, indicate whether other requesters remain.
-- `task logs <id> [--follow]` — print logs; `-f` aliases `--follow`.
+- `task logs <id> [--follow]` — print the retained task log; `-f` aliases `--follow`.
+  - Human output renders one line per record as `HH:MM:SS message` in the display timezone.
+  - The retained log records what a task actually did: lifecycle transitions (`waiting: <reason>`, `running`), dependency requests and their fulfillment or failure, the terminal state (`succeeded`, `failed: <error>`, `canceled`), and dataset plugin activity — a plan summary per operation, one fetch line per provider request with parameters and returned row counts, checkpoint commits with row and coverage totals, and a final completion summary.
+  - JSONL emits one typed record per line: `{"type":"log","time":<epoch seconds>,"message":...}` for log lines and `{"type":"task.diagnostic",...}` for diagnostics. Progress and stage updates are transient and not part of the retained log.
 - `task cancel <id>` — cancel this request and report whether shared execution continued for another requester.
 - `task watch <id>` — follow a retained task's progress and logs without submitting work.
 - `task retry <id> [--wait|--follow]` — submit a new handle using the retained task's normalized
@@ -227,10 +254,15 @@ Canceling one coalesced handle makes that handle `canceled` immediately while an
 
 - `dataset ls`
 - `dataset describe <name>` — show provider readiness, capabilities, dependencies, declared
-  settings, timing, storage, and status metadata.
+  settings, storage, and status metadata.
 - `dataset operations <name>`
-- `dataset operation <name> <operation>` — show operand schema, defaults, syntax, and examples.
-- `dataset status <name>` / `dataset status --all`
+- `dataset operation <name> <operation>` — show the operand schema, required operands, and
+  per-operand help; `dataset describe <name>` shows the same operation-level and operand help
+  alongside the static contract.
+- `dataset status <name>` / `dataset status --all` — show committed maintenance state:
+  provider and update readiness, initialization state, current publication, and a coverage
+  summary (number of covered keys and the overall resolved range). This is the runtime
+  companion to `dataset describe`, which shows the static contract.
 - `dataset reset <name> [--yes]` — replace one dataset with a new uninitialized database while
   preserving its settings and task history. Human interactive mode requires confirmation;
   structured or non-interactive use requires `--yes`. Reset is rejected while that dataset has
@@ -290,7 +322,13 @@ Keys under `dataset.<dataset-name>.*` are owned by that dataset plugin. Core fin
 stores the value but does not interpret it. The plugin declares its setting names and schemas,
 normalizes values, reports update readiness, and provides setting-specific help through
 `dataset describe`. Unknown dataset settings and invalid values are rejected before configuration
-is changed.
+is changed; the error for a registered dataset lists its declared setting keys.
+
+Declared keys can be discovered without knowing them in advance: shell completion for
+`config set|get|unset` suggests declared keys alongside already-set ones, `dataset describe
+<dataset>` shows that dataset's declared settings with help and whether each is configured, and
+the HTTP API exposes every declared core, provider, and dataset key at `GET /v1/config/keys`
+(with `key`, `help`, `schema`, `configured`, and `secret` per item).
 
 ### Completion
 
@@ -370,7 +408,7 @@ records when `--output -` is used.
 
 Long human-readable results shown in an interactive terminal are automatically sent through the
 pager selected by `$PAGER` (normally `less`) instead of flooding the terminal. Paging is never used
-for redirected output, `--json`, `--jsonl`, or export data written to stdout. Set `PAGER=cat` when
+for redirected output, `--format json`, `--format jsonl`, or export data written to stdout. Set `PAGER=cat` when
 interactive paging is not wanted.
 
 ## DataLoader

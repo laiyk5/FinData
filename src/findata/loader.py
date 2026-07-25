@@ -54,11 +54,11 @@ class CoverageError(DataLoaderError):
     ) -> None:
         self.dataset = dataset
         self.missing_intervals = dict(missing_intervals)
-        rendered = {
-            key: [[start.isoformat(), end.isoformat()] for start, end in intervals]
+        rendered = "; ".join(
+            f"{key} {', '.join(f'{start.isoformat()}:{end.isoformat()}' for start, end in intervals)}"
             for key, intervals in self.missing_intervals.items()
-        }
-        super().__init__(f"{dataset} has unresolved coverage: {rendered!r}")
+        )
+        super().__init__(f"{dataset} has unresolved coverage: {rendered}")
 
 
 class DataLoader:

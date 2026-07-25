@@ -120,6 +120,36 @@ class CLIPresentationTests(unittest.TestCase):
         plain = output.replace("\x1b[1m", "").replace("\x1b[0m", "")
         self.assertTrue(all(len(line) <= 40 for line in plain.splitlines()))
 
+    def test_operation_and_describe_render_operand_help(self) -> None:
+        code, output, errors = self.run_cli(
+            "dataset", "operation", "tushare_daily_basic", "complete"
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(errors, "")
+        self.assertIn(
+            "symbols: array of string — Tushare security codes like 600000.SH", output
+        )
+        self.assertIn("timerange: string (half-open-date-range) — Half-open", output)
+
+        code, output, _ = self.run_cli(
+            "dataset", "operation", "tushare_index_weight", "update"
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("dataset.tushare_index_weight.update_indexes", output)
+
+        code, output, _ = self.run_cli("dataset", "describe", "tushare_daily_basic")
+        self.assertEqual(code, 0)
+        self.assertIn("update — Resolve the configured symbols", output)
+        self.assertIn("refresh (required: symbols, timerange) — Re-fetch", output)
+
+        code, output, _ = self.run_cli(
+            "--format", "json", "dataset", "operation", "tushare_daily_basic", "complete"
+        )
+        self.assertEqual(code, 0)
+        payload = json.loads(output)
+        self.assertNotIn("\x1b[", output)
+        self.assertIn("help", payload["properties"]["symbols"])
+
     def test_json_error_is_structured_and_json_follow_is_rejected(self) -> None:
         code, output, errors = self.run_cli(
             "--format", "json", "dataset", "describe", "does_not_exist"
@@ -207,8 +237,84 @@ class CLIPresentationTests(unittest.TestCase):
         self.assertEqual(len(tasks), 1)
         self.assertNotEqual(tasks[0].status, "canceled")
 
+    def test_logs_follow_ctrl_c_detaches(self) -> None:
+        submitted = json.loads(
+            self.run_cli(
+                "--format",
+                "json",
+                "task",
+                "run",
+                "tushare_trade_cal",
+                "complete",
+                "--params",
+                '{"exchanges":["SSE"],"timerange":"2020-01-01:2026-07-20"}',
+            )[1]
+        )
+        with patch("findata.cli.time.sleep", side_effect=KeyboardInterrupt):
+            code, _, errors = self.run_cli("task", "logs", str(submitted["handle_id"]), "--follow")
+
+        self.assertEqual(code, 130)
+        self.assertIn("detached", errors.lower())
+
+    def test_equals_form_global_options_match_spaced_forms(self) -> None:
+        code, output, errors = self.run_cli("--format=json", "provider", "ls")
+        self.assertEqual(code, 0)
+        self.assertEqual(errors, "")
+        spaced = json.loads(self.run_cli("--format", "json", "provider", "ls")[1])
+        self.assertEqual(json.loads(output), spaced)
+
+        code, output, _ = self.run_cli("--color=never", "provider", "check", "tushare", tty=True)
+        self.assertEqual(code, 0)
+        self.assertNotIn("\x1b[", output)
+
+        code, output, _ = self.run_cli("provider", "ls", "--format=json")
+        self.assertEqual(code, 0)
+        self.assertIn("items", json.loads(output))
+
+    def test_invalid_global_option_values_are_usage_errors(self) -> None:
+        code, output, errors = self.run_cli("--format=bogus", "provider", "ls")
+        self.assertEqual(code, 2)
+        self.assertEqual(output, "")
+        self.assertIn("bogus", errors)
+
+        code, _, errors = self.run_cli("provider", "ls", "--format")
+        self.assertEqual(code, 2)
+        self.assertIn("--format", errors)
+
+        code, _, errors = self.run_cli("--color=sometimes", "provider", "ls")
+        self.assertEqual(code, 2)
+        self.assertIn("--color", errors)
+
+    def test_explain_and_status_of_failed_task_exit_zero_and_show_reason(self) -> None:
+        code, output, _ = self.run_cli(
+            "--format", "json", "task", "run", "tushare_daily_basic", "update", "--wait"
+        )
+        self.assertEqual(code, 1)  # waiting on a failed task
+        handle = str(json.loads(output)["handle_id"])
+
+        code, output, _ = self.run_cli("task", "status", handle)
+        self.assertEqual(code, 0)
+        self.assertIn("failed", output)
+
+        code, output, _ = self.run_cli("task", "explain", handle)
+        self.assertEqual(code, 0)
+        self.assertIn("update_symbols", output)
+        self.assertIn(f"findata task retry {handle}", output)
+
 
 class ProgressPresentationTests(unittest.TestCase):
+    def test_waiting_state_names_the_server_reported_reason(self) -> None:
+        stderr = io.StringIO()
+        output = CLIOutput(
+            output_format="human",
+            color_mode="auto",
+            stdout=io.StringIO(),
+            stderr=stderr,
+            environ={},
+        )
+        output.state({"status": "waiting", "reason": "provider_rate_limit"})
+        self.assertIn("provider_rate_limit", stderr.getvalue())
+
     @patch("findata.presentation.Progress")
     def test_interactive_progress_uses_one_transient_rich_live_task(self, progress_type) -> None:
         stderr = TTYBuffer()

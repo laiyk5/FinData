@@ -43,11 +43,147 @@ class DataCLITests(unittest.TestCase):
     def tearDown(self) -> None:
         self.tempdir.cleanup()
 
+    def test_preview_leads_with_key_columns_and_honors_column_order(self) -> None:
+        stdout = io.StringIO()
+        code = cli_main(
+            [
+                "--workspace",
+                str(self.root),
+                "data",
+                "preview",
+                "tushare_daily_basic",
+                "--keys",
+                "600000.SH",
+                "--limit",
+                "2",
+            ],
+            stdout=stdout,
+            stderr=io.StringIO(),
+            environ={},
+        )
+        self.assertEqual(code, 0)
+        header = stdout.getvalue().splitlines()[0].split()
+        self.assertEqual(header[:2], ["TS_CODE", "TRADE_DATE"])
+
+        stdout = io.StringIO()
+        code = cli_main(
+            [
+                "--workspace",
+                str(self.root),
+                "data",
+                "preview",
+                "tushare_daily_basic",
+                "--keys",
+                "600000.SH",
+                "--columns",
+                "close,ts_code",
+                "--limit",
+                "2",
+            ],
+            stdout=stdout,
+            stderr=io.StringIO(),
+            environ={},
+        )
+        self.assertEqual(code, 0)
+        header = stdout.getvalue().splitlines()[0].split()
+        self.assertEqual(header[:2], ["CLOSE", "TS_CODE"])
+
+    def test_data_usage_errors_exit_2(self) -> None:
+        stderr = io.StringIO()
+        code = cli_main(
+            [
+                "--workspace",
+                str(self.root),
+                "data",
+                "preview",
+                "tushare_daily_basic",
+                "--require-coverage",
+                "--allow-partial",
+            ],
+            stdout=io.StringIO(),
+            stderr=stderr,
+            environ={},
+        )
+        self.assertEqual(code, 2)
+        self.assertIn("mutually exclusive", stderr.getvalue())
+
+        stderr = io.StringIO()
+        code = cli_main(
+            [
+                "--workspace",
+                str(self.root),
+                "data",
+                "coverage",
+                "tushare_daily_basic",
+                "--from",
+                "2026-07-01",
+            ],
+            stdout=io.StringIO(),
+            stderr=stderr,
+            environ={},
+        )
+        self.assertEqual(code, 2)
+        self.assertIn("supplied together", stderr.getvalue())
+
+    def test_parquet_stdout_export_refuses_an_interactive_terminal(self) -> None:
+        class TTYStdout(io.StringIO):
+            def isatty(self) -> bool:
+                return True
+
+        stderr = io.StringIO()
+        code = cli_main(
+            [
+                "--workspace",
+                str(self.root),
+                "data",
+                "export",
+                "tushare_daily_basic",
+                "--output-format",
+                "parquet",
+                "--output",
+                "-",
+            ],
+            stdout=TTYStdout(),
+            stderr=stderr,
+            environ={},
+        )
+        self.assertEqual(code, 2)
+        self.assertIn("binary data", stderr.getvalue())
+
+    def test_partial_export_summary_reports_the_policy(self) -> None:
+        target = self.root / "partial.csv"
+        stdout, stderr = io.StringIO(), io.StringIO()
+        code = cli_main(
+            [
+                "--workspace",
+                str(self.root),
+                "data",
+                "export",
+                "tushare_daily_basic",
+                "--keys",
+                "600000.SH",
+                "--from",
+                "2026-07-10",
+                "--to",
+                "2026-07-18",
+                "--allow-partial",
+                "--output-format",
+                "csv",
+                "--output",
+                str(target),
+            ],
+            stdout=stdout,
+            stderr=stderr,
+            environ={},
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("partial coverage allowed", stderr.getvalue())
+
     def run_json(self, *arguments: str) -> dict[str, object]:
         stdout = io.StringIO()
         stderr = io.StringIO()
         code = cli_main(
-            ["--workspace", str(self.root), "--json", *arguments],
+            ["--workspace", str(self.root), "--format", "json", *arguments],
             stdout=stdout,
             stderr=stderr,
             environ={},
@@ -119,8 +255,7 @@ class DataCLITests(unittest.TestCase):
             environ={},
         )
         self.assertEqual(code, 0)
-        self.assertIn("REQUESTED_START", human.getvalue())
-        self.assertIn("2026-07-13", human.getvalue())
+        self.assertIn("2026-07-10:2026-07-13", human.getvalue())
         self.assertIn("MISSING", human.getvalue())
 
         (self.root / "datasets" / "STALE_DIRECTORY").mkdir()
@@ -157,6 +292,23 @@ class DataCLITests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("tushare_daily_basic", completion.getvalue().splitlines())
         self.assertNotIn("STALE_DIRECTORY", completion.getvalue().splitlines())
+
+        completion = io.StringIO()
+        code = cli_main(
+            [
+                "--workspace",
+                str(self.root),
+                "_complete",
+                "task",
+                "run",
+                "tushare_daily_",
+            ],
+            stdout=completion,
+            stderr=io.StringIO(),
+            environ={},
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(completion.getvalue(), "tushare_daily_basic\n")
 
     def test_unknown_dataset_reads_never_create_directories(self) -> None:
         datasets = self.root / "datasets"

@@ -12,3 +12,6 @@ dist/
 
 tmp/
 workspaces/
+
+# WebUI build output (built from web/ via `npm run build`)
+src/findata/webui/

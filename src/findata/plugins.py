@@ -32,6 +32,7 @@ class SettingSpec:
     schema: Mapping[str, Any]
     normalize: SettingNormalizer
     help: str
+    required: bool = False
 
 
 @dataclass(frozen=True, slots=True)

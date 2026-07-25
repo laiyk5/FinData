@@ -11,19 +11,23 @@ from pathlib import Path
 from typing import Any, TextIO
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
-from urllib.request import Request, urlopen
+from urllib.request import ProxyHandler, Request, build_opener
 
 import click
 
 from findata import __version__
 from findata.click_parser import command_tree
-from findata.data_access import ExportOutcome, execute_data_command
+from findata.data_access import DataCommandUsageError, ExportOutcome, execute_data_command
 from findata.presentation import CLIOutput
 from findata.storage import DATABASE_NAME
 
 
 class CLIUsageError(ValueError):
     pass
+
+
+class UserCancelled(Exception):
+    """The user declined a destructive-operation confirmation."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +47,21 @@ def main(
     environment = os.environ if environ is None else environ
     output_format = "human"
     color_mode = "auto"
+
+    def fallback_output() -> CLIOutput:
+        return CLIOutput(
+            output_format=output_format,
+            color_mode=color_mode,
+            stdout=stdout,
+            stderr=stderr,
+            environ=environment,
+            quiet=locals().get("quiet", False),
+            verbose=locals().get("verbose", False),
+            progress_enabled=locals().get("progress_enabled", True),
+            pager=lambda text, color: _page_output(text, color=color, stdout=stdout),
+        )
+
+    output: CLIOutput | None = None
     try:
         output_format = _extract_format(arguments)
         color_mode = _extract_color(arguments)
@@ -58,7 +77,6 @@ def main(
             progress_enabled=progress_enabled,
             pager=lambda text, color: _page_output(text, color=color, stdout=stdout),
         )
-        _normalize_aliases(arguments)
         try:
             with redirect_stdout(stdout), redirect_stderr(stderr):
                 args = command_tree(version=__version__).main(
@@ -68,8 +86,12 @@ def main(
                 )
         except click.exceptions.Exit as exc:
             return exc.exit_code
+        except click.exceptions.NoArgsIsHelpError as exc:
+            stdout.write(exc.format_message())
+            stdout.flush()
+            return 0
         except click.UsageError as exc:
-            raise CLIUsageError(exc.format_message()) from exc
+            raise CLIUsageError(getattr(exc, "message", None) or exc.format_message()) from exc
         if isinstance(args, int):
             return args
         if args is None:
@@ -79,10 +101,12 @@ def main(
             return 0
         if args.group == "_complete":
             try:
-                completion_client = _Client(resolve_workspace(args.workspace, environ=environment))
+                completion_client = _Client(
+                    resolve_workspace(args.workspace, environ=environment), timeout=1
+                )
                 items = _dynamic_completion(completion_client, list(args.words))
-            except (RuntimeError, HTTPError, URLError, ValueError):
-                items = _local_data_completion(
+            except (OSError, RuntimeError, ValueError, KeyError, TypeError):
+                items = _local_dataset_completion(
                     args.workspace,
                     list(args.words),
                     environ=environment,
@@ -95,9 +119,10 @@ def main(
             result = execute_data_command(workspace, args, stdout=stdout)
             if isinstance(result, ExportOutcome):
                 if result.path != "-":
+                    partial = " (partial coverage allowed)" if result.partial_allowed else ""
                     stderr.write(
                         f"Exported {result.rows:,} rows to {result.path} "
-                        f"from publication {result.publication_id}\n"
+                        f"from publication {result.publication_id}{partial}\n"
                     )
                     stderr.flush()
                 return 0
@@ -119,33 +144,76 @@ def main(
         )
         output.finish_diagnostics(handle)
         output.result(result, record_type=_result_record_type(args))
-        return (
-            0
-            if not (isinstance(result, dict) and result.get("status") in {"failed", "canceled"})
-            else 1
-        )
+        failed = isinstance(result, dict) and result.get("status") in {"failed", "canceled"}
+        return 1 if failed and _waited_for_task(args) else 0
     except TaskDetached as exc:
+        assert output is not None
         output.detached(exc.handle)
         return 130
-    except CLIUsageError as exc:
-        output.finish_progress()
-        output.error(str(exc))
-        return 2
-    except (ValueError, RuntimeError, HTTPError, URLError) as exc:
-        output = locals().get("output") or CLIOutput(
-            output_format=output_format,
-            color_mode=color_mode,
-            stdout=stdout,
-            stderr=stderr,
-            environ=environment,
-            quiet=locals().get("quiet", False),
-            verbose=locals().get("verbose", False),
-            progress_enabled=locals().get("progress_enabled", True),
-            pager=lambda text, color: _page_output(text, color=color, stdout=stdout),
-        )
-        output.finish_progress()
-        output.error(str(exc))
+    except UserCancelled:
+        renderer = output or fallback_output()
+        renderer.finish_progress()
+        renderer.stderr.write("Reset canceled.\n")
+        renderer.stderr.flush()
         return 1
+    except KeyboardInterrupt:
+        renderer = output or fallback_output()
+        renderer.finish_progress()
+        renderer.stderr.write("Interrupted.\n")
+        renderer.stderr.flush()
+        return 130
+    except (CLIUsageError, DataCommandUsageError) as exc:
+        renderer = output or fallback_output()
+        renderer.finish_progress()
+        renderer.error(str(exc))
+        return 2
+    except (OSError, ValueError, RuntimeError) as exc:
+        renderer = output or fallback_output()
+        renderer.finish_progress()
+        renderer.error(_error_message(exc))
+        return 1
+
+
+def _error_message(exc: BaseException) -> str:
+    """Render an operational failure without transport noise for human readers."""
+    if isinstance(exc, ServerError):
+        detail = exc.detail
+        try:
+            parsed = json.loads(detail)
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, dict) and isinstance(parsed.get("error"), str):
+            detail = parsed["error"]
+        if exc.status == 401:
+            return (
+                "authentication failed; the workspace token does not match the "
+                "running server — restart findata-server for this workspace"
+            )
+        if 400 <= exc.status < 500:
+            return detail
+        suffix = f": {detail}" if detail.strip() else ""
+        return f"server returned {exc.status}{suffix}"
+    if isinstance(exc, URLError):
+        reason = getattr(exc, "reason", exc)
+        return f"cannot reach the server ({reason})"
+    if isinstance(exc, TimeoutError):
+        return "the server did not respond in time"
+    return str(exc)
+
+
+def _waited_for_task(args: Any) -> bool:
+    """Whether the command blocked on the task; only waits map a failed task to exit 1."""
+    if args.group == "dataset" and args.action in {"update", "complete", "refresh"}:
+        return bool(args.wait or args.follow)
+    if args.group != "task":
+        return False
+    if args.action == "watch":
+        return True
+    if args.action in {"run", "retry"}:
+        return bool(args.wait or args.follow)
+    if args.action == "logs":
+        return bool(args.follow)
+    return False
 
 
 def _page_output(text: str, *, color: bool, stdout: TextIO) -> None:
@@ -161,6 +229,9 @@ def _execute(
     stdin: TextIO = sys.stdin,
 ) -> object:
     if args.group == "config" and args.action == "set":
+        literal = args.value is not None or args.value_json is not None
+        if literal and args.key in _declared_secret_keys(client):
+            raise CLIUsageError("secret configuration must use --stdin or --env")
         if args.env:
             value: object = {"env": args.env}
         elif args.stdin:
@@ -187,7 +258,7 @@ def _execute(
         return client.request("GET", "/v1/datasets")
     if args.group == "dataset" and args.action in {"describe", "status"}:
         if args.action == "status" and args.all:
-            return client.request("GET", "/v1/datasets")
+            return client.request("GET", "/v1/datasets/status")
         suffix = "status" if args.action == "status" else ""
         return client.request(
             "GET", f"/v1/datasets/{args.dataset}{('/' + suffix) if suffix else ''}"
@@ -201,11 +272,12 @@ def _execute(
             if output.output_format != "human" or not getattr(stdin, "isatty", lambda: False)():
                 raise CLIUsageError("dataset reset requires --yes in non-interactive use")
             output.stderr.write(
-                f"Reset dataset {args.dataset!r} and delete its committed data? [y/N] "
+                f"Reset dataset {args.dataset!r}? Committed data will be deleted; "
+                "settings and task history are preserved. [y/N] "
             )
             output.stderr.flush()
             if stdin.readline().strip().lower() not in {"y", "yes"}:
-                raise CLIUsageError("dataset reset canceled")
+                raise UserCancelled
         return client.request("POST", f"/v1/datasets/{args.dataset}/reset", {"confirm": True})
     if args.group == "dataset" and args.action in {"update", "complete", "refresh"}:
         operands = _dataset_operands(args)
@@ -239,23 +311,10 @@ def _execute(
         )
         if not (args.wait or args.follow):
             return submitted
-        handle = str(submitted["handle_id"])
         output.accepted(submitted)
-        emitted_logs = 0
-        try:
-            while True:
-                if args.follow:
-                    logs = client.request("GET", f"/v1/tasks/{handle}/logs")["items"]
-                    for message in logs[emitted_logs:]:
-                        _render_task_log(output, message, handle_id=handle)
-                    emitted_logs = len(logs)
-                status = client.request("GET", f"/v1/tasks/{handle}")
-                if status["status"] in {"succeeded", "failed", "canceled"}:
-                    return status
-                output.state(status)
-                time.sleep(0.05)
-        except KeyboardInterrupt as exc:
-            raise TaskDetached(handle) from exc
+        return _wait_for_task(
+            client, str(submitted["handle_id"]), output=output, follow=args.follow
+        )
     if args.group == "task" and args.action == "retry":
         submitted = client.request("POST", f"/v1/tasks/{args.handle}/retry", {})
         if not (args.wait or args.follow):
@@ -283,20 +342,7 @@ def _execute(
     if args.group == "task" and args.action == "logs":
         if not args.follow:
             return client.request("GET", f"/v1/tasks/{args.handle}/logs")
-        emitted = 0
-        try:
-            while True:
-                logs = client.request("GET", f"/v1/tasks/{args.handle}/logs")["items"]
-                for message in logs[emitted:]:
-                    _render_task_log(output, message, handle_id=str(args.handle))
-                emitted = len(logs)
-                status = client.request("GET", f"/v1/tasks/{args.handle}")
-                if status["status"] in {"succeeded", "failed", "canceled"}:
-                    return status
-                output.state(status)
-                time.sleep(0.05)
-        except KeyboardInterrupt as exc:
-            raise TaskDetached(str(args.handle)) from exc
+        return _wait_for_task(client, str(args.handle), output=output, follow=True)
     if args.group == "task" and args.action == "cancel":
         return client.request("POST", f"/v1/tasks/{args.handle}/cancel", {})
     if args.group == "cron":
@@ -329,14 +375,44 @@ def _execute(
     raise ValueError("unsupported command")
 
 
+def _declared_secret_keys(client: _Client) -> set[str]:
+    """Secret configuration keys declared by registered providers; empty when unavailable."""
+    try:
+        items = client.request("GET", "/v1/providers").get("items", [])
+    except (OSError, RuntimeError, ValueError):
+        return set()
+    keys: set[str] = set()
+    for item in items if isinstance(items, list) else []:
+        if not isinstance(item, Mapping):
+            continue
+        fields = item.get("secret_fields")
+        for field in fields if isinstance(fields, list) else []:
+            keys.add(f"provider.{item.get('name')}.{field}")
+    return keys
+
+
+class ServerError(RuntimeError):
+    """An HTTP error response from the findata server."""
+
+    def __init__(self, status: int, detail: str) -> None:
+        self.status = status
+        self.detail = detail
+        super().__init__(f"server returned {status}: {detail}")
+
+
+# The API is always localhost; environment proxies must never see the bearer token.
+_LOCAL_OPENER = build_opener(ProxyHandler({}))
+
+
 class _Client:
-    def __init__(self, workspace: Path) -> None:
+    def __init__(self, workspace: Path, *, timeout: float = 30) -> None:
         try:
             server = json.loads((workspace / "server.json").read_text(encoding="utf-8"))
             self.token = (workspace / "token").read_text(encoding="utf-8").strip()
         except (OSError, json.JSONDecodeError) as exc:
             raise RuntimeError(f"no running server for workspace {workspace}") from exc
         self.base_url = f"http://{server['host']}:{server['port']}"
+        self.timeout = timeout
 
     def request(self, method: str, path: str, body: object | None = None) -> dict[str, object]:
         data = None if body is None else json.dumps(body).encode("utf-8")
@@ -347,11 +423,11 @@ class _Client:
             headers={"Authorization": f"Bearer {self.token}", "Content-Type": "application/json"},
         )
         try:
-            with urlopen(request, timeout=30) as response:
+            with _LOCAL_OPENER.open(request, timeout=self.timeout) as response:
                 result = json.loads(response.read().decode("utf-8"))
         except HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
-            raise RuntimeError(f"server returned {exc.code}: {detail}") from exc
+            raise ServerError(exc.code, detail) from exc
         if not isinstance(result, dict):
             raise RuntimeError("server returned a non-object response")
         return result
@@ -359,8 +435,8 @@ class _Client:
     def optional_config(self, key: str) -> object | None:
         try:
             return self.request("GET", f"/v1/config?{urlencode({'key': key})}").get("value")
-        except RuntimeError as exc:
-            if "server returned 404:" in str(exc):
+        except ServerError as exc:
+            if exc.status == 404:
                 return None
             raise
 
@@ -370,6 +446,8 @@ def _render_task_log(output: CLIOutput, item: object, *, handle_id: str) -> None
         diagnostic = dict(item)
         diagnostic.setdefault("handle_id", handle_id)
         output.diagnostic(diagnostic)
+    elif isinstance(item, Mapping) and item.get("type") == "log":
+        output.log_record(item)
     else:
         output.log(str(item))
 
@@ -418,6 +496,11 @@ def _wait_for_task(
             time.sleep(0.05)
     except KeyboardInterrupt as exc:
         raise TaskDetached(handle) from exc
+    except OSError as exc:
+        raise RuntimeError(
+            f"lost contact with the server while waiting for task {handle}; "
+            f"it may still be running — inspect with: findata task status {handle}"
+        ) from exc
 
 
 def _dataset_operands(args: Any) -> dict[str, object]:
@@ -451,87 +534,191 @@ def _render_plan_preview(output: CLIOutput, plan: Mapping[str, object]) -> None:
             )
 
 
+def _option_value_candidates(words: list[str]) -> list[str] | None:
+    """Complete an option's value; None when the previous word is not a value-taking option."""
+    if len(words) < 2:
+        return None
+    tree = command_tree(version=__version__)
+    command: click.Command | None = tree.commands.get(words[0])
+    if isinstance(command, click.Group) and len(words) >= 3:
+        command = command.commands.get(words[1])
+    if command is None or isinstance(command, click.Group):
+        return None
+    previous = words[-2]
+    for parameter in command.params:
+        if not isinstance(parameter, click.Option):
+            continue
+        if previous not in [*parameter.opts, *parameter.secondary_opts]:
+            continue
+        if parameter.is_flag:
+            return None
+        prefix = words[-1]
+        if isinstance(parameter.type, click.Choice):
+            return [choice for choice in parameter.type.choices if choice.startswith(prefix)]
+        return []
+    return None
+
+
+def _completion_items(response: Mapping[str, object], key: str) -> list[str]:
+    items = response.get("items", [])
+    if not isinstance(items, list):
+        return []
+    return [str(item[key]) for item in items if isinstance(item, Mapping) and key in item]
+
+
 def _dynamic_completion(client: _Client, words: list[str]) -> list[str]:
-    candidates: list[str]
-    prefix: str
+    value_candidates = _option_value_candidates(words)
+    if value_candidates is not None:
+        return value_candidates
+    if words and words[-1].startswith("-"):
+        return _static_completion(words)
+
+    def dataset_names() -> list[str]:
+        return _completion_items(client.request("GET", "/v1/datasets"), "name")
+
+    def operation_names(dataset: str) -> list[str]:
+        return _completion_items(
+            client.request("GET", f"/v1/datasets/{dataset}/operations"), "name"
+        )
+
     if not words:
-        candidates = "task dataset data provider cron events config system completion".split()
-        prefix = ""
-    elif (
-        words[0] == "dataset"
-        and len(words) >= 2
-        and len(words) <= 3
-        and words[1]
-        in {
+        tree = command_tree(version=__version__)
+        return [name for name, command in tree.commands.items() if not command.hidden]
+
+    first, rest = words[0], words[1:]
+
+    if first == "dataset" and rest:
+        name_actions = {
             "update",
             "complete",
             "refresh",
             "describe",
             "operations",
+            "operation",
             "status",
+            "reset",
         }
-    ):
-        candidates = [str(item["name"]) for item in client.request("GET", "/v1/datasets")["items"]]
-        prefix = words[2] if len(words) == 3 else ""
-    elif words[0] == "provider" and len(words) in {2, 3} and words[1] in {"status", "check"}:
-        candidates = [str(item["name"]) for item in client.request("GET", "/v1/providers")["items"]]
-        prefix = words[2] if len(words) == 3 else ""
-    elif (
-        words[0] == "data"
-        and len(words) in {2, 3}
-        and words[1] in {"schema", "preview", "coverage", "export"}
-    ):
-        candidates = [str(item["name"]) for item in client.request("GET", "/v1/datasets")["items"]]
-        prefix = words[2] if len(words) == 3 else ""
-    elif (
-        words[0] == "task"
-        and len(words) >= 2
-        and words[1]
+        action = rest[0]
+        tail = rest[1:]
+        if action in name_actions:
+            if not tail:
+                return dataset_names()
+            names = dataset_names()
+            if tail[0] not in names:
+                return (
+                    [name for name in names if name.startswith(tail[0])] if len(tail) == 1 else []
+                )
+            prefix = tail[1] if len(tail) == 2 else ""
+            if action in {"update", "complete", "refresh"} and len(tail) in {1, 2}:
+                description = client.request("GET", f"/v1/datasets/{tail[0]}/operations/{action}")
+                properties = description.get("properties", {})
+                candidates = (
+                    [f"--{name}" for name in properties] if isinstance(properties, Mapping) else []
+                )
+                if isinstance(properties, Mapping) and "timerange" in properties:
+                    candidates.extend(["--from", "--to"])
+                candidates.extend(["--wait", "--follow", "--dry-run"])
+                return [item for item in candidates if item.startswith(prefix)]
+            if action == "operation" and len(tail) in {1, 2}:
+                return [name for name in operation_names(tail[0]) if name.startswith(prefix)]
+            return []
+        return []
+
+    if first == "task" and rest:
+        if rest[0] == "run":
+            tail = rest[1:]
+            if not tail:
+                return dataset_names()
+            names = dataset_names()
+            if tail[0] not in names:
+                return (
+                    [name for name in names if name.startswith(tail[0])] if len(tail) == 1 else []
+                )
+            prefix = tail[1] if len(tail) == 2 else ""
+            return [name for name in operation_names(tail[0]) if name.startswith(prefix)]
+        if rest[0] in {"status", "logs", "cancel", "watch", "retry", "explain"} and len(rest) in {
+            1,
+            2,
+        }:
+            prefix = rest[1] if len(rest) == 2 else ""
+            handles = _completion_items(client.request("GET", "/v1/tasks?all=true"), "handle_id")
+            return [handle for handle in handles if handle.startswith(prefix)]
+
+    if first == "provider" and len(rest) in {1, 2} and rest[0] in {"status", "check"}:
+        prefix = rest[1] if len(rest) == 2 else ""
+        names = _completion_items(client.request("GET", "/v1/providers"), "name")
+        return [name for name in names if name.startswith(prefix)]
+
+    if (
+        first == "data"
+        and len(rest) in {1, 2}
+        and rest[0]
         in {
-            "status",
-            "logs",
-            "cancel",
-            "watch",
-            "retry",
-            "explain",
+            "schema",
+            "preview",
+            "coverage",
+            "export",
         }
     ):
-        candidates = [
-            str(item["handle_id"]) for item in client.request("GET", "/v1/tasks?all=true")["items"]
-        ]
-        prefix = words[2] if len(words) == 3 else ""
-    elif words[0] == "config" and len(words) in {2, 3} and words[1] in {"get", "unset"}:
-        values = client.request("GET", "/v1/config").get("values", {})
-        candidates = list(values) if isinstance(values, Mapping) else []
-        prefix = words[2] if len(words) == 3 else ""
-    elif (
-        words[0] == "dataset"
-        and len(words) in {3, 4}
-        and words[1] in {"update", "complete", "refresh"}
+        prefix = rest[1] if len(rest) == 2 else ""
+        return [name for name in dataset_names() if name.startswith(prefix)]
+
+    if first == "config" and len(rest) in {1, 2} and rest[0] in {"set", "get", "unset"}:
+        prefix = rest[1] if len(rest) == 2 else ""
+        keys = _config_key_candidates(client)
+        return [key for key in keys if key.startswith(prefix)]
+
+    if (
+        first == "cron"
+        and len(rest) in {1, 2}
+        and rest[0]
+        in {
+            "enable",
+            "disable",
+            "reset",
+            "set",
+        }
     ):
-        description = client.request("GET", f"/v1/datasets/{words[2]}/operations/{words[1]}")
-        properties = description.get("properties", {})
-        candidates = [f"--{name}" for name in properties] if isinstance(properties, Mapping) else []
-        candidates.extend(["--from", "--to", "--wait", "--follow", "--dry-run"])
-        prefix = words[3] if len(words) == 4 else ""
-    else:
-        return _static_completion(words)
-    return [item for item in candidates if item.startswith(prefix)]
+        prefix = rest[1] if len(rest) == 2 else ""
+        return [name for name in dataset_names() if name.startswith(prefix)]
+
+    if first == "events" and len(rest) in {1, 2} and rest[0] == "ack":
+        prefix = rest[1] if len(rest) == 2 else ""
+        events = _completion_items(client.request("GET", "/v1/events?unread=true"), "event_id")
+        return [event_id for event_id in events if event_id.startswith(prefix)]
+
+    return _static_completion(words)
+
+
+def _config_key_candidates(client: _Client) -> list[str]:
+    """Merge declared configuration keys with currently-set keys for completion."""
+    keys: set[str] = set()
+    try:
+        declared = client.request("GET", "/v1/config/keys").get("items", [])
+        if isinstance(declared, list):
+            for entry in declared:
+                if isinstance(entry, Mapping) and entry.get("key"):
+                    keys.add(str(entry["key"]))
+    except ServerError:
+        # Older servers lack /v1/config/keys; fall back to set keys only.
+        pass
+    values = client.request("GET", "/v1/config").get("values", {})
+    if isinstance(values, Mapping):
+        keys.update(str(key) for key in values)
+    return sorted(keys)
 
 
 def _static_completion(words: list[str]) -> list[str]:
-    groups = "task dataset data provider cron events config system completion".split()
-    actions = {
-        "task": "run ls status logs cancel watch retry explain".split(),
-        "dataset": "ls describe operations operation status reset update complete refresh".split(),
-        "data": "schema preview coverage export".split(),
-        "provider": "ls status check".split(),
-        "cron": "ls enable disable set reset".split(),
-        "events": "ls ack".split(),
-        "config": "ls get set unset".split(),
-        "system": ["status"],
-    }
+    value_candidates = _option_value_candidates(words)
+    if value_candidates is not None:
+        return value_candidates
     tree = command_tree(version=__version__)
+    groups = [name for name, command in tree.commands.items() if not command.hidden]
+    actions = {
+        name: list(command.commands)
+        for name, command in tree.commands.items()
+        if isinstance(command, click.Group)
+    }
     if len(words) == 1 and words[0].startswith("-"):
         return _option_candidates(tree, words[0])
     if len(words) >= 3:
@@ -567,18 +754,19 @@ def _option_candidates(command: click.Command, prefix: str) -> list[str]:
     return sorted(option for option in candidates if option.startswith(prefix))
 
 
-def _local_data_completion(
+def _local_dataset_completion(
     explicit_workspace: Path | None,
     words: list[str],
     *,
     environ: Mapping[str, str],
 ) -> list[str]:
-    if not (
-        words
-        and words[0] == "data"
-        and len(words) in {2, 3}
-        and words[1] in {"schema", "preview", "coverage", "export"}
-    ):
+    """Complete dataset names from workspace storage when no server is available."""
+    if not (words and len(words) in {2, 3}):
+        return []
+    dataset_positions = (
+        words[0] == "data" and words[1] in {"schema", "preview", "coverage", "export"}
+    ) or (words[0] == "task" and words[1] == "run")
+    if not dataset_positions:
         return []
     try:
         workspace = resolve_workspace(explicit_workspace, environ=dict(environ))
@@ -599,7 +787,7 @@ def _params(
 ) -> dict[str, object]:
     if source is not None:
         if values:
-            raise ValueError("--param and --params are mutually exclusive")
+            raise CLIUsageError("--param and --params are mutually exclusive")
         if source == "-":
             text = stdin.read()
         elif source.startswith("@"):
@@ -609,17 +797,17 @@ def _params(
         try:
             parsed = json.loads(text)
         except json.JSONDecodeError as exc:
-            raise ValueError(f"invalid operands JSON: {exc.msg}") from exc
+            raise CLIUsageError(f"invalid operands JSON: {exc.msg}") from exc
         if not isinstance(parsed, dict):
-            raise ValueError("--params JSON must be an object")
+            raise CLIUsageError("--params JSON must be an object")
         return parsed
     result: dict[str, object] = {}
     for value in values:
         if "=" not in value:
-            raise ValueError(f"invalid --param {value!r}")
+            raise CLIUsageError(f"invalid --param {value!r}")
         key, item = value.split("=", 1)
         if not key:
-            raise ValueError("parameter name cannot be empty")
+            raise CLIUsageError("parameter name cannot be empty")
         if key in result:
             existing = result[key]
             result[key] = [*existing, item] if isinstance(existing, list) else [existing, item]
@@ -628,32 +816,38 @@ def _params(
     return result
 
 
-def _extract_format(arguments: list[str]) -> str:
-    if "--json" in arguments:
-        arguments.remove("--json")
-        return "json"
-    if "--format" in arguments:
-        index = arguments.index("--format")
-        try:
+def _extract_option(arguments: list[str], name: str) -> str | None:
+    """Remove every occurrence of a --name value / --name=value option; last one wins."""
+    value: str | None = None
+    index = 0
+    while index < len(arguments):
+        token = arguments[index]
+        if token == name:
+            if index + 1 >= len(arguments):
+                raise CLIUsageError(f"{name} requires a value")
             value = arguments[index + 1]
-        except IndexError as exc:
-            raise CLIUsageError("--format requires human, json, or jsonl") from exc
-        del arguments[index : index + 2]
-        if value not in {"human", "json", "jsonl"}:
-            raise CLIUsageError(f"unsupported format {value!r}")
-        return value
-    return "human"
+            del arguments[index : index + 2]
+        elif token.startswith(f"{name}="):
+            value = token.split("=", 1)[1]
+            del arguments[index]
+        else:
+            index += 1
+    return value
+
+
+def _extract_format(arguments: list[str]) -> str:
+    value = _extract_option(arguments, "--format")
+    if value is None:
+        return "human"
+    if value not in {"human", "json", "jsonl"}:
+        raise CLIUsageError(f"unsupported format {value!r}")
+    return value
 
 
 def _extract_color(arguments: list[str]) -> str:
-    if "--color" not in arguments:
+    value = _extract_option(arguments, "--color")
+    if value is None:
         return "auto"
-    index = arguments.index("--color")
-    try:
-        value = arguments[index + 1]
-    except IndexError as exc:
-        raise CLIUsageError("--color requires auto, always, or never") from exc
-    del arguments[index : index + 2]
     if value not in {"auto", "always", "never"}:
         raise CLIUsageError("--color requires auto, always, or never")
     return value
@@ -674,13 +868,13 @@ def _extract_presentation(arguments: list[str]) -> tuple[bool, bool, bool]:
 def _duration_seconds(value: str) -> float:
     units = {"s": 1, "m": 60, "h": 3600, "d": 86400}
     if len(value) < 2 or value[-1] not in units:
-        raise ValueError("duration must end in s, m, h, or d")
+        raise CLIUsageError("duration must end in s, m, h, or d")
     try:
         amount = float(value[:-1])
     except ValueError as exc:
-        raise ValueError(f"invalid duration {value!r}") from exc
+        raise CLIUsageError(f"invalid duration {value!r}") from exc
     if amount < 0:
-        raise ValueError("duration cannot be negative")
+        raise CLIUsageError("duration cannot be negative")
     return amount * units[value[-1]]
 
 
@@ -715,25 +909,21 @@ def _completion_script(shell: str) -> str:
     if shell == "zsh":
         return (
             "#compdef findata\n_findata_complete() { compadd -- "
-            '${(f)"$(findata _complete ${words[2,-1]} 2>/dev/null)"}; }\n'
+            '${(f)"$(findata _complete "${(@)words[2,-1]}" 2>/dev/null)"}; }\n'
             "compdef _findata_complete findata\n"
         )
     return "complete -c findata -f -a '(findata _complete (commandline -opc)[2..-1] 2>/dev/null)'\n"
 
 
-def _normalize_aliases(arguments: list[str]) -> None:
-    return
-
-
 def _validate_cli_args(args: Any, *, output_format: str = "human") -> None:
     if args.group == "events" and args.action == "ack":
         if bool(args.event_id) == bool(args.all):
-            raise ValueError("events ack requires an event ID or --all")
+            raise CLIUsageError("events ack requires an event ID or --all")
     if args.group == "dataset" and args.action == "status":
         if bool(args.dataset) == bool(args.all):
-            raise ValueError("dataset status requires a dataset or --all")
+            raise CLIUsageError("dataset status requires a dataset or --all")
     if args.group == "task" and args.action == "run" and args.param and args.params:
-        raise ValueError("--param and --params are mutually exclusive")
+        raise CLIUsageError("--param and --params are mutually exclusive")
     if args.group == "task" and args.action in {"run", "logs", "retry", "watch"}:
         if (getattr(args, "follow", False) or args.action == "watch") and output_format == "json":
             raise CLIUsageError("--follow is a stream; use --format JSONL instead of JSON")
@@ -754,11 +944,7 @@ def _validate_cli_args(args: Any, *, output_format: str = "human") -> None:
             )
         )
         if sources != 1:
-            raise ValueError("config set requires exactly one value source")
-        lowered = args.key.lower()
-        secret = any(word in lowered for word in ("token", "secret", "password", "credential"))
-        if secret and (args.value is not None or args.value_json is not None):
-            raise ValueError("secret configuration must use --stdin or --env")
+            raise CLIUsageError("config set requires exactly one value source")
 
 
 def _json_value(source: str, *, stdin: TextIO) -> object:
@@ -771,7 +957,7 @@ def _json_value(source: str, *, stdin: TextIO) -> object:
     try:
         return json.loads(text)
     except json.JSONDecodeError as exc:
-        raise ValueError(f"invalid configuration JSON: {exc.msg}") from exc
+        raise CLIUsageError(f"invalid configuration JSON: {exc.msg}") from exc
 
 
 def _result_record_type(args: Any) -> str:

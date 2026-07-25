@@ -30,5 +30,15 @@ def tests(session: nox.Session) -> None:
 
 @nox.session(python="3.11")
 def lint(session: nox.Session) -> None:
-    session.install("ruff>=0.9")
+    session.install("ruff==0.15.22")
     session.run("ruff", "check", ".")
+
+
+@nox.session(python=False)
+def webui(session: nox.Session) -> None:
+    """Typecheck, test, and build the WebUI bundle into src/findata/webui/."""
+    session.cd(Path(__file__).parent / "web")
+    session.run("npm", "ci", external=True)
+    session.run("npm", "run", "typecheck", external=True)
+    session.run("npm", "test", external=True)
+    session.run("npm", "run", "build", external=True)

@@ -572,18 +572,22 @@ class TaskRunner:
             if not isinstance(item, dict) or not isinstance(item.get("message"), str):
                 continue
             if item.get("type") == "diagnostic":
-                result.append(
-                    {
-                        "type": "task.diagnostic",
-                        "severity": item.get("severity"),
-                        "code": item.get("code"),
-                        "message": item["message"],
-                        "context": dict(item.get("context") or {}),
-                        "count": item.get("count", 1),
-                    }
-                )
+                record: dict[str, Any] = {
+                    "type": "task.diagnostic",
+                    "severity": item.get("severity"),
+                    "code": item.get("code"),
+                    "message": item["message"],
+                    "context": dict(item.get("context") or {}),
+                    "count": item.get("count", 1),
+                }
+                if isinstance(item.get("time"), (int, float)):
+                    record["time"] = item["time"]
+                result.append(record)
             else:
-                result.append(item["message"])
+                record = {"type": "log", "message": item["message"]}
+                if isinstance(item.get("time"), (int, float)):
+                    record["time"] = item["time"]
+                result.append(record)
         return result
 
     def retained_request(self, handle_id: str) -> dict[str, Any]:
@@ -875,12 +879,22 @@ class TaskRunner:
                     runtime.liveness_deadline = None
                     runtime.liveness_warned = False
             elif kind == "state" and message.get("state") in {"running", "waiting"}:
-                execution.status = str(message["state"])
-                execution.reason = (
+                new_status = str(message["state"])
+                new_reason = (
                     str(message.get("reason"))
-                    if execution.status == "waiting" and message.get("reason")
+                    if new_status == "waiting" and message.get("reason")
                     else None
                 )
+                if (execution.status, execution.reason) != (new_status, new_reason):
+                    if new_status == "waiting":
+                        self._append_log(
+                            execution_id,
+                            f"waiting: {new_reason}" if new_reason else "waiting",
+                        )
+                    else:
+                        self._append_log(execution_id, "running")
+                execution.status = new_status
+                execution.reason = new_reason
                 self._update_active_handles(
                     execution, status=execution.status, reason=execution.reason, update_reason=True
                 )
@@ -897,6 +911,8 @@ class TaskRunner:
         request_id = str(message.get("request_id"))
         target = str(message.get("dataset"))
         requirement = message.get("requirement")
+        requirement_text = json.dumps(requirement, sort_keys=True, separators=(",", ":"), default=str)
+        self._append_log(execution_id, f"dependency requested: {target} {requirement_text}")
         try:
             if self.dependency_resolver is None:
                 raise ValueError("task worker requested an undeclared dependency")
@@ -951,7 +967,9 @@ class TaskRunner:
                 "ok": True,
                 "result": child.result,
             }
+            self._append_log(execution_id, f"dependency fulfilled: {target}")
         except Exception as exc:
+            self._append_log(execution_id, f"dependency failed: {target}: {exc}")
             response = {
                 "type": "dependency_result",
                 "request_id": request_id,
@@ -995,6 +1013,14 @@ class TaskRunner:
                 status = "failed"
                 result = None
                 error = str(message.get("error") or "worker_failed")
+            if status == "succeeded":
+                terminal_line = "succeeded"
+            elif status == "canceled":
+                cancel_reason = message.get("reason")
+                terminal_line = f"canceled: {cancel_reason}" if cancel_reason else "canceled"
+            else:
+                terminal_line = f"failed: {error}"
+            self._append_log(execution_id, terminal_line)
             execution.status = status
             execution.result = result
             execution.error = error
