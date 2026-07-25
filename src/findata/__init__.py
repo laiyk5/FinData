@@ -4,4 +4,4 @@ from findata.contracts import DateRange, DatasetSpec, OperandError
 from findata.loader import DataLoader
 
 __all__ = ["DataLoader", "DateRange", "DatasetSpec", "OperandError"]
-__version__ = "0.2.0"
+__version__ = "0.3.0"
