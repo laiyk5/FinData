@@ -30,7 +30,7 @@ def tests(session: nox.Session) -> None:
 
 @nox.session(python="3.11")
 def lint(session: nox.Session) -> None:
-    session.install("ruff>=0.9")
+    session.install("ruff==0.15.22")
     session.run("ruff", "check", ".")
 
 
