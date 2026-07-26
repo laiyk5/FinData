@@ -5,13 +5,18 @@ from datetime import date, datetime, time, timedelta
 from pathlib import Path
 import re
 from time import monotonic
-from typing import Protocol
 from typing import Any
 from zoneinfo import ZoneInfo
 
 import pyarrow as pa
 
-from findata.contracts import DateRange, DatasetSpec, OperandError
+from findata.contracts import (
+    DateRange,
+    DatasetSpec,
+    OperandError,
+    OperationReporter,
+    OperationRequest,
+)
 from findata.datasets.tushare import TUSHARE_DATASETS
 from findata.loader import (
     DataLoader,
@@ -47,28 +52,6 @@ class OperationResult:
     fetched_requests: int
 
 
-class OperationReporter(Protocol):
-    def checkpoint(self) -> None: ...
-
-    def log(self, message: str) -> None: ...
-
-    def fulfill(self, dataset: str, requirement: dict[str, Any]) -> Any: ...
-
-    def begin_subtask(self, *, timeout: float) -> None: ...
-
-    def end_subtask(self) -> None: ...
-
-    def waiting(self, reason: str) -> None: ...
-
-    def running(self) -> None: ...
-
-    def progress(
-        self, current: int | float, total: int | float, **metrics: int | float
-    ) -> None: ...
-
-    def stage(self, value: str) -> None: ...
-
-
 @dataclass(frozen=True, slots=True)
 class OperationWorker:
     """Pickle-safe task-process entry point for one configured workspace."""
@@ -79,7 +62,7 @@ class OperationWorker:
     today: str
     now: str | None = None
 
-    def __call__(self, request: dict[str, object], context: OperationReporter) -> dict[str, Any]:
+    def __call__(self, request: OperationRequest, context: OperationReporter) -> dict[str, Any]:
         current_date = date.fromisoformat(self.today)
         current_time = (
             datetime.fromisoformat(self.now)
@@ -236,7 +219,9 @@ class DatasetService:
             f"{self._checkpoint_count - before_checkpoints} checkpoints "
             f"in {monotonic() - started:.1f}s → publication {publication}"
         )
-        return OperationResult(dataset, operation, publication, self._request_count - before_requests)
+        return OperationResult(
+            dataset, operation, publication, self._request_count - before_requests
+        )
 
     def _log(self, message: str) -> None:
         if self._reporter is not None:
@@ -836,15 +821,12 @@ class DatasetService:
         self._checkpoint_count += 1
         rows = sum(mutation.table.num_rows for mutation in mutations)
         self._log(
-            f"committed checkpoint: {len(mutations)} scopes, {rows} rows, "
-            f"publication {publication}"
+            f"committed checkpoint: {len(mutations)} scopes, {rows} rows, publication {publication}"
         )
         if spec.time_field is not None and coverage:
             start = min(value.start for value in coverage.values())
             end = max(value.end for value in coverage.values())
-            self._log(
-                f"coverage: {len(coverage)} keys, {start.isoformat()}..{end.isoformat()}"
-            )
+            self._log(f"coverage: {len(coverage)} keys, {start.isoformat()}..{end.isoformat()}")
         return publication
 
     def _publisher(self, dataset: str):

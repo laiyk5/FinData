@@ -52,5 +52,6 @@ nav:
       - guide/scheduling.md
       - guide/reading-data.md
       - guide/dataloader.md
+      - guide/custom-datasets.md
   - Reference:
       - reference/cli.md

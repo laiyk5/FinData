@@ -4,7 +4,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from types import MappingProxyType
-from typing import Any
+from typing import Any, Protocol, TypedDict, runtime_checkable
 
 import pyarrow as pa
 
@@ -139,3 +139,59 @@ def provider_date(value: Any, *, nullable: bool = False) -> date | None:
         return date.fromisoformat(f"{value[:4]}-{value[4:6]}-{value[6:8]}")
     except (TypeError, ValueError, IndexError) as exc:
         raise DatasetDataError(f"invalid provider date: {value!r}") from exc
+
+
+class OperationRequest(TypedDict):
+    """The immutable task request handed to a dataset operation worker."""
+
+    execution_id: str
+    dataset: str
+    operation: str
+    operands: dict[str, Any]
+    configuration_revision: int
+    settings: dict[str, Any]
+
+
+@runtime_checkable
+class OperationReporter(Protocol):
+    """Child-process interface a worker uses for logs, states, and cancellation."""
+
+    def checkpoint(self) -> None:
+        """Cooperative cancellation point; raises when cancellation was requested."""
+        ...
+
+    def log(self, message: str) -> None: ...
+
+    def diagnostic(
+        self,
+        severity: str,
+        code: str,
+        message: str,
+        *,
+        context: Mapping[str, Any] | None = None,
+        count: int = 1,
+    ) -> None: ...
+
+    def progress(
+        self,
+        current: int | float,
+        total: int | float,
+        **metrics: int | float,
+    ) -> None: ...
+
+    def stage(self, value: str) -> None: ...
+
+    def waiting(self, reason: str) -> None: ...
+
+    def running(self) -> None: ...
+
+    def begin_subtask(self, *, timeout: float) -> None: ...
+
+    def end_subtask(self) -> None: ...
+
+    def fulfill(self, dataset: str, requirement: Mapping[str, Any]) -> Any:
+        """Run a declared dependency to satisfy one requirement; raises on failure."""
+        ...
+
+
+OperationWorker = Callable[[OperationRequest, OperationReporter], Mapping[str, Any]]

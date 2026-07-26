@@ -4,55 +4,90 @@ import json
 import os
 import time
 from collections.abc import Callable, Mapping
+from datetime import date, datetime
+from pathlib import Path
 from typing import Any
 from urllib.request import Request, urlopen
 from urllib.error import URLError
 
 import pyarrow as pa
 
-from findata.contracts import DatasetDataError
+from findata.contracts import DatasetDataError, OperationWorker
 from findata.datasets.tushare import TUSHARE_DATASETS
-from findata.plugins import ProviderPlugin
+from findata.plugins import ProviderPlugin, ProviderRuntime
 from findata.rate_limit import FileRateLimiter
 from findata.storage import Workspace
 
 
-class TushareProviderRuntime:
-    def operation_worker(self, workspace: Any, *, mode: str, today: Any, now: Any) -> Any:
-        from findata.datasets.tushare.operations import OperationWorker
+class TushareProviderRuntime(ProviderRuntime):
+    def operation_worker(
+        self,
+        workspace: Path,
+        *,
+        mode: str,
+        today: date,
+        now: datetime | None,
+    ) -> OperationWorker:
+        from findata.datasets.tushare.operations import OperationWorker as TushareWorker
 
-        return OperationWorker(
+        return TushareWorker(
             workspace=workspace,
             provider=mode,
             token="mock-token" if mode == "mock" else "",
             today=today.isoformat(),
-            now=now.isoformat(),
+            now=now.isoformat() if now is not None else None,
         )
 
-    def normalize_operation(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+    def normalize_operation(
+        self,
+        dataset: str,
+        operation: str,
+        operands: dict[str, Any],
+        *,
+        today: date,
+    ) -> dict[str, Any]:
         from findata.datasets.tushare.operations import normalize_operation
 
-        return normalize_operation(*args, **kwargs)
+        return normalize_operation(dataset, operation, operands, today=today)
 
-    def dataset_description(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+    def dataset_description(
+        self,
+        workspace: Workspace,
+        dataset: str,
+        *,
+        provider_ready: bool,
+    ) -> dict[str, Any]:
         from findata.datasets.tushare.operations import dataset_description
 
-        return dataset_description(*args, **kwargs)
+        return dataset_description(workspace, dataset, provider_ready=provider_ready)
 
-    def operation_description(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+    def operation_description(self, dataset: str, operation: str) -> dict[str, Any]:
         from findata.datasets.tushare.operations import operation_description
 
-        return operation_description(*args, **kwargs)
+        return operation_description(dataset, operation)
 
-    def plan_operation(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+    def plan_operation(
+        self,
+        workspace: Workspace,
+        dataset: str,
+        operation: str,
+        operands: dict[str, Any],
+        *,
+        today: date,
+    ) -> dict[str, Any]:
         from findata.datasets.tushare.operations import plan_operation
 
-        return plan_operation(*args, **kwargs)
+        return plan_operation(workspace, dataset, operation, operands, today=today)
 
-    def resolve_dependency(self, *args: Any, **kwargs: Any) -> tuple[str, dict[str, object]]:
+    def resolve_dependency(
+        self,
+        parent: str,
+        target: str,
+        requirement: dict[str, object],
+    ) -> tuple[str, dict[str, object]]:
         from findata.datasets.tushare.operations import resolve_v1_dependency
 
-        return resolve_v1_dependency(*args, **kwargs)
+        return resolve_v1_dependency(parent, target, requirement)
 
     def token(self, workspace: Workspace) -> str:
         configured = workspace.get_config("provider.tushare.token")
@@ -60,15 +95,15 @@ class TushareProviderRuntime:
             return os.environ.get(configured["env"], "")
         return str(configured or "")
 
-    def is_mock(self, workspace: Workspace, forced_mode: str) -> bool:
+    def is_mock(self, workspace: Workspace, mode: str) -> bool:
         from findata.testing.tushare import is_mock_token
 
-        return forced_mode == "mock" or is_mock_token(self.token(workspace))
+        return mode == "mock" or is_mock_token(self.token(workspace))
 
-    def ready(self, workspace: Workspace, forced_mode: str) -> bool:
-        return self.is_mock(workspace, forced_mode) or bool(self.token(workspace))
+    def ready(self, workspace: Workspace, mode: str) -> bool:
+        return self.is_mock(workspace, mode) or bool(self.token(workspace))
 
-    def probe(self, workspace: Workspace, *, today: Any) -> None:
+    def probe(self, workspace: Workspace, *, today: date) -> None:
         limiter = FileRateLimiter(
             workspace.root / "providers" / "tushare-rate.json",
             limit=int(workspace.get_config("provider.tushare.rate_limit", 500)),

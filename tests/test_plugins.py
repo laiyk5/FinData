@@ -1,20 +1,25 @@
 from __future__ import annotations
 
+import multiprocessing as mp
 import tempfile
+import threading
 import unittest
 from dataclasses import replace
 from pathlib import Path
 
+from findata.contracts import OperationReporter, OperationRequest
 from findata.datasets.tushare import builtin_plugins
 from findata.plugins import (
     PluginRegistrationError,
     ProviderPlugin,
+    ProviderRuntime,
     register_plugins,
     validate_plugins,
     validate_provider_plugins,
 )
-from findata.providers.tushare import tushare_provider_plugin
+from findata.providers.tushare import TushareProviderRuntime, tushare_provider_plugin
 from findata.storage import Workspace
+from findata.taskrunner import TaskContext
 
 
 class PluginRegistryTests(unittest.TestCase):
@@ -39,9 +44,7 @@ class PluginRegistryTests(unittest.TestCase):
         cyclic_first = replace(first, dependencies=(second.name,))
         cyclic_second = replace(second, dependencies=(first.name,))
         with self.assertRaisesRegex(PluginRegistrationError, "dependency cycle"):
-            validate_plugins(
-                [cyclic_first, cyclic_second], providers=[tushare_provider_plugin()]
-            )
+            validate_plugins([cyclic_first, cyclic_second], providers=[tushare_provider_plugin()])
 
     def test_provider_contracts_are_registered_before_datasets(self) -> None:
         provider = tushare_provider_plugin()
@@ -78,6 +81,39 @@ class PluginRegistryTests(unittest.TestCase):
             content = path.read_text(encoding="utf-8")
             self.assertNotIn("from findata.datasets.", content)
             self.assertNotIn("from findata.providers.", content)
+
+
+class PluginProtocolConformanceTests(unittest.TestCase):
+    def test_tushare_runtime_satisfies_the_provider_runtime_protocol(self) -> None:
+        self.assertIsInstance(TushareProviderRuntime(), ProviderRuntime)
+
+    def test_provider_validation_rejects_an_incomplete_runtime(self) -> None:
+        incomplete = replace(tushare_provider_plugin(), runtime=object())
+        with self.assertRaisesRegex(PluginRegistrationError, "readiness runtime"):
+            validate_provider_plugins([incomplete])
+
+    def test_core_task_context_satisfies_the_operation_reporter_protocol(self) -> None:
+        local, remote = mp.Pipe(duplex=True)
+        try:
+            context = TaskContext(local, threading.Event())
+            self.assertIsInstance(context, OperationReporter)
+        finally:
+            local.close()
+            remote.close()
+
+    def test_operation_request_documents_the_taskrunner_payload(self) -> None:
+        # TaskRunner._run_execution builds exactly these keys for the worker.
+        self.assertEqual(
+            set(OperationRequest.__annotations__),
+            {
+                "execution_id",
+                "dataset",
+                "operation",
+                "operands",
+                "configuration_revision",
+                "settings",
+            },
+        )
 
 
 if __name__ == "__main__":

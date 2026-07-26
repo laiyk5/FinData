@@ -2,12 +2,36 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from datetime import date, datetime
 from importlib.metadata import entry_points
+from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Iterable
+from typing import Any, Iterable, Protocol, runtime_checkable
 
-from findata.contracts import DatasetSpec
+from findata.contracts import (
+    DatasetSpec,
+    OperationReporter,
+    OperationRequest,
+    OperationWorker,
+)
 from findata.storage import Workspace
+
+__all__ = [
+    "DatasetPlugin",
+    "DatasetSpec",
+    "OperationReporter",
+    "OperationRequest",
+    "OperationWorker",
+    "PluginRegistrationError",
+    "ProviderPlugin",
+    "ProviderRuntime",
+    "SettingSpec",
+    "discover_dataset_plugins",
+    "discover_provider_plugins",
+    "register_plugins",
+    "validate_plugins",
+    "validate_provider_plugins",
+]
 
 
 class PluginRegistrationError(RuntimeError):
@@ -22,6 +46,84 @@ class ProviderPlugin:
     rate_limit: int
     period: int
     runtime: object | None = None
+
+
+@runtime_checkable
+class ProviderRuntime(Protocol):
+    """Behavior contract the server calls on a provider plugin's runtime object.
+
+    The built-in Tushare runtime (findata.providers.tushare) is the reference
+    implementation; findata.contracts documents the worker request and reporter.
+    """
+
+    def operation_worker(
+        self,
+        workspace: Path,
+        *,
+        mode: str,
+        today: date,
+        now: datetime | None,
+    ) -> OperationWorker:
+        """Return the pickle-safe worker callable executed in a task subprocess."""
+        ...
+
+    def normalize_operation(
+        self,
+        dataset: str,
+        operation: str,
+        operands: dict[str, Any],
+        *,
+        today: date,
+    ) -> dict[str, Any]:
+        """Canonicalize and validate operands; raises OperandError on bad input."""
+        ...
+
+    def plan_operation(
+        self,
+        workspace: Workspace,
+        dataset: str,
+        operation: str,
+        operands: dict[str, Any],
+        *,
+        today: date,
+    ) -> dict[str, Any]:
+        """Return the dry-run plan for normalized operands without side effects."""
+        ...
+
+    def dataset_description(
+        self,
+        workspace: Workspace,
+        dataset: str,
+        *,
+        provider_ready: bool,
+    ) -> dict[str, Any]:
+        """Return the describe/status payload for one dataset."""
+        ...
+
+    def operation_description(self, dataset: str, operation: str) -> dict[str, Any]:
+        """Return the operand JSON schema and per-operand help for one operation."""
+        ...
+
+    def resolve_dependency(
+        self,
+        parent: str,
+        target: str,
+        requirement: dict[str, object],
+    ) -> tuple[str, dict[str, object]]:
+        """Map a dependency requirement to the fulfilling dataset and operands."""
+        ...
+
+    def ready(self, workspace: Workspace, mode: str) -> bool:
+        """Whether the provider is configured well enough to accept work."""
+        ...
+
+    def is_mock(self, workspace: Workspace, mode: str) -> bool:
+        """Whether the provider serves mock responses in this mode."""
+        ...
+
+    def probe(self, workspace: Workspace, *, today: date) -> None:
+        """Run the optional authenticated readiness probe through the limiter."""
+        ...
 
 
 SettingNormalizer = Callable[[Any, Workspace], Any]
@@ -83,7 +185,7 @@ def validate_provider_plugins(providers: Iterable[ProviderPlugin]) -> None:
             raise PluginRegistrationError(
                 f"provider {provider.provider_id!r} rate limit must be positive"
             )
-        if provider.runtime is None:
+        if provider.runtime is None or not isinstance(provider.runtime, ProviderRuntime):
             raise PluginRegistrationError(
                 f"provider {provider.provider_id!r} has no readiness runtime"
             )

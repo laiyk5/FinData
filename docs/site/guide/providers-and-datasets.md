@@ -38,6 +38,8 @@ runtime companion: initialization state, current publication, and a coverage sum
 
 The canonical per-dataset contracts (schemas, publication windows, missing-data policy)
 live in the repository under `docs/design/dataset/`; this table is an orientation aid.
+To maintain datasets from your own provider, see
+[Custom datasets and providers](custom-datasets.md).
 
 ## Maintaining data
 

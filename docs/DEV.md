@@ -28,6 +28,12 @@ loads and validates that contract before loading dataset entry points; it must n
 provider's concrete module directly. Registration tests cover duplicate IDs, malformed schemas,
 invalid limiter parameters, and datasets referring to an unregistered provider.
 
+The provider's runtime object must satisfy the `findata.plugins.ProviderRuntime` protocol;
+discovery rejects an incomplete runtime. The task-process contracts handed to its operation
+worker — `OperationRequest`, `OperationReporter`, and `OperationWorker` — are public contracts
+in `findata.contracts`, re-exported from `findata.plugins`, and the built-in Tushare runtime is
+the reference implementation.
+
 If a provider exposes instrument-reference metadata, preserve its identifiers as opaque values,
 record how explicitly requested references are materialized and refreshed, and keep
 endpoint-capability checks separate from metadata presence. Do not implement cross-provider
