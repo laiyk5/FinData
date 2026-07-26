@@ -21,7 +21,7 @@ from findata.loader import (
     UnsupportedCoverageError,
 )
 from findata.providers.tushare import TushareClient
-from findata.storage import Coverage, DataMutation, DatasetGate, Workspace
+from findata.storage import Coverage, DataMutation, DatasetGate, StorageError, Workspace
 from findata.testing.tushare import MockTushareTransport
 
 
@@ -351,6 +351,115 @@ class StorageLoaderTests(unittest.TestCase):
         self.assertEqual(removed, 1)
         self.assertFalse(temporary.exists())
         self.assertTrue(database.exists())
+
+    def test_recovery_warns_and_times_out_naming_the_gate_holding_dataset(self) -> None:
+        database = self.register("tushare_stock_basic")
+
+        with DatasetGate(database.parent / "gate.lock", exclusive=False):
+            with self.assertLogs("findata.storage", level="WARNING") as captured:
+                with self.assertRaisesRegex(StorageError, "tushare_stock_basic"):
+                    self.workspace.recover_storage(timeout=0.2)
+
+        warnings = [line for line in captured.output if "WARNING" in line]
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("tushare_stock_basic", warnings[0])
+        self.assertIn("waiting", warnings[0])
+        self.assertTrue(database.exists())
+
+    def test_export_snapshot_copies_consistent_wal_free_database(self) -> None:
+        self.register("tushare_trade_cal")
+        table = self.client.query(
+            "tushare_trade_cal",
+            exchange="SSE",
+            start_date="20260717",
+            end_date="20260720",
+        )
+        self.workspace.publisher("tushare_trade_cal").publish(
+            table,
+            coverage=[Coverage("SSE", date(2026, 7, 17), date(2026, 7, 21))],
+        )
+        committed = DataLoader(self.root).dataset("tushare_trade_cal").query()
+
+        snapshot = self.workspace.export_snapshot("tushare_trade_cal")
+
+        self.assertEqual(snapshot, self.root / "snapshots" / "tushare_trade_cal.duckdb")
+        self.assertTrue(snapshot.is_file())
+        self.assertFalse(Path(f"{snapshot}.wal").exists())
+        self.assertNotIn(snapshot, list((self.root / "datasets").rglob("*")))
+        with duckdb.connect(str(snapshot), read_only=True) as connection:
+            copied = connection.execute("select * from data").to_arrow_table()
+            state = connection.execute("select state from _findata_metadata").fetchone()
+        self.assertEqual(copied.combine_chunks().to_pylist(), committed.to_pylist())
+        self.assertEqual(state, ("ready",))
+
+    def test_export_snapshot_waits_for_batch_reader(self) -> None:
+        self.register("tushare_stock_basic")
+        table = self.client.query("tushare_stock_basic", list_status="L", exchange="SSE")
+        self.workspace.publisher("tushare_stock_basic").publish(table)
+        destination = self.root / "reader-snapshot.duckdb"
+        done = threading.Event()
+
+        def snapshot() -> None:
+            self.workspace.export_snapshot("tushare_stock_basic", destination)
+            done.set()
+
+        with (
+            DataLoader(self.root)
+            .dataset("tushare_stock_basic")
+            .iter_batches(batch_size=1) as batches
+        ):
+            thread = threading.Thread(target=snapshot, daemon=True)
+            thread.start()
+            time.sleep(0.1)
+            self.assertFalse(done.is_set())
+            self.assertEqual(sum(batch.num_rows for batch in batches), table.num_rows)
+        thread.join(timeout=5)
+        self.assertTrue(done.is_set())
+        with duckdb.connect(str(destination), read_only=True) as connection:
+            rows = connection.execute("select count(*) from data").fetchone()
+        self.assertEqual(rows, (table.num_rows,))
+
+    def test_export_snapshot_is_consistent_under_concurrent_writer(self) -> None:
+        self.register("tushare_stock_basic")
+        first = self.client.query("tushare_stock_basic", list_status="L", exchange="SSE")
+        second = self.client.query("tushare_stock_basic", list_status="L", exchange="SZSE")
+        publisher = self.workspace.publisher("tushare_stock_basic")
+        publisher.publish(first)
+        stop = threading.Event()
+
+        def writer() -> None:
+            while not stop.is_set():
+                publisher.publish(first)
+                publisher.publish(second)
+
+        thread = threading.Thread(target=writer, daemon=True)
+        thread.start()
+        try:
+            for index in range(3):
+                snapshot = self.workspace.export_snapshot(
+                    "tushare_stock_basic", self.root / f"snapshot-{index}.duckdb"
+                )
+                with duckdb.connect(str(snapshot), read_only=True) as connection:
+                    exchanges = {
+                        row[0]
+                        for row in connection.execute(
+                            "select distinct exchange from data"
+                        ).fetchall()
+                    }
+                # Each publication is a complete replacement, so any consistent
+                # snapshot observes exactly one of the two exchanges.
+                self.assertEqual(len(exchanges), 1)
+        finally:
+            stop.set()
+            thread.join(timeout=5)
+
+    def test_export_snapshot_rejects_unknown_dataset_and_live_destination(self) -> None:
+        database = self.register("tushare_stock_basic")
+        with self.assertRaisesRegex(StorageError, "unknown dataset"):
+            self.workspace.export_snapshot("not_registered")
+        self.assertFalse((self.root / "snapshots").exists())
+        with self.assertRaises(ValueError):
+            self.workspace.export_snapshot("tushare_stock_basic", database)
 
     def test_write_gate_wait_is_cancelable_before_connection_opens(self) -> None:
         self.register("tushare_stock_basic")

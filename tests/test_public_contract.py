@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import io
+import subprocess
+import sys
 import tempfile
 import unittest
 from datetime import date
@@ -16,6 +18,42 @@ from findata.datasets.tushare.operations import normalize_operation
 from findata.server_cli import _command_tree as server_command_tree
 from findata.server_cli import main as server_cli_main
 from findata.storage import Workspace
+
+
+class ReadProtocolImportTests(unittest.TestCase):
+    def test_dataloader_is_the_standalone_read_protocol(self) -> None:
+        # External readers install findata only for DataLoader; importing it must
+        # not pull in CLI, server, presentation, task, or plugin modules.
+        code = (
+            "import sys\n"
+            "from findata import DataLoader\n"
+            "banned = [\n"
+            "    module\n"
+            "    for module in sys.modules\n"
+            "    if module.split('.')[0] in {'click', 'rich'}\n"
+            "    or module.startswith((\n"
+            "        'findata.cli', 'findata.click_parser', 'findata.server',\n"
+            "        'findata.presentation', 'findata.taskrunner', 'findata.cron',\n"
+            "        'findata.events', 'findata.plugins', 'findata.data_access',\n"
+            "        'findata.datasets', 'findata.providers', 'findata.toolkit',\n"
+            "        'findata.testing',\n"
+            "    ))\n"
+            "]\n"
+            "sys.exit(1 if banned else 0)\n"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", code],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_package_root_reexports_the_official_reader(self) -> None:
+        import findata
+        from findata.loader import DataLoader
+
+        self.assertIs(findata.DataLoader, DataLoader)
+        self.assertIn("DataLoader", findata.__all__)
 
 
 class OperationNormalizationTests(unittest.TestCase):
@@ -200,7 +238,7 @@ class WorkspaceResolutionTests(unittest.TestCase):
         stdout = io.StringIO()
         code = cli_main(["_complete", "data"], stdout=stdout, stderr=io.StringIO(), environ={})
         self.assertEqual(code, 0)
-        self.assertEqual(stdout.getvalue(), "schema\npreview\ncoverage\nexport\n")
+        self.assertEqual(stdout.getvalue(), "schema\npreview\ncoverage\nexport\nsnapshot\n")
 
         stdout = io.StringIO()
         code = cli_main(

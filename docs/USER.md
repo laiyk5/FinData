@@ -72,8 +72,9 @@ The client resolves its workspace in this order:
 If no workspace is found, the client exits with an error suggesting `findata-server init <path>`.
 
 Each registered dataset owns one internal DuckDB file. These files are implementation state: users
-query them through DataLoader and must not open them read/write, remove WAL files, or copy a live
-database as a backup. Findata retains only the current committed dataset revision; routine updates
+query them through DataLoader and must not open them directly, remove WAL files, or copy a live
+database as a backup (see [DataLoader](#dataloader) for the read protocol and snapshot exports).
+Findata retains only the current committed dataset revision; routine updates
 do not create historical storage copies. Dataset initialization is local and does not contact a
 provider.
 
@@ -393,6 +394,9 @@ the read briefly; the result always observes one committed publication.
   be supplied together.
 - `data export <dataset> --output PATH|- --output-format csv|parquet|arrow|jsonl` streams committed
   batches instead of materializing the full result. `--batch-size` controls the batch bound.
+- `data snapshot <dataset> [--output PATH]` copies a consistent, WAL-free snapshot of the whole
+  database to `<workspace>/snapshots/<dataset>.duckdb` (default) or `PATH`, for readers that
+  cannot use DataLoader. See [Snapshots](#snapshots-for-readers-that-cannot-use-dataloader).
 
 When both keys and a time range are supplied, preview and export require complete coverage by
 default. `--allow-partial` explicitly opts into a partial result and reports that policy in the
@@ -413,9 +417,19 @@ interactive paging is not wanted.
 
 ## DataLoader
 
-The DataLoader reads each dataset's DuckDB database directly and does not require the server
+DataLoader is the only supported read protocol for external processes. It reads each dataset's
+DuckDB database directly and does not require the server
 process. It coordinates with writers through the dataset gate, so a query may briefly wait for a
-transaction on the same dataset; different datasets remain independent.
+transaction on the same dataset; different datasets remain independent. Importing it pulls in only
+DuckDB and Arrow — no CLI, server, or provider modules — so a client that installs `findata` can
+use it without any server-side setup.
+
+External processes MUST NOT open a dataset's `dataset.duckdb` directly with `duckdb.connect` — not
+even `read_only=True`. A direct connection bypasses the dataset gate, which corrupts read/write
+ordering against concurrent writers, and it crashes the next server startup: opening each database
+in `Workspace.recover_storage` then fails with a conflicting-lock error. DataLoader itself never
+retries such a conflicting-lock failure, because that error is the detector for the protocol
+violation.
 
 ```python
 from pathlib import Path
@@ -457,6 +471,20 @@ workspace. With `require_coverage=True`, a coverage-tracked dataset verifies exp
 unresolved. Non-observation dates such as a daily dataset's closed market days do not appear as gaps.
 Best-effort and non-coverage-tracked datasets do not support this option.
 `dataset.coverage(keys=None)` returns the coverage table when available.
+
+### Snapshots for readers that cannot use DataLoader
+
+Readers that cannot use DataLoader — non-Python, third-party, or offline consumers — receive a
+snapshot copy instead of touching live files:
+
+```bash
+findata data snapshot tushare_daily_basic            # writes <workspace>/snapshots/tushare_daily_basic.duckdb
+findata data snapshot tushare_daily_basic --output /path/to/copy.duckdb
+```
+
+The snapshot is checkpointed and copied while holding the dataset's exclusive gate, so it is a
+WAL-free single file containing exactly one committed state, safe to open directly with any DuckDB
+client. An existing snapshot at the destination is replaced atomically.
 
 ## User-documentation principles
 

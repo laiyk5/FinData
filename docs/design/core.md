@@ -235,6 +235,9 @@ After acquiring the workspace lock, a new server identifies orphaned task proces
 
 Opening each dataset database performs DuckDB recovery before work is accepted. Findata removes only
 its own abandoned pre-transaction temporary inputs; it never deletes DuckDB WAL files directly.
+Acquiring each exclusive gate during recovery logs a warning naming the dataset it waits on and
+fails with an error naming that dataset after a bounded wait (60 seconds), so a long-running reader
+cannot hang server startup without a trace.
 Committed data needs no application-level rollback because each checkpoint batch has one database
 transaction commit point.
 
@@ -243,6 +246,14 @@ transaction commit point.
 DataLoader reads per-dataset DuckDB files directly and works without the server. Multiple instances
 and processes may read concurrently when no writer owns that dataset; the shared/exclusive gate
 enforces this rule without requiring the server.
+
+DataLoader is the only supported read protocol for external processes, and importing it must not
+pull in CLI, server, or other maintenance-side modules. Opening a dataset database directly with
+`duckdb.connect` — even read-only — bypasses the gate, corrupts read/write ordering, and fails the
+next startup recovery with a conflicting-lock error; DataLoader treats that error as the detector
+for the violation and never retries it. Readers that cannot use DataLoader (non-Python,
+third-party, offline) receive an explicit snapshot copy: `Workspace.export_snapshot` holds the
+exclusive gate, checkpoints, and atomically copies the database to a WAL-free single file.
 
 v1 has one core tabular reader: DuckDB. Plugins declare logical schema and keys but do not select or
 implement a public query engine. DataLoader translates its uniform request into parameterized SQL

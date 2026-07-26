@@ -159,6 +159,9 @@ class DatasetReader:
         try:
             return duckdb.connect(str(database), read_only=True)
         except duckdb.Error as exc:
+            # A conflicting-lock failure here means another process opened the
+            # database outside the gate protocol. Do not retry: this error is
+            # the detector for that protocol violation.
             raise DataLoaderError(f"cannot load dataset {self.name!r}") from exc
 
     def _shared_gate(self) -> DatasetGate:

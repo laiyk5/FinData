@@ -60,6 +60,7 @@ COMMAND_HELP = {
     ("data", "coverage"): "Inspect committed coverage or check a requested time range.",
     ("data", "preview"): "Show a bounded preview of committed rows.",
     ("data", "export"): "Stream committed rows to a file or stdout.",
+    ("data", "snapshot"): "Copy one consistent single-file database snapshot.",
     ("task", "run"): "Submit a dataset operation through the generic task interface.",
     ("task", "ls"): "List retained task handles.",
     ("task", "status"): "Show the current state of one task.",
@@ -308,6 +309,19 @@ def command_tree(*, version: str) -> click.Group:
                 ["--batch-size"], type=click.IntRange(1), default=65_536, show_default=True
             ),
             click.Option(["--force"], is_flag=True),
+        ],
+    )
+    attach(
+        data,
+        "data",
+        "snapshot",
+        [
+            click.Argument(["dataset"]),
+            click.Option(
+                ["--output"],
+                help="Snapshot destination; defaults to "
+                "<workspace>/snapshots/<dataset>.duckdb and is replaced atomically.",
+            ),
         ],
     )
 

@@ -3,7 +3,9 @@ from __future__ import annotations
 import base64
 import fcntl
 import json
+import logging
 import os
+import shutil
 import tempfile
 import time
 import uuid
@@ -26,6 +28,12 @@ DATA_LAYOUT_VERSION = 1
 DUCKDB_STORAGE_VERSION = "1.5"
 DATABASE_NAME = "dataset.duckdb"
 FaultInjector = Callable[[str], None]
+
+logger = logging.getLogger(__name__)
+
+# Overall bound for one exclusive-gate acquisition during startup recovery, so a
+# long-running reader cannot hang server startup without a trace.
+RECOVERY_GATE_TIMEOUT = 60.0
 
 
 class StorageError(RuntimeError):
@@ -290,7 +298,7 @@ class Workspace:
             _atomic_json(self.root / "config.json", config, mode=0o600)
             return existed
 
-    def recover_storage(self) -> int:
+    def recover_storage(self, *, timeout: float = RECOVERY_GATE_TIMEOUT) -> int:
         removed = 0
         if not self.datasets_root.exists():
             return removed
@@ -298,7 +306,32 @@ class Workspace:
             database = dataset_root / DATABASE_NAME
             if not dataset_root.is_dir() or not database.is_file():
                 continue
-            with DatasetGate(dataset_root / "gate.lock", exclusive=True):
+            name = dataset_root.name
+            deadline = time.monotonic() + timeout
+
+            def waiting(reason: str, *, dataset: str = name) -> None:
+                logger.warning(
+                    "recover_storage is waiting for the %s of dataset %r; "
+                    "another process holds that dataset's gate",
+                    reason,
+                    dataset,
+                )
+
+            def checkpoint(*, dataset: str = name, limit: float = deadline) -> None:
+                if time.monotonic() >= limit:
+                    raise StorageError(
+                        f"recover_storage timed out after {timeout:g}s waiting for the "
+                        f"write gate of dataset {dataset!r}; a long-running reader or "
+                        "writer holds that dataset's gate — close it (for example a "
+                        "DataLoader batch iterator) and start the server again"
+                    )
+
+            with DatasetGate(
+                dataset_root / "gate.lock",
+                exclusive=True,
+                checkpoint=checkpoint,
+                waiting=waiting,
+            ):
                 for path in dataset_root.glob(".findata-input-*"):
                     if path.is_file():
                         path.unlink(missing_ok=True)
@@ -309,6 +342,34 @@ class Workspace:
                 finally:
                     connection.close()
         return removed
+
+    def export_snapshot(self, name: str, dest: Path | None = None) -> Path:
+        """Copy one consistent, WAL-free single-file snapshot of a dataset.
+
+        The exclusive gate is held across checkpointing and copying, so the result
+        is exactly one committed database state. Readers that cannot use DataLoader
+        (non-Python, third-party, offline) must receive this copy instead of
+        touching the live database.
+        """
+        dataset_root = dataset_root_path(self.datasets_root, name)
+        database = dataset_root / DATABASE_NAME
+        gate_path = dataset_root / "gate.lock"
+        if not database.is_file():
+            raise StorageError(f"unknown dataset {name!r}")
+        if not gate_path.is_file():
+            raise StorageError(f"dataset {name!r} is missing its storage gate")
+        target = Path(dest) if dest is not None else self.root / "snapshots" / f"{name}.duckdb"
+        if target.resolve() == database.resolve():
+            raise ValueError("snapshot destination must differ from the live database")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with DatasetGate(gate_path, exclusive=True):
+            connection = duckdb.connect(str(database))
+            try:
+                connection.execute("checkpoint")
+            finally:
+                connection.close()
+            _atomic_copy(database, target)
+        return target
 
 
 class Publisher:
@@ -686,6 +747,22 @@ def _atomic_json(path: Path, value: Mapping[str, Any], *, mode: int = 0o644) -> 
             os.fsync(file.fileno())
         os.replace(temporary, path)
         _fsync_directory(path.parent)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
+
+
+def _atomic_copy(source: Path, target: Path, *, mode: int = 0o600) -> None:
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{target.name}.", dir=target.parent)
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as sink, source.open("rb") as origin:
+            shutil.copyfileobj(origin, sink)
+            sink.flush()
+            os.fsync(sink.fileno())
+        os.chmod(temporary, mode)
+        os.replace(temporary, target)
+        _fsync_directory(target.parent)
     except BaseException:
         temporary.unlink(missing_ok=True)
         raise

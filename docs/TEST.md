@@ -252,6 +252,10 @@ Concurrency tests cover:
 
 - multiple read-only connections to one dataset and independent access to different datasets;
 - a batch iterator holding its shared gate and database view while a writer waits;
+- startup recovery warning and timing out with the blocking dataset named while a reader holds
+  its gate;
+- snapshot export copying one consistent checkpointed state while a batch reader holds the shared
+  gate;
 - proof that no read/write connection exists outside the exclusive gate and no read-only connection
   outlives the shared gate;
 - cancellation during rate-limit, dependency, and write-gate waits;
@@ -305,7 +309,9 @@ fixtures prove provider-then-dataset entry-point discovery and that a dataset pl
 core contracts, its provider adapter, and selected toolkit components. Explicit mock mode is the
 only runtime path allowed to load `findata.testing`.
 
-Packaging tests assert the pinned Hatchling backend and explicit `src/findata` wheel selection.
+Packaging tests assert the pinned Hatchling backend and explicit `src/findata` wheel selection. A
+subprocess import check proves that importing the DataLoader read path pulls in no CLI, server,
+presentation, task, or provider modules, so external readers can depend on it alone.
 The release-readiness gate builds an sdist and then a wheel from that sdist, installs the wheel into
 an isolated environment, invokes both console scripts, and verifies that every declared
 `findata.datasets` and `findata.providers` entry point remains discoverable.

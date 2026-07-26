@@ -658,6 +658,7 @@ def _dynamic_completion(client: _Client, words: list[str]) -> list[str]:
             "preview",
             "coverage",
             "export",
+            "snapshot",
         }
     ):
         prefix = rest[1] if len(rest) == 2 else ""
@@ -764,7 +765,7 @@ def _local_dataset_completion(
     if not (words and len(words) in {2, 3}):
         return []
     dataset_positions = (
-        words[0] == "data" and words[1] in {"schema", "preview", "coverage", "export"}
+        words[0] == "data" and words[1] in {"schema", "preview", "coverage", "export", "snapshot"}
     ) or (words[0] == "task" and words[1] == "run")
     if not dataset_positions:
         return []

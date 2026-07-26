@@ -7,6 +7,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
+import duckdb
 import pyarrow as pa
 import pyarrow.csv as pacsv
 import pyarrow.ipc as ipc
@@ -178,6 +179,24 @@ class DataCLITests(unittest.TestCase):
         )
         self.assertEqual(code, 0)
         self.assertIn("partial coverage allowed", stderr.getvalue())
+
+    def test_snapshot_writes_default_and_explicit_destinations(self) -> None:
+        default = self.run_json("data", "snapshot", "tushare_daily_basic")
+        default_path = self.root / "snapshots" / "tushare_daily_basic.duckdb"
+        # The CLI resolves the workspace, so compare resolved paths.
+        self.assertEqual(Path(default["path"]), default_path.resolve())
+        self.assertTrue(default_path.is_file())
+        with duckdb.connect(str(default_path), read_only=True) as connection:
+            rows = connection.execute("select count(*) from data").fetchone()
+        self.assertGreater(rows[0], 0)
+
+        explicit = self.root / "copies" / "daily.duckdb"
+        result = self.run_json("data", "snapshot", "tushare_daily_basic", "--output", str(explicit))
+        self.assertEqual(result["path"], str(explicit))
+        self.assertTrue(explicit.is_file())
+        # A repeated snapshot replaces the previous copy atomically.
+        second = self.run_json("data", "snapshot", "tushare_daily_basic")
+        self.assertEqual(Path(second["path"]), default_path.resolve())
 
     def run_json(self, *arguments: str) -> dict[str, object]:
         stdout = io.StringIO()

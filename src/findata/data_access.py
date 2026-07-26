@@ -14,6 +14,7 @@ import pyarrow.ipc as ipc
 import pyarrow.parquet as pq
 
 from findata.loader import DataLoader
+from findata.storage import Workspace
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,6 +31,8 @@ def execute_data_command(
     *,
     stdout: TextIO,
 ) -> object:
+    if args.action == "snapshot":
+        return _snapshot(workspace, args)
     dataset = DataLoader(workspace).dataset(str(args.dataset))
     if args.action == "schema":
         return dataset.describe()
@@ -52,6 +55,12 @@ def execute_data_command(
 
 class DataCommandUsageError(ValueError):
     """Invalid CLI usage of a data command; maps to exit code 2."""
+
+
+def _snapshot(workspace: Path, args: Any) -> dict[str, object]:
+    destination = Path(args.output).expanduser() if getattr(args, "output", None) else None
+    path = Workspace(workspace).export_snapshot(str(args.dataset), destination)
+    return {"dataset": str(args.dataset), "path": str(path)}
 
 
 def _coverage(dataset: Any, args: Any) -> dict[str, object]:
