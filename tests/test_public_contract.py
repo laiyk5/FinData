@@ -14,7 +14,7 @@ from findata import __version__
 from findata.cli import main as cli_main, resolve_workspace
 from findata.click_parser import command_tree
 from findata.contracts import OperandError
-from findata.datasets.tushare.operations import normalize_operation
+from findata_tushare.datasets.operations import normalize_operation
 from findata.server_cli import _command_tree as server_command_tree
 from findata.server_cli import main as server_cli_main
 from findata.storage import Workspace

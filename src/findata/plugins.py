@@ -53,7 +53,7 @@ class ProviderPlugin:
 class ProviderRuntime(Protocol):
     """Behavior contract the server calls on a provider plugin's runtime object.
 
-    The built-in Tushare runtime (findata.providers.tushare) is the reference
+    The built-in Tushare runtime (findata_tushare.provider) is the reference
     implementation; findata.contracts documents the worker request and reporter.
     """
 
@@ -281,23 +281,16 @@ class PluginWorkerDispatcher:
     today: str
     now: str | None = None
 
-    def __call__(
-        self, request: OperationRequest, context: OperationReporter
-    ) -> Mapping[str, Any]:
+    def __call__(self, request: OperationRequest, context: OperationReporter) -> Mapping[str, Any]:
         dataset = str(request["dataset"])
         providers = discover_provider_plugins()
-        plugins = {
-            plugin.name: plugin
-            for plugin in discover_dataset_plugins(providers=providers)
-        }
+        plugins = {plugin.name: plugin for plugin in discover_dataset_plugins(providers=providers)}
         try:
             plugin = plugins[dataset]
         except KeyError as exc:
             raise ValueError(f"unknown dataset {dataset!r}") from exc
         runtime = next(
-            provider.runtime
-            for provider in providers
-            if provider.provider_id == plugin.provider
+            provider.runtime for provider in providers if provider.provider_id == plugin.provider
         )
         assert runtime is not None  # validate_provider_plugins enforces this
         worker = runtime.operation_worker(

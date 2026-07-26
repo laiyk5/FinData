@@ -10,6 +10,7 @@ requires-python = ">=3.11"
 dependencies = [
   "click==8.4.2",
   "duckdb==1.5.4",
+  "findata-tushare==0.3.0",
   "pyarrow>=15",
   "rich==15.0.0",
 ]
@@ -17,16 +18,6 @@ dependencies = [
 [project.scripts]
 findata = "findata.cli:main"
 findata-server = "findata.server_cli:main"
-
-[project.entry-points."findata.datasets"]
-tushare_trade_cal = "findata.datasets.tushare:trade_cal_plugin"
-tushare_stock_basic = "findata.datasets.tushare:stock_basic_plugin"
-tushare_index_basic = "findata.datasets.tushare:index_basic_plugin"
-tushare_index_weight = "findata.datasets.tushare:index_weight_plugin"
-tushare_daily_basic = "findata.datasets.tushare:daily_basic_plugin"
-
-[project.entry-points."findata.providers"]
-tushare = "findata.providers.tushare:tushare_provider_plugin"
 
 [project.optional-dependencies]
 dev = [
@@ -40,6 +31,12 @@ dev = [
 docs = [
   "mkdocs-material==9.7.7",
 ]
+
+[tool.uv.workspace]
+members = ["plugins/tushare"]
+
+[tool.uv.sources]
+findata-tushare = { workspace = true }
 
 [tool.hatch.build]
 # The WebUI bundle is built from web/ (npm run build) and git-ignored; it must

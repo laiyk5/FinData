@@ -6,7 +6,7 @@ from datetime import date
 import pyarrow as pa
 
 from findata.contracts import DateRange, OperandError
-from findata.datasets.tushare import TUSHARE_DATASETS
+from findata_tushare.datasets import TUSHARE_DATASETS
 
 
 class DateRangeTests(unittest.TestCase):
@@ -93,21 +93,23 @@ class DatasetContractTests(unittest.TestCase):
 
         table = spec.table_from_response(
             fields,
-            [[
-                "000300.SH",
-                "沪深300",
-                "沪深300指数",
-                "CSI",
-                "中证指数有限公司",
-                "规模",
-                "规模指数",
-                "20041231",
-                1000.0,
-                "20050408",
-                "派许加权",
-                "沪深市场代表性指数",
-                None,
-            ]],
+            [
+                [
+                    "000300.SH",
+                    "沪深300",
+                    "沪深300指数",
+                    "CSI",
+                    "中证指数有限公司",
+                    "规模",
+                    "规模指数",
+                    "20041231",
+                    1000.0,
+                    "20050408",
+                    "派许加权",
+                    "沪深市场代表性指数",
+                    None,
+                ]
+            ],
         )
 
         self.assertNotIn("symbol", spec.provider_fields)

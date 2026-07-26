@@ -7,7 +7,7 @@ from datetime import date, timedelta
 import re
 from typing import Any
 
-from findata.datasets.tushare import TUSHARE_DATASETS
+from findata_tushare.datasets import TUSHARE_DATASETS
 
 
 MOCK_TOKEN = "findata-mock"
@@ -140,9 +140,7 @@ class MockTushareTransport:
             _stock_row("600000.SH", "600000", "浦发银行", "SSE", "主板", "L", "19991110"),
             _stock_row("000001.SZ", "000001", "平安银行", "SZSE", "主板", "L", "19910403"),
             _stock_row("430047.BJ", "430047", "诺思兰德", "BSE", "北交所", "L", "20201124"),
-            _stock_row(
-                "600001.SH", "600001", "示例退市", "SSE", None, "D", "19910101", "20200101"
-            ),
+            _stock_row("600001.SH", "600001", "示例退市", "SSE", None, "D", "19910101", "20200101"),
             _stock_row("920000.BJ", "920000", "示例待交易", "BSE", "北交所", "G", None),
         ]
         return [

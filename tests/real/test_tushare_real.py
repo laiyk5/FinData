@@ -8,9 +8,9 @@ import unittest
 from datetime import date
 
 from findata import DataLoader
-from findata.datasets.tushare import TUSHARE_DATASETS
-from findata.datasets.tushare.operations import DatasetService, register_v1_datasets
-from findata.providers.tushare import TushareClient, TushareHTTPTransport
+from findata_tushare.datasets import TUSHARE_DATASETS
+from findata_tushare.datasets.operations import DatasetService, register_v1_datasets
+from findata_tushare.provider import TushareClient, TushareHTTPTransport
 from findata.storage import Workspace
 
 

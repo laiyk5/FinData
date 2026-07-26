@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from findata.cron import CronManager, CronSchedule
-from findata.datasets.tushare import builtin_plugins
+from findata_tushare.datasets import builtin_plugins
 from findata.events import EventStore
 from findata.toolkit.rate_limit import FileRateLimiter
 from findata.storage import Workspace
@@ -15,9 +15,7 @@ from findata.storage import Workspace
 
 def _suggested_schedules() -> dict[str, tuple[str, str]]:
     return {
-        plugin.name: plugin.schedule
-        for plugin in builtin_plugins()
-        if plugin.schedule is not None
+        plugin.name: plugin.schedule for plugin in builtin_plugins() if plugin.schedule is not None
     }
 
 
@@ -140,9 +138,7 @@ class CronManagerTests(unittest.TestCase):
         self.assertEqual(self.events.list_events()[0].kind, "cron_missed")
 
     def test_repeated_tick_within_one_minute_does_not_kill_scheduler(self) -> None:
-        self.manager.enable(
-            "tushare_daily_basic", now=datetime(2026, 7, 20, 8, 0, tzinfo=UTC)
-        )
+        self.manager.enable("tushare_daily_basic", now=datetime(2026, 7, 20, 8, 0, tzinfo=UTC))
         first = datetime(2026, 7, 20, 9, 0, 1, tzinfo=UTC)
 
         self.manager.tick(first)
@@ -154,12 +150,8 @@ class CronManagerTests(unittest.TestCase):
         )
 
     def test_dst_gap_records_warning_event(self) -> None:
-        self.manager.set_schedule(
-            "tushare_trade_cal", "30 2 * * *", "Europe/Berlin"
-        )
-        self.manager.enable(
-            "tushare_trade_cal", now=datetime(2026, 3, 28, 12, 0, tzinfo=UTC)
-        )
+        self.manager.set_schedule("tushare_trade_cal", "30 2 * * *", "Europe/Berlin")
+        self.manager.enable("tushare_trade_cal", now=datetime(2026, 3, 28, 12, 0, tzinfo=UTC))
         self.manager.tick(datetime(2026, 3, 29, 3, 0, tzinfo=UTC))
         event = next(item for item in self.events.list_events() if item.kind == "cron_dst_gap")
         self.assertEqual(event.severity, "warning")

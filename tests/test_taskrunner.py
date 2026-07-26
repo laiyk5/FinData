@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 
 from findata import DataLoader
-from findata.datasets.tushare.operations import (
+from findata_tushare.datasets.operations import (
     OperationWorker,
     register_v1_datasets,
     resolve_v1_dependency,

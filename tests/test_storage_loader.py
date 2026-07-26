@@ -12,7 +12,7 @@ import duckdb
 import pyarrow as pa
 
 from findata import DataLoader
-from findata.datasets.tushare import TUSHARE_DATASETS
+from findata_tushare.datasets import TUSHARE_DATASETS
 from findata.loader import (
     CoverageError,
     DatasetNotFoundError,
@@ -20,9 +20,9 @@ from findata.loader import (
     IncompatibleDatasetError,
     UnsupportedCoverageError,
 )
-from findata.providers.tushare import TushareClient
+from findata_tushare.provider import TushareClient
 from findata.storage import Coverage, DataMutation, DatasetGate, StorageError, Workspace
-from findata.testing.tushare import MockTushareTransport
+from findata_tushare.testing import MockTushareTransport
 
 
 class StorageLoaderTests(unittest.TestCase):

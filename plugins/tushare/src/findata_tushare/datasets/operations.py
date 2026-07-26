@@ -17,15 +17,15 @@ from findata.contracts import (
     OperationReporter,
     OperationRequest,
 )
-from findata.datasets.tushare import TUSHARE_DATASETS
+from findata_tushare.datasets import TUSHARE_DATASETS
 from findata.loader import (
     DataLoader,
     DataLoaderError,
     DatasetNotReadyError,
     UnsupportedCoverageError,
 )
-from findata.providers.tushare import TushareClient, TushareHTTPTransport
-from findata.datasets.tushare.publication import (
+from findata_tushare.provider import TushareClient, TushareHTTPTransport
+from findata_tushare.datasets.publication import (
     PublicationWindow,
     daily_window,
     monthly_window,
@@ -39,7 +39,7 @@ from findata.storage import (
     Workspace,
     load_metadata,
 )
-from findata.testing.tushare import (
+from findata_tushare.testing import (
     MOCK_TOKEN,
     MockTushareTransport,
     is_mock_token,
@@ -1176,7 +1176,7 @@ def _normalize_index_reference(value: str) -> str:
 
 
 def _dataset_settings(workspace: Workspace, dataset: str) -> list[dict[str, Any]]:
-    from findata.datasets.tushare import builtin_plugins
+    from findata_tushare.datasets import builtin_plugins
 
     plugin = next(item for item in builtin_plugins() if item.name == dataset)
     return [

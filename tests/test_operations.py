@@ -10,11 +10,11 @@ from zoneinfo import ZoneInfo
 
 from findata import DataLoader
 from findata.contracts import OperandError
-from findata.datasets.tushare import TUSHARE_DATASETS
-from findata.datasets.tushare.operations import DatasetService, register_v1_datasets
-from findata.providers.tushare import TushareClient
+from findata_tushare.datasets import TUSHARE_DATASETS
+from findata_tushare.datasets.operations import DatasetService, register_v1_datasets
+from findata_tushare.provider import TushareClient
 from findata.storage import Workspace
-from findata.testing.tushare import MockTushareTransport
+from findata_tushare.testing import MockTushareTransport
 
 
 class DatedSnapshotTransport(MockTushareTransport):
@@ -164,10 +164,14 @@ class DatasetOperationTests(unittest.TestCase):
         self.assertEqual(second.fetched_requests, 0)
         self.assertEqual(second.publication_id, first.publication_id)
         self.assertEqual(len(self.transport.requests), request_count)
-        table = DataLoader(self.root).dataset("tushare_trade_cal").query(
-            keys=["SSE"],
-            time_range=("2026-07-17", "2026-07-21"),
-            require_coverage=True,
+        table = (
+            DataLoader(self.root)
+            .dataset("tushare_trade_cal")
+            .query(
+                keys=["SSE"],
+                time_range=("2026-07-17", "2026-07-21"),
+                require_coverage=True,
+            )
         )
         self.assertEqual(table.num_rows, 4)
 
@@ -191,18 +195,28 @@ class DatasetOperationTests(unittest.TestCase):
             DataLoader(self.root).dataset("tushare_trade_cal").query().num_rows,
             0,
         )
-        weights = DataLoader(self.root).dataset("tushare_index_weight").query(
-            keys=["000300.SH"],
-            time_range=("2026-06-01", "2026-08-01"),
-            require_coverage=True,
+        weights = (
+            DataLoader(self.root)
+            .dataset("tushare_index_weight")
+            .query(
+                keys=["000300.SH"],
+                time_range=("2026-06-01", "2026-08-01"),
+                require_coverage=True,
+            )
         )
         self.assertEqual(weights.num_rows, 6)
-        daily = DataLoader(self.root).dataset("tushare_daily_basic").query(
-            keys=["000001.SZ", "600000.SH", "600519.SH"],
-            time_range=("2026-06-29", "2026-07-04"),
-            require_coverage=True,
+        daily = (
+            DataLoader(self.root)
+            .dataset("tushare_daily_basic")
+            .query(
+                keys=["000001.SZ", "600000.SH", "600519.SH"],
+                time_range=("2026-06-29", "2026-07-04"),
+                require_coverage=True,
+            )
         )
-        self.assertEqual(set(daily.column("ts_code").to_pylist()), {"000001.SZ", "600000.SH", "600519.SH"})
+        self.assertEqual(
+            set(daily.column("ts_code").to_pylist()), {"000001.SZ", "600000.SH", "600519.SH"}
+        )
 
         request_count = len(self.transport.requests)
         resumed = self.service.run(
@@ -234,9 +248,7 @@ class DatasetOperationTests(unittest.TestCase):
         )
 
         weight_requests = [
-            item["params"]
-            for item in transport.requests
-            if item["api_name"] == "index_weight"
+            item["params"] for item in transport.requests if item["api_name"] == "index_weight"
         ]
         self.assertEqual(
             [item["start_date"] for item in weight_requests],
@@ -269,9 +281,7 @@ class DatasetOperationTests(unittest.TestCase):
         self.assertIn(date(2026, 7, 15), stored.column("trade_date").to_pylist())
 
     def test_daily_update_uses_plugin_owned_update_symbols(self) -> None:
-        self.service.run(
-            "tushare_index_basic", "complete", {"indexes": ["tushare:000300.SH"]}
-        )
+        self.service.run("tushare_index_basic", "complete", {"indexes": ["tushare:000300.SH"]})
         self.workspace.set_config(
             "dataset.tushare_daily_basic.update_symbols",
             ["tushare:000300.SH@latest"],
@@ -283,9 +293,13 @@ class DatasetOperationTests(unittest.TestCase):
         status = self.workspace.get_config("dataset.tushare_daily_basic.update_symbols")
         self.assertEqual(status, ["tushare:000300.SH@latest"])
         coverage = DataLoader(self.root).dataset("tushare_daily_basic").coverage()
-        self.assertEqual(set(coverage.column("key").to_pylist()), {"000001.SZ", "600000.SH", "600519.SH"})
+        self.assertEqual(
+            set(coverage.column("key").to_pylist()), {"000001.SZ", "600000.SH", "600519.SH"}
+        )
 
-    def test_mid_backfill_failure_keeps_checkpoints_and_rerun_fetches_only_missing_work(self) -> None:
+    def test_mid_backfill_failure_keeps_checkpoints_and_rerun_fetches_only_missing_work(
+        self,
+    ) -> None:
         # Calendar (2), metadata (1), three snapshot months (3), first daily
         # symbol (1), then fail on the second daily symbol.
         self.transport.fail_on_call(8, code=-1, message="injected terminal failure")
@@ -305,7 +319,13 @@ class DatasetOperationTests(unittest.TestCase):
         self.assertEqual(resumed.fetched_requests, 3)
         self.assertEqual(len(self.transport.requests) - requests_before_resume, 3)
         self.assertEqual(
-            set(DataLoader(self.root).dataset("tushare_daily_basic").coverage().column("key").to_pylist()),
+            set(
+                DataLoader(self.root)
+                .dataset("tushare_daily_basic")
+                .coverage()
+                .column("key")
+                .to_pylist()
+            ),
             {"000001.SZ", "600000.SH", "600519.SH"},
         )
 
@@ -353,6 +373,7 @@ class DatasetOperationTests(unittest.TestCase):
             set(daily.column("ts_code").to_pylist()),
             {"000001.SZ", "600000.SH", "600519.SH"},
         )
+
     def test_stock_basic_update_accepts_null_market_for_delisted_security(self) -> None:
         self.service.run("tushare_stock_basic", "update", {})
 
@@ -472,6 +493,7 @@ class DatasetOperationTests(unittest.TestCase):
             item["params"] for item in self.transport.requests if item["api_name"] == "daily_basic"
         ]
         self.assertEqual(requests, [{"trade_date": "20260720"}])
+
     def test_complete_clamps_tail_to_due_boundary_and_update_fetches_newly_due_date(self) -> None:
         symbols = ["000001.SZ", "600000.SH", "600519.SH"]
         self.service.run(
@@ -508,8 +530,10 @@ class DatasetOperationTests(unittest.TestCase):
         ]
         # The clamped coverage left 2026-07-21 unresolved, so update fetches it.
         self.assertIn({"trade_date": "20260721"}, requests)
-        stored = DataLoader(self.root).dataset("tushare_daily_basic").query(
-            time_range=("2026-07-21", "2026-07-22")
+        stored = (
+            DataLoader(self.root)
+            .dataset("tushare_daily_basic")
+            .query(time_range=("2026-07-21", "2026-07-22"))
         )
         self.assertEqual(stored.num_rows, 3)
 
@@ -539,9 +563,7 @@ class DatasetOperationTests(unittest.TestCase):
             "complete",
             {"symbols": ["000001.SZ"], "timerange": "2026-07-17:2026-07-18"},
         )
-        self.workspace.set_config(
-            "dataset.tushare_daily_basic.update_symbols", ["000001.SZ"]
-        )
+        self.workspace.set_config("dataset.tushare_daily_basic.update_symbols", ["000001.SZ"])
         morning = DatasetService(
             self.workspace,
             TushareClient(token="test-token", transport=self.transport),
@@ -557,9 +579,7 @@ class DatasetOperationTests(unittest.TestCase):
         self.assertEqual(len(self.transport.requests), request_count)
 
     def test_update_before_publication_window_on_uninitialized_dataset_fails(self) -> None:
-        self.workspace.set_config(
-            "dataset.tushare_daily_basic.update_symbols", ["000001.SZ"]
-        )
+        self.workspace.set_config("dataset.tushare_daily_basic.update_symbols", ["000001.SZ"])
         morning = DatasetService(
             self.workspace,
             TushareClient(token="test-token", transport=self.transport),

@@ -2,6 +2,12 @@ version = 1
 revision = 2
 requires-python = ">=3.11"
 
+[manifest]
+members = [
+    "findata",
+    "findata-tushare",
+]
+
 [[package]]
 name = "argcomplete"
 version = "3.7.0"
@@ -320,6 +326,7 @@ source = { editable = "." }
 dependencies = [
     { name = "click" },
     { name = "duckdb" },
+    { name = "findata-tushare" },
     { name = "pyarrow" },
     { name = "rich" },
 ]
@@ -341,6 +348,7 @@ docs = [
 requires-dist = [
     { name = "click", specifier = "==8.4.2" },
     { name = "duckdb", specifier = "==1.5.4" },
+    { name = "findata-tushare", editable = "plugins/tushare" },
     { name = "nox", marker = "extra == 'dev'", specifier = ">=2025.5.1" },
     { name = "pyarrow", specifier = ">=15" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
@@ -352,6 +360,17 @@ provides-extras = ["dev"]
 
 [package.metadata.requires-dev]
 docs = [{ name = "mkdocs-material", specifier = "==9.7.7" }]
+
+[[package]]
+name = "findata-tushare"
+version = "0.3.0"
+source = { editable = "plugins/tushare" }
+dependencies = [
+    { name = "pyarrow" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "pyarrow", specifier = ">=15" }]
 
 [[package]]
 name = "ghp-import"

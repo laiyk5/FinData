@@ -8,13 +8,13 @@ from typing import Any
 import pyarrow as pa
 from urllib.error import URLError
 
-from findata.datasets.tushare import TUSHARE_DATASETS
-from findata.providers.tushare import (
+from findata_tushare.datasets import TUSHARE_DATASETS
+from findata_tushare.provider import (
     ProviderProtocolError,
     TushareAPIError,
     TushareClient,
 )
-from findata.testing.tushare import MockTushareTransport
+from findata_tushare.testing import MockTushareTransport
 
 
 class TushareClientTests(unittest.TestCase):

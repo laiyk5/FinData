@@ -14,10 +14,10 @@ import pyarrow.ipc as ipc
 import pyarrow.parquet as pq
 
 from findata.cli import main as cli_main
-from findata.datasets.tushare.operations import DatasetService, register_v1_datasets
-from findata.providers.tushare import TushareClient
+from findata_tushare.datasets.operations import DatasetService, register_v1_datasets
+from findata_tushare.provider import TushareClient
 from findata.storage import Workspace
-from findata.testing.tushare import MockTushareTransport
+from findata_tushare.testing import MockTushareTransport
 
 
 class DataCLITests(unittest.TestCase):

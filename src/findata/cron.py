@@ -75,7 +75,8 @@ class CronSchedule:
                         continue
                     candidates = [local.replace(tzinfo=self.zone, fold=fold) for fold in (0, 1)]
                     valid = any(
-                        candidate.astimezone(UTC).astimezone(self.zone).replace(tzinfo=None) == local
+                        candidate.astimezone(UTC).astimezone(self.zone).replace(tzinfo=None)
+                        == local
                         for candidate in candidates
                     )
                     approximate = candidates[0].astimezone(UTC)
@@ -113,7 +114,10 @@ class CronManager:
         self._validate_dataset(dataset)
         if not self.provider_ready(dataset):
             self.events.record(
-                "cron_skipped", "error", f"cannot enable {dataset}: provider is not ready", dataset=dataset
+                "cron_skipped",
+                "error",
+                f"cannot enable {dataset}: provider is not ready",
+                dataset=dataset,
             )
             raise ValueError(f"provider for {dataset} is not ready")
         if not self.update_ready(dataset):
@@ -151,7 +155,9 @@ class CronManager:
         entry = dict(state.get(dataset) or {})
         entry.update({"expression": expression, "timezone": timezone, "source": "override"})
         if entry.get("enabled"):
-            entry["next_run"] = CronSchedule(expression, timezone).next_after(datetime.now(UTC)).isoformat()
+            entry["next_run"] = (
+                CronSchedule(expression, timezone).next_after(datetime.now(UTC)).isoformat()
+            )
         state[dataset] = entry
         self._save(state)
         return self._job(dataset, entry, datetime.now(UTC))
@@ -164,7 +170,9 @@ class CronManager:
             entry.pop(key, None)
         if entry.get("enabled"):
             expression, timezone = self.suggested[dataset]
-            entry["next_run"] = CronSchedule(expression, timezone).next_after(datetime.now(UTC)).isoformat()
+            entry["next_run"] = (
+                CronSchedule(expression, timezone).next_after(datetime.now(UTC)).isoformat()
+            )
         state[dataset] = entry
         self._save(state)
         return self._job(dataset, entry, datetime.now(UTC))
@@ -182,7 +190,11 @@ class CronManager:
             if last_checked_text:
                 schedule = CronSchedule(job.expression, job.timezone)
                 last_checked = datetime.fromisoformat(last_checked_text)
-                skipped = schedule.skipped_between(last_checked, current) if last_checked < current else []
+                skipped = (
+                    schedule.skipped_between(last_checked, current)
+                    if last_checked < current
+                    else []
+                )
                 for wall_time in skipped:
                     self.events.record(
                         "cron_dst_gap",
@@ -200,14 +212,20 @@ class CronManager:
                 continue
             if not self.provider_ready(dataset) or not self.update_ready(dataset):
                 self.events.record(
-                    "cron_skipped", "error", f"scheduled update skipped for {dataset}", dataset=dataset
+                    "cron_skipped",
+                    "error",
+                    f"scheduled update skipped for {dataset}",
+                    dataset=dataset,
                 )
             else:
                 try:
                     self.submit(dataset, "update", {})
                 except Exception as exc:
                     self.events.record(
-                        "cron_skipped", "error", f"scheduled update rejected for {dataset}: {exc}", dataset=dataset
+                        "cron_skipped",
+                        "error",
+                        f"scheduled update rejected for {dataset}: {exc}",
+                        dataset=dataset,
                     )
                 else:
                     entry["last_run"] = current.isoformat()
@@ -219,7 +237,9 @@ class CronManager:
             self._save(state)
 
     def note_shutdown(self, now: datetime | None = None) -> None:
-        self.workspace.set_config("cron.last_seen", (now or datetime.now(UTC)).astimezone(UTC).isoformat())
+        self.workspace.set_config(
+            "cron.last_seen", (now or datetime.now(UTC)).astimezone(UTC).isoformat()
+        )
 
     def recover(self, now: datetime | None = None) -> None:
         current = (now or datetime.now(UTC)).astimezone(UTC)
@@ -232,11 +252,16 @@ class CronManager:
             due = datetime.fromisoformat(entry["next_run"])
             if due <= current:
                 self.events.record(
-                    "cron_missed", "warning", f"scheduled update was missed for {dataset}", dataset=dataset,
+                    "cron_missed",
+                    "warning",
+                    f"scheduled update was missed for {dataset}",
+                    dataset=dataset,
                     scheduled_for=due.isoformat(),
                 )
                 job = self._job(dataset, entry, current)
-                entry["next_run"] = CronSchedule(job.expression, job.timezone).next_after(current).isoformat()
+                entry["next_run"] = (
+                    CronSchedule(job.expression, job.timezone).next_after(current).isoformat()
+                )
                 state[dataset] = entry
                 changed = True
         if changed:

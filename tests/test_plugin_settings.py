@@ -6,11 +6,11 @@ import unittest
 from datetime import date
 from pathlib import Path
 
-from findata.datasets.tushare import builtin_plugins
-from findata.datasets.tushare.operations import DatasetService, register_v1_datasets
-from findata.providers.tushare import TushareClient
+from findata_tushare.datasets import builtin_plugins
+from findata_tushare.datasets.operations import DatasetService, register_v1_datasets
+from findata_tushare.provider import TushareClient
 from findata.storage import Workspace
-from findata.testing.tushare import MockTushareTransport
+from findata_tushare.testing import MockTushareTransport
 
 
 class PluginSettingsTests(unittest.TestCase):
@@ -36,18 +36,12 @@ class PluginSettingsTests(unittest.TestCase):
         self.assertEqual(updated["values"]["display.timezone"], "UTC")
 
     def test_dataset_setting_is_plugin_normalized_and_requires_local_metadata(self) -> None:
-        plugin = next(
-            item for item in builtin_plugins() if item.name == "tushare_daily_basic"
-        )
+        plugin = next(item for item in builtin_plugins() if item.name == "tushare_daily_basic")
         key = "dataset.tushare_daily_basic.update_symbols"
         with self.assertRaisesRegex(ValueError, "tushare_index_basic complete"):
-            plugin.normalize_setting(
-                key, ["tushare:000300.SH@latest"], workspace=self.workspace
-            )
+            plugin.normalize_setting(key, ["tushare:000300.SH@latest"], workspace=self.workspace)
 
-        self.service.run(
-            "tushare_index_basic", "complete", {"indexes": ["tushare:000300.SH"]}
-        )
+        self.service.run("tushare_index_basic", "complete", {"indexes": ["tushare:000300.SH"]})
         normalized = plugin.normalize_setting(
             key,
             ["tushare:000300.SH@latest", "000001.SZ", "000001.SZ"],
@@ -65,9 +59,7 @@ class PluginSettingsTests(unittest.TestCase):
         table = self.service.loader.dataset("tushare_index_basic").query()
         self.assertEqual(table.column("ts_code").to_pylist(), ["000300.SH"])
 
-        self.service.run(
-            "tushare_index_basic", "complete", {"indexes": ["tushare:000905.SH"]}
-        )
+        self.service.run("tushare_index_basic", "complete", {"indexes": ["tushare:000905.SH"]})
         table = self.service.loader.dataset("tushare_index_basic").query()
         self.assertEqual(set(table.column("ts_code").to_pylist()), {"000300.SH", "000905.SH"})
         self.assertTrue(all("market" not in item["params"] for item in self.transport.requests))

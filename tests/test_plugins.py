@@ -8,7 +8,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from findata.contracts import OperationReporter, OperationRequest
-from findata.datasets.tushare import builtin_plugins
+from findata_tushare.datasets import builtin_plugins
 from findata.plugins import (
     PluginRegistrationError,
     ProviderPlugin,
@@ -17,7 +17,7 @@ from findata.plugins import (
     validate_plugins,
     validate_provider_plugins,
 )
-from findata.providers.tushare import TushareProviderRuntime, tushare_provider_plugin
+from findata_tushare.provider import TushareProviderRuntime, tushare_provider_plugin
 from findata.storage import Workspace
 from findata.taskrunner import TaskContext
 
@@ -64,11 +64,11 @@ class PluginRegistryTests(unittest.TestCase):
             validate_plugins(builtin_plugins(), providers=[])
 
     def test_core_and_toolkit_import_boundaries_are_enforced(self) -> None:
-        package = Path(__file__).parents[1] / "src" / "findata"
+        root = Path(__file__).parents[1]
+        package = root / "src" / "findata"
         forbidden = (
-            "from findata.datasets.",
-            "from findata.providers.",
-            "from findata.testing.",
+            "from findata_tushare",
+            "import findata_tushare",
             "from findata.toolkit",
         )
         for path in package.glob("*.py"):
@@ -79,8 +79,21 @@ class PluginRegistryTests(unittest.TestCase):
             )
         for path in (package / "toolkit").glob("*.py"):
             content = path.read_text(encoding="utf-8")
-            self.assertNotIn("from findata.datasets.", content)
-            self.assertNotIn("from findata.providers.", content)
+            self.assertNotIn("findata_tushare", content)
+
+    def test_plugin_distributions_never_import_another_plugin(self) -> None:
+        plugin_src = Path(__file__).parents[1] / "plugins" / "tushare" / "src"
+        forbidden = (
+            "from findata.datasets.",
+            "from findata.providers.",
+            "from findata.testing.",
+        )
+        for path in plugin_src.rglob("*.py"):
+            content = path.read_text(encoding="utf-8")
+            self.assertFalse(
+                any(item in content for item in forbidden),
+                f"plugin module imports a retired core plugin path or another plugin: {path}",
+            )
 
 
 class PluginProtocolConformanceTests(unittest.TestCase):

@@ -515,9 +515,7 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                             raise ValueError(f"unknown IANA timezone {value!r}") from exc
                     if key.startswith("dataset."):
                         plugin = _dataset_plugin_for_key(app, key)
-                        value = plugin.normalize_setting(
-                            key, value, workspace=app.workspace
-                        )
+                        value = plugin.normalize_setting(key, value, workspace=app.workspace)
                     app.workspace.set_config(key, value)
                     self._send(
                         HTTPStatus.OK,
@@ -991,7 +989,10 @@ def _declared_config_keys(app: FindataServer) -> list[dict[str, Any]]:
         for field, schema in properties.items():
             key = f"provider.{provider_id}.{field}"
             entry = item(
-                key, _provider_key_help(provider, str(field)), schema, secret=field in provider.secret_fields
+                key,
+                _provider_key_help(provider, str(field)),
+                schema,
+                secret=field in provider.secret_fields,
             )
             if field == "rate_limit":
                 entry["default"] = provider.rate_limit

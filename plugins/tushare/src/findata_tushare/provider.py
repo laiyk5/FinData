@@ -27,7 +27,7 @@ class TushareProviderRuntime(ProviderRuntime):
         today: date,
         now: datetime | None,
     ) -> OperationWorker:
-        from findata.datasets.tushare.operations import OperationWorker as TushareWorker
+        from findata_tushare.datasets.operations import OperationWorker as TushareWorker
 
         return TushareWorker(
             workspace=workspace,
@@ -45,7 +45,7 @@ class TushareProviderRuntime(ProviderRuntime):
         *,
         today: date,
     ) -> dict[str, Any]:
-        from findata.datasets.tushare.operations import normalize_operation
+        from findata_tushare.datasets.operations import normalize_operation
 
         return normalize_operation(dataset, operation, operands, today=today)
 
@@ -56,12 +56,12 @@ class TushareProviderRuntime(ProviderRuntime):
         *,
         provider_ready: bool,
     ) -> dict[str, Any]:
-        from findata.datasets.tushare.operations import dataset_description
+        from findata_tushare.datasets.operations import dataset_description
 
         return dataset_description(workspace, dataset, provider_ready=provider_ready)
 
     def operation_description(self, dataset: str, operation: str) -> dict[str, Any]:
-        from findata.datasets.tushare.operations import operation_description
+        from findata_tushare.datasets.operations import operation_description
 
         return operation_description(dataset, operation)
 
@@ -74,7 +74,7 @@ class TushareProviderRuntime(ProviderRuntime):
         *,
         today: date,
     ) -> dict[str, Any]:
-        from findata.datasets.tushare.operations import plan_operation
+        from findata_tushare.datasets.operations import plan_operation
 
         return plan_operation(workspace, dataset, operation, operands, today=today)
 
@@ -84,7 +84,7 @@ class TushareProviderRuntime(ProviderRuntime):
         target: str,
         requirement: dict[str, object],
     ) -> tuple[str, dict[str, object]]:
-        from findata.datasets.tushare.operations import resolve_v1_dependency
+        from findata_tushare.datasets.operations import resolve_v1_dependency
 
         return resolve_v1_dependency(parent, target, requirement)
 
@@ -95,7 +95,7 @@ class TushareProviderRuntime(ProviderRuntime):
         return str(configured or "")
 
     def is_mock(self, workspace: Workspace, mode: str) -> bool:
-        from findata.testing.tushare import is_mock_token
+        from findata_tushare.testing import is_mock_token
 
         return mode == "mock" or is_mock_token(self.token(workspace))
 
