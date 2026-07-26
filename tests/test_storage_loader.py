@@ -93,7 +93,7 @@ class StorageLoaderTests(unittest.TestCase):
     def test_complete_replacement_queries_with_uniform_sql_semantics(self) -> None:
         database = self.register("tushare_trade_cal")
         table = self.client.query(
-            "tushare_trade_cal",
+            TUSHARE_DATASETS["tushare_trade_cal"],
             exchange="SSE",
             start_date="20260717",
             end_date="20260720",
@@ -130,7 +130,7 @@ class StorageLoaderTests(unittest.TestCase):
     def test_key_and_range_mutations_preserve_unaffected_rows(self) -> None:
         self.register("tushare_daily_basic")
         first = self.client.query(
-            "tushare_daily_basic",
+            TUSHARE_DATASETS["tushare_daily_basic"],
             ts_code="000001.SZ",
             start_date="20260701",
             end_date="20260703",
@@ -214,7 +214,7 @@ class StorageLoaderTests(unittest.TestCase):
     def test_coverage_error_identifies_exact_left_and_right_gaps(self) -> None:
         self.register("tushare_trade_cal")
         table = self.client.query(
-            "tushare_trade_cal",
+            TUSHARE_DATASETS["tushare_trade_cal"],
             exchange="SSE",
             start_date="20260718",
             end_date="20260719",
@@ -242,7 +242,9 @@ class StorageLoaderTests(unittest.TestCase):
 
     def test_non_coverage_dataset_rejects_coverage_enforcement(self) -> None:
         self.register("tushare_stock_basic")
-        table = self.client.query("tushare_stock_basic", list_status="L", exchange="SSE")
+        table = self.client.query(
+            TUSHARE_DATASETS["tushare_stock_basic"], list_status="L", exchange="SSE"
+        )
         self.workspace.publisher("tushare_stock_basic").publish(table)
         with self.assertRaises(UnsupportedCoverageError):
             DataLoader(self.root).dataset("tushare_stock_basic").query(
@@ -253,14 +255,18 @@ class StorageLoaderTests(unittest.TestCase):
 
     def test_fault_before_commit_rolls_back_data_coverage_and_revision(self) -> None:
         self.register("tushare_stock_basic")
-        first = self.client.query("tushare_stock_basic", list_status="L", exchange="SSE")
+        first = self.client.query(
+            TUSHARE_DATASETS["tushare_stock_basic"], list_status="L", exchange="SSE"
+        )
         first_id = self.workspace.publisher("tushare_stock_basic").publish(first)
 
         def fail(point: str) -> None:
             if point == "before_commit":
                 raise RuntimeError("injected crash")
 
-        second = self.client.query("tushare_stock_basic", list_status="L", exchange="SZSE")
+        second = self.client.query(
+            TUSHARE_DATASETS["tushare_stock_basic"], list_status="L", exchange="SZSE"
+        )
         with self.assertRaisesRegex(RuntimeError, "injected crash"):
             self.workspace.publisher("tushare_stock_basic", fault_injector=fail).publish(second)
 
@@ -270,9 +276,13 @@ class StorageLoaderTests(unittest.TestCase):
 
     def test_fault_after_commit_leaves_complete_new_revision(self) -> None:
         self.register("tushare_stock_basic")
-        first = self.client.query("tushare_stock_basic", list_status="L", exchange="SSE")
+        first = self.client.query(
+            TUSHARE_DATASETS["tushare_stock_basic"], list_status="L", exchange="SSE"
+        )
         old_id = self.workspace.publisher("tushare_stock_basic").publish(first)
-        second = self.client.query("tushare_stock_basic", list_status="L", exchange="SZSE")
+        second = self.client.query(
+            TUSHARE_DATASETS["tushare_stock_basic"], list_status="L", exchange="SZSE"
+        )
 
         def fail(point: str) -> None:
             if point == "after_commit":
@@ -286,10 +296,14 @@ class StorageLoaderTests(unittest.TestCase):
 
     def test_batch_reader_holds_database_gate_while_writer_waits(self) -> None:
         self.register("tushare_stock_basic")
-        first = self.client.query("tushare_stock_basic", list_status="L", exchange="SSE")
+        first = self.client.query(
+            TUSHARE_DATASETS["tushare_stock_basic"], list_status="L", exchange="SSE"
+        )
         publisher = self.workspace.publisher("tushare_stock_basic")
         first_id = publisher.publish(first)
-        second = self.client.query("tushare_stock_basic", list_status="L", exchange="SZSE")
+        second = self.client.query(
+            TUSHARE_DATASETS["tushare_stock_basic"], list_status="L", exchange="SZSE"
+        )
         committed = threading.Event()
 
         def publish_second() -> None:
@@ -313,7 +327,7 @@ class StorageLoaderTests(unittest.TestCase):
     def test_batch_reader_streams_without_using_eager_query_path(self) -> None:
         self.register("tushare_daily_basic")
         table = self.client.query(
-            "tushare_daily_basic",
+            TUSHARE_DATASETS["tushare_daily_basic"],
             ts_code="000001.SZ",
             start_date="20260701",
             end_date="20260710",
@@ -369,7 +383,7 @@ class StorageLoaderTests(unittest.TestCase):
     def test_export_snapshot_copies_consistent_wal_free_database(self) -> None:
         self.register("tushare_trade_cal")
         table = self.client.query(
-            "tushare_trade_cal",
+            TUSHARE_DATASETS["tushare_trade_cal"],
             exchange="SSE",
             start_date="20260717",
             end_date="20260720",
@@ -394,7 +408,9 @@ class StorageLoaderTests(unittest.TestCase):
 
     def test_export_snapshot_waits_for_batch_reader(self) -> None:
         self.register("tushare_stock_basic")
-        table = self.client.query("tushare_stock_basic", list_status="L", exchange="SSE")
+        table = self.client.query(
+            TUSHARE_DATASETS["tushare_stock_basic"], list_status="L", exchange="SSE"
+        )
         self.workspace.publisher("tushare_stock_basic").publish(table)
         destination = self.root / "reader-snapshot.duckdb"
         done = threading.Event()
@@ -421,8 +437,12 @@ class StorageLoaderTests(unittest.TestCase):
 
     def test_export_snapshot_is_consistent_under_concurrent_writer(self) -> None:
         self.register("tushare_stock_basic")
-        first = self.client.query("tushare_stock_basic", list_status="L", exchange="SSE")
-        second = self.client.query("tushare_stock_basic", list_status="L", exchange="SZSE")
+        first = self.client.query(
+            TUSHARE_DATASETS["tushare_stock_basic"], list_status="L", exchange="SSE"
+        )
+        second = self.client.query(
+            TUSHARE_DATASETS["tushare_stock_basic"], list_status="L", exchange="SZSE"
+        )
         publisher = self.workspace.publisher("tushare_stock_basic")
         publisher.publish(first)
         stop = threading.Event()
@@ -463,10 +483,14 @@ class StorageLoaderTests(unittest.TestCase):
 
     def test_write_gate_wait_is_cancelable_before_connection_opens(self) -> None:
         self.register("tushare_stock_basic")
-        first = self.client.query("tushare_stock_basic", list_status="L", exchange="SSE")
+        first = self.client.query(
+            TUSHARE_DATASETS["tushare_stock_basic"], list_status="L", exchange="SSE"
+        )
         publisher = self.workspace.publisher("tushare_stock_basic")
         publication = publisher.publish(first)
-        second = self.client.query("tushare_stock_basic", list_status="L", exchange="SZSE")
+        second = self.client.query(
+            TUSHARE_DATASETS["tushare_stock_basic"], list_status="L", exchange="SZSE"
+        )
         waiting: list[str] = []
 
         class Canceled(Exception):
@@ -502,7 +526,9 @@ class StorageLoaderTests(unittest.TestCase):
     def test_reset_replaces_only_the_selected_database(self) -> None:
         first_db = self.register("tushare_stock_basic")
         second_db = self.register("tushare_index_basic")
-        table = self.client.query("tushare_stock_basic", list_status="L", exchange="SSE")
+        table = self.client.query(
+            TUSHARE_DATASETS["tushare_stock_basic"], list_status="L", exchange="SSE"
+        )
         self.workspace.publisher("tushare_stock_basic").publish(table)
         second_before = second_db.read_bytes()
 

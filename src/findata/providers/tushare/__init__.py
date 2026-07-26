@@ -12,8 +12,7 @@ from urllib.error import URLError
 
 import pyarrow as pa
 
-from findata.contracts import DatasetDataError, OperationWorker
-from findata.datasets.tushare import TUSHARE_DATASETS
+from findata.contracts import DatasetDataError, DatasetSpec, OperationWorker
 from findata.plugins import ProviderPlugin, ProviderRuntime
 from findata.toolkit import FileRateLimiter
 from findata.storage import Workspace
@@ -109,13 +108,24 @@ class TushareProviderRuntime(ProviderRuntime):
             limit=int(workspace.get_config("provider.tushare.rate_limit", 500)),
             period=60,
         )
-        client = TushareClient(
-            token=self.token(workspace),
-            transport=TushareHTTPTransport(),
-            permit=limiter.acquire,
-        )
+        token = self.token(workspace)
         day = today.strftime("%Y%m%d")
-        client.query("tushare_trade_cal", exchange="SSE", start_date=day, end_date=day)
+        # A readiness probe needs no dataset contract, only an authenticated
+        # response from the provider's own API.
+        payload = {
+            "api_name": "trade_cal",
+            "token": token,
+            "params": {"exchange": "SSE", "start_date": day, "end_date": day},
+            "fields": "exchange,cal_date,is_open",
+        }
+        limiter.acquire()
+        response = TushareHTTPTransport()(payload)
+        code = response.get("code")
+        if not isinstance(code, int):
+            raise ProviderProtocolError("Tushare response code is missing or invalid")
+        if code != 0:
+            message = str(response.get("msg") or "unknown error").replace(token, "<redacted>")
+            raise TushareAPIError(code, message)
 
 
 def tushare_provider_plugin() -> ProviderPlugin:
@@ -197,8 +207,7 @@ class TushareClient:
         value = getattr(self._transport, "checkpoint_request_limit", None)
         return value if isinstance(value, int) and value > 0 else None
 
-    def query(self, dataset: str, **params: Any) -> pa.Table:
-        spec = TUSHARE_DATASETS[dataset]
+    def query(self, spec: DatasetSpec, **params: Any) -> pa.Table:
         payload = {
             "api_name": spec.api_name,
             "token": self._token,

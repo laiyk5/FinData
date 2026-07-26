@@ -8,6 +8,7 @@ from typing import Any
 import pyarrow as pa
 from urllib.error import URLError
 
+from findata.datasets.tushare import TUSHARE_DATASETS
 from findata.providers.tushare import (
     ProviderProtocolError,
     TushareAPIError,
@@ -29,7 +30,7 @@ class TushareClientTests(unittest.TestCase):
 
         client = TushareClient(token="secret", transport=transport, permit=permit)
         client.query(
-            "tushare_trade_cal",
+            TUSHARE_DATASETS["tushare_trade_cal"],
             exchange="SSE",
             start_date="20260720",
             end_date="20260720",
@@ -59,7 +60,10 @@ class TushareClientTests(unittest.TestCase):
             retry_delay=0,
         )
         table = client.query(
-            "tushare_trade_cal", exchange="SSE", start_date="20260720", end_date="20260720"
+            TUSHARE_DATASETS["tushare_trade_cal"],
+            exchange="SSE",
+            start_date="20260720",
+            end_date="20260720",
         )
         self.assertEqual(table.num_rows, 1)
         self.assertEqual((attempts, permits), (2, 2))
@@ -69,7 +73,7 @@ class TushareClientTests(unittest.TestCase):
         transport.empty_next("daily_basic")
         client = TushareClient(token="secret", transport=transport)
         table = client.query(
-            "tushare_daily_basic",
+            TUSHARE_DATASETS["tushare_daily_basic"],
             ts_code="000001.SZ",
             start_date="20260717",
             end_date="20260717",
@@ -82,7 +86,7 @@ class TushareClientTests(unittest.TestCase):
 
     def test_builds_official_envelope_without_exposing_token(self) -> None:
         table = self.client.query(
-            "tushare_trade_cal",
+            TUSHARE_DATASETS["tushare_trade_cal"],
             exchange="SSE",
             start_date="20260717",
             end_date="20260720",
@@ -102,7 +106,7 @@ class TushareClientTests(unittest.TestCase):
 
     def test_stock_basic_mock_filters_status_and_exchange(self) -> None:
         table = self.client.query(
-            "tushare_stock_basic",
+            TUSHARE_DATASETS["tushare_stock_basic"],
             list_status="L",
             exchange="SSE",
         )
@@ -114,7 +118,7 @@ class TushareClientTests(unittest.TestCase):
 
     def test_index_weight_mock_is_monthly_and_adds_effective_month(self) -> None:
         table = self.client.query(
-            "tushare_index_weight",
+            TUSHARE_DATASETS["tushare_index_weight"],
             index_code="000300.SH",
             start_date="20260601",
             end_date="20260630",
@@ -129,13 +133,13 @@ class TushareClientTests(unittest.TestCase):
 
     def test_daily_basic_mock_is_deterministic_and_nullable(self) -> None:
         first = self.client.query(
-            "tushare_daily_basic",
+            TUSHARE_DATASETS["tushare_daily_basic"],
             ts_code="000001.SZ",
             start_date="20260717",
             end_date="20260720",
         )
         second = self.client.query(
-            "tushare_daily_basic",
+            TUSHARE_DATASETS["tushare_daily_basic"],
             ts_code="000001.SZ",
             start_date="20260717",
             end_date="20260720",
@@ -149,7 +153,9 @@ class TushareClientTests(unittest.TestCase):
         self.transport.fail_next(code=2002, message="no permission for test-token")
 
         with self.assertRaises(TushareAPIError) as caught:
-            self.client.query("tushare_stock_basic", list_status="L", exchange="SSE")
+            self.client.query(
+                TUSHARE_DATASETS["tushare_stock_basic"], list_status="L", exchange="SSE"
+            )
 
         self.assertEqual(caught.exception.code, 2002)
         self.assertNotIn("test-token", str(caught.exception))
@@ -159,7 +165,7 @@ class TushareClientTests(unittest.TestCase):
 
         with self.assertRaises(ProviderProtocolError):
             self.client.query(
-                "tushare_trade_cal",
+                TUSHARE_DATASETS["tushare_trade_cal"],
                 exchange="SSE",
                 start_date="20260720",
                 end_date="20260720",
@@ -167,7 +173,7 @@ class TushareClientTests(unittest.TestCase):
 
     def test_unknown_dataset_is_rejected_before_transport(self) -> None:
         with self.assertRaises(KeyError):
-            self.client.query("not_registered")
+            self.client.query(TUSHARE_DATASETS["not_registered"])
 
         self.assertEqual(self.transport.requests, [])
 

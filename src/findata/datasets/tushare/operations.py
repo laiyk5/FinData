@@ -232,8 +232,8 @@ class DatasetService:
             self._reporter.log(message)
 
     def _fetch(self, dataset: str, **params: Any) -> pa.Table:
-        api_name = TUSHARE_DATASETS[dataset].api_name
-        shape = f"{api_name}({', '.join(f'{key}={value}' for key, value in params.items())})"
+        spec = TUSHARE_DATASETS[dataset]
+        shape = f"{spec.api_name}({', '.join(f'{key}={value}' for key, value in params.items())})"
         if self._reporter is not None:
             self._reporter.checkpoint()
             self._reporter.log(f"fetch {shape}")
@@ -243,7 +243,7 @@ class DatasetService:
                 self._reporter.begin_subtask(timeout=180)
         self._request_count += 1
         try:
-            table = self.client.query(dataset, **params)
+            table = self.client.query(spec, **params)
             self._row_count += table.num_rows
             if self._reporter is not None:
                 self._reporter.checkpoint()
