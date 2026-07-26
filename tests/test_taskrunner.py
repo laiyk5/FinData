@@ -12,7 +12,7 @@ from findata.datasets.tushare.operations import (
     register_v1_datasets,
     resolve_v1_dependency,
 )
-from findata.rate_limit import FileRateLimiter
+from findata.toolkit.rate_limit import FileRateLimiter
 from findata.storage import Workspace
 from findata.taskrunner import (
     DatasetBusyError,

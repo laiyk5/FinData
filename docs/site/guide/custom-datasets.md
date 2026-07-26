@@ -153,7 +153,7 @@ def worker(request: OperationRequest, context: OperationReporter) -> dict:
   `waiting(reason)` / `running()`, `fulfill(dataset, requirement)` for dependencies,
   and `begin_subtask` / `end_subtask`.
 - Fetch and transform **before** acquiring any write resources, and call the provider
-  only through the shared limiter (`findata.rate_limit.FileRateLimiter`), passing
+  only through the shared limiter (`findata.toolkit.rate_limit.FileRateLimiter`), passing
   `checkpoint`/`waiting` so waits stay cancelable.
 
 Commit through the core writer — never through DuckDB:

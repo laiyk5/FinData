@@ -26,7 +26,7 @@ from findata.loader import (
 )
 from findata.providers.tushare import TushareClient, TushareHTTPTransport
 from findata.publication import PublicationWindow, daily_window, monthly_window
-from findata.rate_limit import FileRateLimiter
+from findata.toolkit import FileRateLimiter
 from findata.storage import (
     DATABASE_NAME,
     Coverage,

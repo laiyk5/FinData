@@ -15,7 +15,7 @@ import pyarrow as pa
 from findata.contracts import DatasetDataError, OperationWorker
 from findata.datasets.tushare import TUSHARE_DATASETS
 from findata.plugins import ProviderPlugin, ProviderRuntime
-from findata.rate_limit import FileRateLimiter
+from findata.toolkit import FileRateLimiter
 from findata.storage import Workspace
 
 

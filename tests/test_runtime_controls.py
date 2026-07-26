@@ -8,7 +8,7 @@ from pathlib import Path
 
 from findata.cron import CronManager, CronSchedule
 from findata.events import EventStore
-from findata.rate_limit import FileRateLimiter
+from findata.toolkit.rate_limit import FileRateLimiter
 from findata.storage import Workspace
 
 

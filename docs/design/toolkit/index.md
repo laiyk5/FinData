@@ -24,6 +24,7 @@ stable public core contracts, but never on a concrete dataset or provider implem
 
 - [Checkpoint-batch planner](checkpoint_batch_planner.md)
 - [Coverage tracker](coverage_tracker.md)
+- [File rate limiter](rate_limiter.md)
 - [Publication-window pruning](publication_window_pruning.md)
 - [Request optimizer](request_optimizer.md)
 - [Constituent-set resolver](constituent_set_resolver.md)
