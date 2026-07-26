@@ -21,9 +21,10 @@ The plugin architecture exists so that:
    start to discover, validate, register, and serve it.
 4. **Official plugins are mountable on demand.** The plugins findata ships are ordinary
    plugins through the same mechanism; users install only the provider families they
-   need. The Tushare family ships as the separate `findata-tushare` distribution, which
-   findata depends on by default so a plain install works out of the box; uninstalling
-   it yields a lean core.
+   need. The Tushare family ships as separate `findata-provider-tushare` and
+   `findata-dataset-tushare-*` distributions (bundled by the `findata-plugins-tushare`
+   umbrella), which findata depends on by default so a plain install works out of the
+   box; uninstalling it yields a lean core.
 5. **Third-party plugins mount identically.** An external author uses the same entry
    points and the same contracts as the official plugins, with no source changes to
    findata and no privileged registration path.
@@ -83,12 +84,13 @@ The goals above are implemented and enforced:
   legacy format.
 - **Boundaries are test-enforced.** Core modules may not import a plugin distribution
   or the toolkit; toolkit components may not import a plugin; plugin distributions may
-  not import another plugin or retired core plugin paths.
-- **Official plugins are a separate distribution.** The Tushare provider and datasets,
+  not import another family's plugin or retired core plugin paths.
+- **Official plugins are separate distributions.** The Tushare provider and datasets,
   including their mock transport, live under `plugins/tushare/` as the
-  `findata-tushare` uv workspace member — the reference implementation of every rule
-  on this page. The five Tushare datasets remain one plugin package per provider
-  family; splitting a family further requires no mechanism change.
+  `findata-provider-tushare` and per-dataset `findata-dataset-tushare-*` uv workspace
+  members — the reference implementation of every rule on this page. Each Tushare
+  dataset is its own plugin distribution within the family; the split required no
+  mechanism change.
 
 The typed contracts, entry-point spelling, and a worked example live in the
 [custom-datasets guide](../site/guide/custom-datasets.md).

@@ -14,10 +14,30 @@ import pyarrow.ipc as ipc
 import pyarrow.parquet as pq
 
 from findata.cli import main as cli_main
-from findata_tushare.datasets.operations import DatasetService, register_v1_datasets
-from findata_tushare.provider import TushareClient
+from findata.plugins import register_plugins
 from findata.storage import Workspace
-from findata_tushare.testing import MockTushareTransport
+from findata_tushare_daily_basic import daily_basic_plugin
+from findata_tushare_daily_basic.operations import DailyBasicDatasetService
+from findata_tushare_index_basic import index_basic_plugin
+from findata_tushare_index_weight import index_weight_plugin
+from findata_tushare_provider.provider import TushareClient, tushare_provider_plugin
+from findata_tushare_provider.testing import MockTushareTransport
+from findata_tushare_stock_basic import stock_basic_plugin
+from findata_tushare_trade_cal import trade_cal_plugin
+
+
+def register_v1_datasets(workspace: Workspace) -> None:
+    register_plugins(
+        workspace,
+        [
+            trade_cal_plugin(),
+            stock_basic_plugin(),
+            index_basic_plugin(),
+            index_weight_plugin(),
+            daily_basic_plugin(),
+        ],
+        providers=[tushare_provider_plugin()],
+    )
 
 
 class DataCLITests(unittest.TestCase):
@@ -27,13 +47,12 @@ class DataCLITests(unittest.TestCase):
         workspace = Workspace.init(self.root)
         register_v1_datasets(workspace)
         transport = MockTushareTransport(today=date(2026, 7, 20))
-        service = DatasetService(
+        service = DailyBasicDatasetService(
             workspace,
             TushareClient(token="test-token", transport=transport),
             today=date(2026, 7, 20),
         )
         service.run(
-            "findata/tushare/daily_basic",
             "complete",
             {
                 "symbols": ["600000.SH"],

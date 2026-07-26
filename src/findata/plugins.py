@@ -4,6 +4,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime
 from importlib.metadata import entry_points
+import logging
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Iterable, Protocol, runtime_checkable
@@ -42,6 +43,20 @@ class PluginRegistrationError(RuntimeError):
     pass
 
 
+logger = logging.getLogger(__name__)
+
+PLUGIN_BLOCKLIST_KEY = "plugins.blocked"
+
+
+def plugin_blocklist(workspace: Workspace) -> list[str]:
+    """Read the workspace plugin blocklist (dataset full names or provider IDs)."""
+    value = workspace.get_config(PLUGIN_BLOCKLIST_KEY, [])
+    if not isinstance(value, list):
+        logger.warning("%s must be a JSON array; ignoring it", PLUGIN_BLOCKLIST_KEY)
+        return []
+    return [str(item) for item in value]
+
+
 @dataclass(frozen=True, slots=True)
 class ProviderPlugin:
     provider_id: str
@@ -57,8 +72,8 @@ class ProviderRuntime(Protocol):
     """Provider-scoped behavior contract for a provider plugin's runtime object.
 
     Dataset-scoped behavior lives on DatasetRuntime; the built-in Tushare
-    runtimes (findata_tushare.provider / findata_tushare.datasets) are the
-    reference implementations.
+    runtimes (findata_tushare_provider.provider and the findata_tushare_*
+    dataset packages) are the reference implementations.
     """
 
     def ready(self, workspace: Workspace, mode: str) -> bool:
@@ -208,7 +223,6 @@ def discover_dataset_plugins(
 ) -> list[DatasetPlugin]:
     discovered: list[DatasetPlugin] = []
     authors_by_dist: dict[str, str] = {}
-    dist_by_author: dict[str, str] = {}
     for point in entry_points(group="findata.datasets"):
         loaded = point.load()
         value = loaded() if callable(loaded) and not isinstance(loaded, DatasetPlugin) else loaded
@@ -223,12 +237,10 @@ def discover_dataset_plugins(
                 f"distribution {dist_name!r} registers datasets under multiple "
                 f"author namespaces including {author!r}"
             )
-        if dist_by_author.setdefault(author, dist_name) != dist_name:
-            raise PluginRegistrationError(
-                f"author namespace {author!r} is claimed by both "
-                f"{dist_by_author[author]!r} and {dist_name!r}"
-            )
         discovered.append(value)
+    # Entry points from several distributions arrive in installation order;
+    # sort by dataset name so listing and registration order stay deterministic.
+    discovered.sort(key=lambda plugin: plugin.name)
     resolved = _resolve_dependencies(discovered)
     validate_plugins(resolved, providers=providers)
     return resolved
@@ -292,6 +304,66 @@ def validate_plugins(
         visit(name)
 
 
+def apply_plugin_blocklist(
+    plugins: Iterable[DatasetPlugin],
+    providers: Iterable[ProviderPlugin],
+    blocked: Iterable[str],
+    *,
+    warn: Callable[[str], None] | None = None,
+) -> tuple[list[DatasetPlugin], list[ProviderPlugin]]:
+    """Filter installed plugins by a workspace blocklist.
+
+    A blocked plugin still mounts when an unblocked plugin requires it (a
+    dataset's declared dependencies, or any mounted dataset's provider); each
+    such repair and each unknown blocklist entry produces a warning.
+    """
+    entries = set(blocked)
+    all_plugins = _resolve_dependencies(list(plugins))
+    all_providers = list(providers)
+
+    def note(message: str) -> None:
+        if warn is not None:
+            warn(message)
+
+    known = {plugin.name for plugin in all_plugins} | {
+        provider.provider_id for provider in all_providers
+    }
+    for entry in sorted(entries - known):
+        note(f"plugins.blocked entry {entry!r} matches no installed plugin")
+
+    by_name = {plugin.name: plugin for plugin in all_plugins}
+    mounted: dict[str, DatasetPlugin] = {
+        plugin.name: plugin for plugin in all_plugins if plugin.name not in entries
+    }
+
+    def require(name: str, *, required_by: str) -> None:
+        plugin = by_name.get(name)
+        if plugin is None:
+            return
+        if name not in mounted:
+            note(
+                f"plugins.blocked entry {name!r} is ineffective: it is required by {required_by!r}"
+            )
+            mounted[name] = plugin
+        for dependency in plugin.dependencies:
+            require(dependency, required_by=name)
+
+    for name in list(mounted):
+        require(name, required_by=name)
+
+    provider_ids = {plugin.provider for plugin in mounted.values()}
+    active_providers: list[ProviderPlugin] = []
+    for provider in all_providers:
+        if provider.provider_id in provider_ids:
+            if provider.provider_id in entries:
+                note(
+                    f"plugins.blocked entry {provider.provider_id!r} is ineffective: "
+                    "mounted datasets require it"
+                )
+            active_providers.append(provider)
+    return list(mounted.values()), active_providers
+
+
 def register_plugins(
     workspace: Workspace,
     plugins: Iterable[DatasetPlugin],
@@ -323,7 +395,14 @@ class PluginWorkerDispatcher:
     def __call__(self, request: OperationRequest, context: OperationReporter) -> Mapping[str, Any]:
         dataset = str(request["dataset"])
         providers = discover_provider_plugins()
-        plugins = {plugin.name: plugin for plugin in discover_dataset_plugins(providers=providers)}
+        discovered = discover_dataset_plugins(providers=providers)
+        discovered, providers = apply_plugin_blocklist(
+            discovered,
+            providers,
+            plugin_blocklist(Workspace(self.workspace)),
+            warn=logger.warning,
+        )
+        plugins = {plugin.name: plugin for plugin in discovered}
         try:
             runtime = plugins[dataset].runtime
         except KeyError as exc:

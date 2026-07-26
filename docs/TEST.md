@@ -303,8 +303,9 @@ gate regardless of elapsed time.
 ## Package-boundary checks
 
 Automated import checks reject dependencies from core modules to `findata.toolkit` or any plugin
-distribution (for example `findata_tushare`). They also reject toolkit imports of concrete plugins
-and plugin-distribution imports of another plugin or retired core plugin paths. Positive
+distribution (for example `findata_tushare_provider`). They also reject toolkit imports of concrete
+plugins and plugin-distribution imports of another plugin family's distributions or retired core
+plugin paths. Positive
 fixtures prove provider-then-dataset entry-point discovery and that a dataset plugin can use public
 core contracts, its provider adapter, and selected toolkit components. Explicit mock mode is the
 only runtime path allowed to load a plugin's testing module.

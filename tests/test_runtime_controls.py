@@ -7,16 +7,25 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from findata.cron import CronManager, CronSchedule
-from findata_tushare.datasets import builtin_plugins
 from findata.events import EventStore
 from findata.toolkit.rate_limit import FileRateLimiter
 from findata.storage import Workspace
+from findata_tushare_daily_basic import daily_basic_plugin
+from findata_tushare_index_basic import index_basic_plugin
+from findata_tushare_index_weight import index_weight_plugin
+from findata_tushare_stock_basic import stock_basic_plugin
+from findata_tushare_trade_cal import trade_cal_plugin
 
 
 def _suggested_schedules() -> dict[str, tuple[str, str]]:
-    return {
-        plugin.name: plugin.schedule for plugin in builtin_plugins() if plugin.schedule is not None
-    }
+    plugins = [
+        trade_cal_plugin(),
+        stock_basic_plugin(),
+        index_basic_plugin(),
+        index_weight_plugin(),
+        daily_basic_plugin(),
+    ]
+    return {plugin.name: plugin.schedule for plugin in plugins if plugin.schedule is not None}
 
 
 class EventStoreTests(unittest.TestCase):

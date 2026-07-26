@@ -25,7 +25,7 @@ class TushareProviderRuntime(ProviderRuntime):
         return str(configured or "")
 
     def is_mock(self, workspace: Workspace, mode: str) -> bool:
-        from findata_tushare.testing import is_mock_token
+        from findata_tushare_provider.testing import is_mock_token
 
         return mode == "mock" or is_mock_token(self.token(workspace))
 

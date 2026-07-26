@@ -7,11 +7,7 @@ import unittest
 from pathlib import Path
 
 from findata import DataLoader
-from findata_tushare.datasets.operations import (
-    OperationWorker,
-    register_v1_datasets,
-    resolve_v1_dependency,
-)
+from findata.plugins import PluginWorkerDispatcher, register_plugins
 from findata.toolkit.rate_limit import FileRateLimiter
 from findata.storage import Workspace
 from findata.taskrunner import (
@@ -21,8 +17,35 @@ from findata.taskrunner import (
     TaskNotFoundError,
     TaskRunner,
 )
+from findata_tushare_daily_basic import daily_basic_plugin
+from findata_tushare_daily_basic.operations import DailyBasicDatasetRuntime
+from findata_tushare_index_basic import index_basic_plugin
+from findata_tushare_index_weight import index_weight_plugin
+from findata_tushare_provider.provider import tushare_provider_plugin
+from findata_tushare_stock_basic import stock_basic_plugin
+from findata_tushare_trade_cal import trade_cal_plugin
 
 TASK_TIMEOUT = 30.0
+
+
+def register_v1_datasets(workspace: Workspace) -> None:
+    register_plugins(
+        workspace,
+        [
+            trade_cal_plugin(),
+            stock_basic_plugin(),
+            index_basic_plugin(),
+            index_weight_plugin(),
+            daily_basic_plugin(),
+        ],
+        providers=[tushare_provider_plugin()],
+    )
+
+
+def resolve_v1_dependency(
+    parent: str, target: str, requirement: dict[str, object]
+) -> tuple[str, dict[str, object]]:
+    return DailyBasicDatasetRuntime().resolve_dependency(target, requirement)
 
 
 def successful_worker(request: dict[str, object], context: TaskContext) -> dict[str, object]:
@@ -287,10 +310,9 @@ class TaskRunnerTests(unittest.TestCase):
     def test_operation_worker_executes_mocked_primary_data_path_in_child(self) -> None:
         workspace = Workspace.init(self.root)
         register_v1_datasets(workspace)
-        worker = OperationWorker(
+        worker = PluginWorkerDispatcher(
             workspace=self.root,
-            provider="mock",
-            token="test-token",
+            mode="mock",
             today="2026-07-20",
         )
         with TaskRunner(

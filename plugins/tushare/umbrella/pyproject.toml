@@ -1,0 +1,24 @@
+[build-system]
+requires = ["hatchling==1.31.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "findata-plugins-tushare"
+version = "0.3.0"
+description = "Metapackage installing every official Tushare provider and dataset plugin for findata"
+requires-python = ">=3.11"
+dependencies = [
+  "findata-dataset-tushare-daily-basic==0.3.0",
+  "findata-dataset-tushare-index-basic==0.3.0",
+  "findata-dataset-tushare-index-weight==0.3.0",
+  "findata-dataset-tushare-stock-basic==0.3.0",
+  "findata-dataset-tushare-trade-cal==0.3.0",
+  "findata-provider-tushare==0.3.0",
+]
+
+# Metadata-only distribution: no import package, no entry points.
+[tool.hatch.build.targets.wheel]
+bypass-selection = true
+
+[tool.hatch.build.targets.sdist]
+bypass-selection = true

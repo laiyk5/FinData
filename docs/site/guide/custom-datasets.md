@@ -124,8 +124,8 @@ module directly — discovery crosses the boundary through entry points only.
 ## The provider runtime protocol
 
 Your `runtime` object implements the `ProviderRuntime` protocol from `findata.plugins`
-(inherit from it, as `findata_tushare.provider.TushareProviderRuntime` does — it is the
-reference implementation). The server calls these methods:
+(inherit from it, as `findata_tushare_provider.provider.TushareProviderRuntime` does — it is
+the reference implementation). The server calls these methods:
 
 | method | called for |
 | --- | --- |
@@ -189,8 +189,8 @@ importing that dependency's plugin or opening its database.
 ## Reference implementation
 
 The built-in Tushare plugins are the canonical example of every rule on this page and
-ship as the separate `findata-tushare` distribution: `findata_tushare.provider`
-(provider contract, runtime, transport, limiter) and `findata_tushare.datasets`
-(dataset specs, operations, settings, dependencies). The contributor-facing rules —
+ship as separate distributions: `findata_tushare_provider` (provider contract, runtime,
+transport, limiter, shared operation engine) and one `findata_tushare_<dataset>` package
+per dataset (spec, operations, settings, dependencies). The contributor-facing rules —
 what a plugin must declare and what it must never do — are owned by `docs/DEV.md` and
 `docs/design/` in the repository.

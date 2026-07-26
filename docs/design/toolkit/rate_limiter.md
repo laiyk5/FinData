@@ -10,5 +10,5 @@
 - **failure behavior**: a missing or corrupt state file restarts the bucket empty rather than
   failing; state updates are atomic (temporary file, fsync, rename) and serialized by an flock
   on a sibling `.lock` file, so concurrent task processes cannot oversubscribe the budget
-- **example**: `findata_tushare.datasets` routes every Tushare request through a limiter backed
+- **example**: `findata_tushare_provider` routes every Tushare request through a limiter backed
   by `<workspace>/providers/tushare-rate.json`

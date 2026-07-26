@@ -3,6 +3,7 @@ from __future__ import annotations
 import fcntl
 import hmac
 import json
+import logging
 import os
 import secrets
 import threading
@@ -27,11 +28,15 @@ from findata.plugins import (
     DatasetPlugin,
     PluginWorkerDispatcher,
     ProviderPlugin,
+    apply_plugin_blocklist,
     discover_dataset_plugins,
     discover_provider_plugins,
+    plugin_blocklist,
     register_plugins,
 )
 from findata.taskrunner import DatasetBusyError, QueueFullError, TaskNotFoundError, TaskRunner
+
+logger = logging.getLogger(__name__)
 
 
 class ServerAlreadyRunningError(RuntimeError):
@@ -59,9 +64,16 @@ _WEBUI_CONTENT_TYPES = {
 def initialize_workspace(root: Path) -> Workspace:
     workspace = Workspace.init(root)
     providers = discover_provider_plugins()
+    plugins = discover_dataset_plugins(providers=providers)
+    plugins, providers = apply_plugin_blocklist(
+        plugins,
+        providers,
+        plugin_blocklist(workspace),
+        warn=logger.warning,
+    )
     register_plugins(
         workspace,
-        discover_dataset_plugins(providers=providers),
+        plugins,
         providers=providers,
     )
     token_path = Path(root) / "token"
@@ -88,10 +100,16 @@ class FindataServer:
         self.root = Path(workspace)
         self.workspace = initialize_workspace(self.root)
         self.started_at = datetime.now(UTC).timestamp()
-        self.providers = {item.provider_id: item for item in discover_provider_plugins()}
-        self.plugins = {
-            item.name: item for item in discover_dataset_plugins(providers=self.providers.values())
-        }
+        discovered_providers = discover_provider_plugins()
+        discovered_datasets = discover_dataset_plugins(providers=discovered_providers)
+        discovered_datasets, discovered_providers = apply_plugin_blocklist(
+            discovered_datasets,
+            discovered_providers,
+            plugin_blocklist(self.workspace),
+            warn=logger.warning,
+        )
+        self.providers = {item.provider_id: item for item in discovered_providers}
+        self.plugins = {item.name: item for item in discovered_datasets}
         self._secret_keys = secret_config_keys(self.providers.values())
         self.host = host
         self.port = port

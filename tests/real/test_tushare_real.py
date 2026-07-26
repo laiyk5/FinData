@@ -8,10 +8,46 @@ import unittest
 from datetime import date
 
 from findata import DataLoader
-from findata_tushare.datasets import TUSHARE_DATASETS
-from findata_tushare.datasets.operations import DatasetService, register_v1_datasets
-from findata_tushare.provider import TushareClient, TushareHTTPTransport
+from findata.plugins import register_plugins
 from findata.storage import Workspace
+from findata_tushare_daily_basic import DAILY_BASIC_SPEC, daily_basic_plugin
+from findata_tushare_index_basic import INDEX_BASIC_SPEC, index_basic_plugin
+from findata_tushare_index_basic.operations import IndexBasicDatasetService
+from findata_tushare_index_weight import INDEX_WEIGHT_SPEC, index_weight_plugin
+from findata_tushare_index_weight.operations import IndexWeightDatasetService
+from findata_tushare_provider.provider import (
+    TushareClient,
+    TushareHTTPTransport,
+    tushare_provider_plugin,
+)
+from findata_tushare_stock_basic import STOCK_BASIC_SPEC, stock_basic_plugin
+from findata_tushare_trade_cal import TRADE_CAL_SPEC, trade_cal_plugin
+from findata_tushare_trade_cal.operations import TradeCalDatasetService
+
+TUSHARE_DATASETS = {
+    spec.name: spec
+    for spec in (
+        TRADE_CAL_SPEC,
+        STOCK_BASIC_SPEC,
+        INDEX_BASIC_SPEC,
+        INDEX_WEIGHT_SPEC,
+        DAILY_BASIC_SPEC,
+    )
+}
+
+
+def register_v1_datasets(workspace: Workspace) -> None:
+    register_plugins(
+        workspace,
+        [
+            trade_cal_plugin(),
+            stock_basic_plugin(),
+            index_basic_plugin(),
+            index_weight_plugin(),
+            daily_basic_plugin(),
+        ],
+        providers=[tushare_provider_plugin()],
+    )
 
 
 @unittest.skipUnless(
@@ -91,20 +127,18 @@ class RealTushareContractTests(unittest.TestCase):
             root = Path(directory)
             workspace = Workspace.init(root)
             register_v1_datasets(workspace)
-            service = DatasetService(workspace, self.client(), today=date(2026, 7, 22))
+            client = self.client()
+            today = date(2026, 7, 22)
 
-            calendar = service.run(
-                "findata/tushare/trade_cal",
+            calendar = TradeCalDatasetService(workspace, client, today=today).run(
                 "complete",
                 {"exchanges": ["SSE", "SZSE"], "timerange": "2026-06-30:2026-07-01"},
             )
-            index = service.run(
-                "findata/tushare/index_basic",
+            index = IndexBasicDatasetService(workspace, client, today=today).run(
                 "complete",
                 {"indexes": ["tushare:000300.SH"]},
             )
-            weights = service.run(
-                "findata/tushare/index_weight",
+            weights = IndexWeightDatasetService(workspace, client, today=today).run(
                 "complete",
                 {
                     "indexes": ["tushare:000300.SH"],

@@ -6,12 +6,21 @@ import nox
 
 
 SUPPORTED_PYTHONS = ("3.11", "3.12", "3.13", "3.14")
+PLUGIN_DISTRIBUTIONS = (
+    "plugins/tushare/provider",
+    "plugins/tushare/trade-cal",
+    "plugins/tushare/stock-basic",
+    "plugins/tushare/index-basic",
+    "plugins/tushare/index-weight",
+    "plugins/tushare/daily-basic",
+    "plugins/tushare/umbrella",
+)
 nox.options.default_venv_backend = "uv"
 
 
 @nox.session(python=SUPPORTED_PYTHONS)
 def tests(session: nox.Session) -> None:
-    """Build both wheels, install them cleanly, smoke both scripts, and run the suite."""
+    """Build all wheels, install them cleanly, smoke both scripts, and run the suite."""
     wheel_directory = Path(session.create_tmp()) / "dist"
     session.run(
         "uv",
@@ -21,18 +30,19 @@ def tests(session: nox.Session) -> None:
         str(wheel_directory),
         external=True,
     )
-    session.run(
-        "uv",
-        "build",
-        "--wheel",
-        "--out-dir",
-        str(wheel_directory),
-        "plugins/tushare",
-        external=True,
-    )
+    for distribution in PLUGIN_DISTRIBUTIONS:
+        session.run(
+            "uv",
+            "build",
+            "--wheel",
+            "--out-dir",
+            str(wheel_directory),
+            distribution,
+            external=True,
+        )
     wheels = sorted(wheel_directory.glob("*.whl"))
-    if len(wheels) != 2:
-        session.error(f"expected findata and findata-tushare wheels, got {wheels}")
+    if len(wheels) != 1 + len(PLUGIN_DISTRIBUTIONS):
+        session.error(f"expected findata and all plugin wheels, got {wheels}")
     session.install(
         "--force-reinstall", *(str(wheel) for wheel in wheels), "pytest>=8", "pytest-cov>=5"
     )

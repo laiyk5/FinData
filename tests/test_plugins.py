@@ -8,8 +8,8 @@ from dataclasses import replace
 from pathlib import Path
 
 from findata.contracts import OperationReporter, OperationRequest
-from findata_tushare.datasets import builtin_plugins
 from findata.plugins import (
+    DatasetRuntime,
     PluginRegistrationError,
     ProviderPlugin,
     ProviderRuntime,
@@ -17,14 +17,34 @@ from findata.plugins import (
     validate_plugins,
     validate_provider_plugins,
 )
-from findata_tushare.provider import TushareProviderRuntime, tushare_provider_plugin
 from findata.storage import Workspace
 from findata.taskrunner import TaskContext
+from findata_tushare_daily_basic import daily_basic_plugin
+from findata_tushare_daily_basic.operations import DailyBasicDatasetRuntime
+from findata_tushare_index_basic import index_basic_plugin
+from findata_tushare_index_basic.operations import IndexBasicDatasetRuntime
+from findata_tushare_index_weight import index_weight_plugin
+from findata_tushare_index_weight.operations import IndexWeightDatasetRuntime
+from findata_tushare_provider.provider import TushareProviderRuntime, tushare_provider_plugin
+from findata_tushare_stock_basic import stock_basic_plugin
+from findata_tushare_stock_basic.operations import StockBasicDatasetRuntime
+from findata_tushare_trade_cal import trade_cal_plugin
+from findata_tushare_trade_cal.operations import TradeCalDatasetRuntime
+
+
+def tushare_dataset_plugins():
+    return [
+        trade_cal_plugin(),
+        stock_basic_plugin(),
+        index_basic_plugin(),
+        index_weight_plugin(),
+        daily_basic_plugin(),
+    ]
 
 
 class PluginRegistryTests(unittest.TestCase):
     def test_builtin_plugins_validate_and_register_all_v1_datasets(self) -> None:
-        plugins = builtin_plugins()
+        plugins = tushare_dataset_plugins()
         self.assertEqual(len(plugins), 5)
         validate_plugins(plugins, providers=[tushare_provider_plugin()])
         with tempfile.TemporaryDirectory() as directory:
@@ -39,7 +59,7 @@ class PluginRegistryTests(unittest.TestCase):
             )
 
     def test_registration_rejects_missing_update_and_dependency_cycles(self) -> None:
-        first, second, *_ = builtin_plugins()
+        first, second, *_ = tushare_dataset_plugins()
         without_update = replace(first, operations=("complete",))
         with self.assertRaisesRegex(PluginRegistrationError, "parameterless update"):
             validate_plugins([without_update], providers=[tushare_provider_plugin()])
@@ -64,7 +84,7 @@ class PluginRegistryTests(unittest.TestCase):
         with self.assertRaisesRegex(PluginRegistrationError, "rate limit"):
             validate_provider_plugins([malformed])
         with self.assertRaisesRegex(PluginRegistrationError, "unknown provider"):
-            validate_plugins(builtin_plugins(), providers=[])
+            validate_plugins(tushare_dataset_plugins(), providers=[])
 
     def test_core_and_toolkit_import_boundaries_are_enforced(self) -> None:
         root = Path(__file__).parents[1]
@@ -85,23 +105,65 @@ class PluginRegistryTests(unittest.TestCase):
             self.assertNotIn("findata_tushare", content)
 
     def test_plugin_distributions_never_import_another_plugin(self) -> None:
-        plugin_src = Path(__file__).parents[1] / "plugins" / "tushare" / "src"
-        forbidden = (
+        # Every Tushare family package may import findata.*, third-party
+        # libraries, and findata_tushare_provider; dataset packages may
+        # additionally import the sibling dataset packages they declare a
+        # distribution dependency on — nothing else in the family.
+        family = {
+            "findata_tushare_provider": set(),
+            "findata_tushare_trade_cal": {"findata_tushare_provider"},
+            "findata_tushare_stock_basic": {"findata_tushare_provider"},
+            "findata_tushare_index_basic": {"findata_tushare_provider"},
+            "findata_tushare_index_weight": {
+                "findata_tushare_provider",
+                "findata_tushare_index_basic",
+            },
+            "findata_tushare_daily_basic": {
+                "findata_tushare_provider",
+                "findata_tushare_trade_cal",
+                "findata_tushare_index_basic",
+                "findata_tushare_index_weight",
+            },
+        }
+        retired_core_paths = (
             "from findata.datasets.",
             "from findata.providers.",
             "from findata.testing.",
         )
-        for path in plugin_src.rglob("*.py"):
-            content = path.read_text(encoding="utf-8")
-            self.assertFalse(
-                any(item in content for item in forbidden),
-                f"plugin module imports a retired core plugin path or another plugin: {path}",
-            )
+        plugin_root = Path(__file__).parents[1] / "plugins" / "tushare"
+        sources = {
+            package.name: package for package in plugin_root.glob("*/src/*") if package.is_dir()
+        }
+        self.assertEqual(set(sources), set(family))
+        for name, package in sources.items():
+            forbidden = set(family) - family[name] - {name}
+            for path in package.rglob("*.py"):
+                content = path.read_text(encoding="utf-8")
+                self.assertFalse(
+                    any(item in content for item in retired_core_paths),
+                    f"plugin module imports a retired core plugin path: {path}",
+                )
+                for other in forbidden:
+                    self.assertNotIn(
+                        other,
+                        content,
+                        f"plugin module imports another plugin distribution: {path}",
+                    )
 
 
 class PluginProtocolConformanceTests(unittest.TestCase):
     def test_tushare_runtime_satisfies_the_provider_runtime_protocol(self) -> None:
         self.assertIsInstance(TushareProviderRuntime(), ProviderRuntime)
+
+    def test_tushare_dataset_runtimes_satisfy_the_dataset_runtime_protocol(self) -> None:
+        for runtime in (
+            TradeCalDatasetRuntime(),
+            StockBasicDatasetRuntime(),
+            IndexBasicDatasetRuntime(),
+            IndexWeightDatasetRuntime(),
+            DailyBasicDatasetRuntime(),
+        ):
+            self.assertIsInstance(runtime, DatasetRuntime)
 
     def test_provider_validation_rejects_an_incomplete_runtime(self) -> None:
         incomplete = replace(tushare_provider_plugin(), runtime=object())

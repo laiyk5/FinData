@@ -1,0 +1,20 @@
+[build-system]
+requires = ["hatchling==1.31.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "findata-dataset-tushare-stock-basic"
+version = "0.3.0"
+description = "Official Tushare stock basic dataset plugin for findata"
+requires-python = ">=3.11"
+dependencies = [
+  "findata==0.3.0",
+  "findata-provider-tushare==0.3.0",
+  "pyarrow>=15",
+]
+
+[project.entry-points."findata.datasets"]
+tushare_stock_basic = "findata_tushare_stock_basic:stock_basic_plugin"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/findata_tushare_stock_basic"]

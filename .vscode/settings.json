@@ -1,0 +1,45 @@
+{
+    "workbench.editorAssociations": {
+        "*.copilotmd": "vscode.markdown.preview.editor",
+        "*.parquet": "duckdb.dataFileViewer",
+        "*.csv": "duckdb.dataFileViewer",
+        "*.tsv": "duckdb.dataFileViewer",
+        "*.xlsx": "duckdb.dataFileViewer"
+    },
+    "duckdb.databases": [
+        {
+            "alias": "tushare_stock_basic",
+            "type": "file",
+            "path": "/Users/laiyk/Projects/FinRND/FinData/workspaces/market-data/datasets/tushare_stock_basic/dataset.duckdb",
+            "readOnly": true,
+            "attached": false
+        },
+        {
+            "alias": "tushare_trade_cal",
+            "type": "file",
+            "path": "/Users/laiyk/Projects/FinRND/FinData/workspaces/market-data/datasets/tushare_trade_cal/dataset.duckdb",
+            "readOnly": true,
+            "attached": false
+        },
+        {
+            "alias": "tushare_index_basic",
+            "type": "file",
+            "path": "/Users/laiyk/Projects/FinRND/FinData/workspaces/market-data/datasets/tushare_index_basic/dataset.duckdb",
+            "readOnly": true,
+            "attached": false
+        },
+        {
+            "alias": "tushare_daily_basic",
+            "type": "file",
+            "path": "/Users/laiyk/Projects/FinRND/FinData/workspaces/market-data/datasets/tushare_daily_basic/dataset.duckdb",
+            "readOnly": true,
+            "attached": false
+        }
+    ],
+    "duckdb.defaultDatabase": "dataset",
+    "python.testing.pytestArgs": [
+        "tests"
+    ],
+    "python.testing.unittestEnabled": false,
+    "python.testing.pytestEnabled": true
+}

@@ -14,10 +14,12 @@ from findata import __version__
 from findata.cli import main as cli_main, resolve_workspace
 from findata.click_parser import command_tree
 from findata.contracts import OperandError
-from findata_tushare.datasets.operations import normalize_operation
 from findata.server_cli import _command_tree as server_command_tree
 from findata.server_cli import main as server_cli_main
 from findata.storage import Workspace
+from findata_tushare_daily_basic.operations import DailyBasicDatasetRuntime
+from findata_tushare_stock_basic.operations import StockBasicDatasetRuntime
+from findata_tushare_trade_cal.operations import TradeCalDatasetRuntime
 
 
 class ReadProtocolImportTests(unittest.TestCase):
@@ -58,8 +60,7 @@ class ReadProtocolImportTests(unittest.TestCase):
 
 class OperationNormalizationTests(unittest.TestCase):
     def test_resolves_today_once_and_canonicalizes_array_operands(self) -> None:
-        values = normalize_operation(
-            "findata/tushare/daily_basic",
+        values = DailyBasicDatasetRuntime().normalize_operation(
             "complete",
             {
                 "symbols": ["600000.SH", "600000.SH", "000001.SZ"],
@@ -70,23 +71,17 @@ class OperationNormalizationTests(unittest.TestCase):
         self.assertEqual(values["symbols"], ["000001.SZ", "600000.SH"])
         self.assertEqual(values["timerange"], "2026-07-01:2026-07-20")
 
-    def test_rejects_unknown_dataset_operation_and_fields_before_submission(self) -> None:
+    def test_rejects_unknown_operation_and_fields_before_submission(self) -> None:
         with self.assertRaises(OperandError):
-            normalize_operation("unknown", "update", {}, today=date(2026, 7, 20))
+            StockBasicDatasetRuntime().normalize_operation("complete", {}, today=date(2026, 7, 20))
         with self.assertRaises(OperandError):
-            normalize_operation(
-                "findata/tushare/stock_basic", "complete", {}, today=date(2026, 7, 20)
-            )
-        with self.assertRaises(OperandError):
-            normalize_operation(
-                "findata/tushare/trade_cal",
+            TradeCalDatasetRuntime().normalize_operation(
                 "complete",
                 {"exchanges": ["SSE"], "timerange": "2026-07-01:2026-07-02", "extra": 1},
                 today=date(2026, 7, 20),
             )
         with self.assertRaisesRegex(OperandError, "future trade-calendar"):
-            normalize_operation(
-                "findata/tushare/trade_cal",
+            TradeCalDatasetRuntime().normalize_operation(
                 "complete",
                 {"exchanges": ["SSE"], "timerange": "2026-07-20:2026-07-22"},
                 today=date(2026, 7, 20),

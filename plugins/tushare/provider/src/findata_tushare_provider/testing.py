@@ -7,11 +7,30 @@ from datetime import date, timedelta
 import re
 from typing import Any
 
-from findata_tushare.datasets import TUSHARE_DATASETS
-
 
 MOCK_TOKEN = "findata-mock"
 _MOCK_FAILURE = re.compile(r"^findata-mock:fail=([a-z_]+)@(\d+)$")
+
+# The daily_basic provider fields between ts_code/trade_date and limit_status;
+# kept local so the provider package never imports a dataset package.
+_DAILY_BASIC_FLOAT_FIELDS = (
+    "close",
+    "turnover_rate",
+    "turnover_rate_f",
+    "volume_ratio",
+    "pe",
+    "pe_ttm",
+    "pb",
+    "ps",
+    "ps_ttm",
+    "dv_ratio",
+    "dv_ttm",
+    "total_share",
+    "float_share",
+    "free_share",
+    "total_mv",
+    "circ_mv",
+)
 
 
 def is_mock_token(value: object) -> bool:
@@ -220,9 +239,7 @@ class MockTushareTransport:
                         "trade_date": _format_date(cursor),
                         "limit_status": seed % 7,
                     }
-                    for index, field in enumerate(
-                        TUSHARE_DATASETS["findata/tushare/daily_basic"].provider_fields[2:-1]
-                    ):
+                    for index, field in enumerate(_DAILY_BASIC_FLOAT_FIELDS):
                         row[field] = round((seed % 1000 + index + 1) / 10.0, 4)
                     result.append(row)
             cursor += timedelta(days=1)

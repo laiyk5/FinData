@@ -6,7 +6,22 @@ from datetime import date
 import pyarrow as pa
 
 from findata.contracts import DateRange, OperandError
-from findata_tushare.datasets import TUSHARE_DATASETS
+from findata_tushare_daily_basic import DAILY_BASIC_SPEC
+from findata_tushare_index_basic import INDEX_BASIC_SPEC
+from findata_tushare_index_weight import INDEX_WEIGHT_SPEC
+from findata_tushare_stock_basic import STOCK_BASIC_SPEC
+from findata_tushare_trade_cal import TRADE_CAL_SPEC
+
+TUSHARE_DATASETS = {
+    spec.name: spec
+    for spec in (
+        TRADE_CAL_SPEC,
+        STOCK_BASIC_SPEC,
+        INDEX_BASIC_SPEC,
+        INDEX_WEIGHT_SPEC,
+        DAILY_BASIC_SPEC,
+    )
+}
 
 
 class DateRangeTests(unittest.TestCase):

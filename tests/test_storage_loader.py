@@ -12,7 +12,9 @@ import duckdb
 import pyarrow as pa
 
 from findata import DataLoader
-from findata_tushare.datasets import TUSHARE_DATASETS
+from findata_tushare_daily_basic import DAILY_BASIC_SPEC
+from findata_tushare_index_basic import INDEX_BASIC_SPEC
+from findata_tushare_index_weight import INDEX_WEIGHT_SPEC
 from findata.loader import (
     CoverageError,
     DatasetNotFoundError,
@@ -20,9 +22,22 @@ from findata.loader import (
     IncompatibleDatasetError,
     UnsupportedCoverageError,
 )
-from findata_tushare.provider import TushareClient
+from findata_tushare_provider.provider import TushareClient
 from findata.storage import Coverage, DataMutation, DatasetGate, StorageError, Workspace
-from findata_tushare.testing import MockTushareTransport
+from findata_tushare_provider.testing import MockTushareTransport
+from findata_tushare_stock_basic import STOCK_BASIC_SPEC
+from findata_tushare_trade_cal import TRADE_CAL_SPEC
+
+TUSHARE_DATASETS = {
+    spec.name: spec
+    for spec in (
+        TRADE_CAL_SPEC,
+        STOCK_BASIC_SPEC,
+        INDEX_BASIC_SPEC,
+        INDEX_WEIGHT_SPEC,
+        DAILY_BASIC_SPEC,
+    )
+}
 
 
 class StorageLoaderTests(unittest.TestCase):

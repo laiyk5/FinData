@@ -10,11 +10,73 @@ from zoneinfo import ZoneInfo
 
 from findata import DataLoader
 from findata.contracts import OperandError
-from findata_tushare.datasets import TUSHARE_DATASETS
-from findata_tushare.datasets.operations import DatasetService, register_v1_datasets
-from findata_tushare.provider import TushareClient
+from findata.plugins import register_plugins
 from findata.storage import Workspace
-from findata_tushare.testing import MockTushareTransport
+from findata_tushare_daily_basic import DAILY_BASIC_SPEC, daily_basic_plugin
+from findata_tushare_daily_basic.operations import DailyBasicDatasetService
+from findata_tushare_index_basic import index_basic_plugin
+from findata_tushare_index_basic.operations import IndexBasicDatasetService
+from findata_tushare_index_weight import index_weight_plugin
+from findata_tushare_index_weight.operations import IndexWeightDatasetService
+from findata_tushare_provider.provider import TushareClient, tushare_provider_plugin
+from findata_tushare_provider.testing import MockTushareTransport
+from findata_tushare_stock_basic import stock_basic_plugin
+from findata_tushare_stock_basic.operations import StockBasicDatasetService
+from findata_tushare_trade_cal import trade_cal_plugin
+from findata_tushare_trade_cal.operations import TradeCalDatasetService
+
+
+def register_v1_datasets(workspace: Workspace) -> None:
+    register_plugins(
+        workspace,
+        [
+            trade_cal_plugin(),
+            stock_basic_plugin(),
+            index_basic_plugin(),
+            index_weight_plugin(),
+            daily_basic_plugin(),
+        ],
+        providers=[tushare_provider_plugin()],
+    )
+
+
+_DATASET_SERVICES = {
+    "findata/tushare/trade_cal": TradeCalDatasetService,
+    "findata/tushare/stock_basic": StockBasicDatasetService,
+    "findata/tushare/index_basic": IndexBasicDatasetService,
+    "findata/tushare/index_weight": IndexWeightDatasetService,
+    "findata/tushare/daily_basic": DailyBasicDatasetService,
+}
+
+
+class DatasetService:
+    """Test helper dispatching each dataset to its own per-dataset engine."""
+
+    def __init__(
+        self,
+        workspace: Workspace,
+        client: TushareClient,
+        *,
+        today: date,
+        reporter: Any = None,
+        now: datetime | None = None,
+        settings: dict[str, Any] | None = None,
+    ) -> None:
+        self.workspace = workspace
+        self.client = client
+        self.loader = DataLoader(workspace.root)
+        self._options = {
+            "today": today,
+            "reporter": reporter,
+            "now": now,
+            "settings": settings,
+        }
+
+    def run(
+        self, dataset: str, operation: str = "update", operands: dict[str, Any] | None = None
+    ) -> Any:
+        service = _DATASET_SERVICES[dataset](self.workspace, self.client, **self._options)
+        return service.run(operation, operands)
 
 
 class DatedSnapshotTransport(MockTushareTransport):
@@ -48,7 +110,7 @@ class SaturatedMarketTransport(MockTushareTransport):
                     "trade_date": str(params["trade_date"]),
                     "limit_status": 1,
                 }
-                for field in TUSHARE_DATASETS["findata/tushare/daily_basic"].provider_fields[2:-1]:
+                for field in DAILY_BASIC_SPEC.provider_fields[2:-1]:
                     row[field] = 1.0
                 rows.append(row)
             return rows

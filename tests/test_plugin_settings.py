@@ -6,11 +6,30 @@ import unittest
 from datetime import date
 from pathlib import Path
 
-from findata_tushare.datasets import builtin_plugins
-from findata_tushare.datasets.operations import DatasetService, register_v1_datasets
-from findata_tushare.provider import TushareClient
+from findata.plugins import register_plugins
 from findata.storage import Workspace
-from findata_tushare.testing import MockTushareTransport
+from findata_tushare_daily_basic import daily_basic_plugin
+from findata_tushare_index_basic import index_basic_plugin
+from findata_tushare_index_basic.operations import IndexBasicDatasetService
+from findata_tushare_index_weight import index_weight_plugin
+from findata_tushare_provider.provider import TushareClient, tushare_provider_plugin
+from findata_tushare_provider.testing import MockTushareTransport
+from findata_tushare_stock_basic import stock_basic_plugin
+from findata_tushare_trade_cal import trade_cal_plugin
+
+
+def register_v1_datasets(workspace: Workspace) -> None:
+    register_plugins(
+        workspace,
+        [
+            trade_cal_plugin(),
+            stock_basic_plugin(),
+            index_basic_plugin(),
+            index_weight_plugin(),
+            daily_basic_plugin(),
+        ],
+        providers=[tushare_provider_plugin()],
+    )
 
 
 class PluginSettingsTests(unittest.TestCase):
@@ -21,7 +40,7 @@ class PluginSettingsTests(unittest.TestCase):
         self.workspace = Workspace.init(self.root)
         register_v1_datasets(self.workspace)
         self.transport = MockTushareTransport(today=date(2026, 7, 20))
-        self.service = DatasetService(
+        self.service = IndexBasicDatasetService(
             self.workspace,
             TushareClient(token="mock", transport=self.transport),
             today=date(2026, 7, 20),
@@ -36,16 +55,12 @@ class PluginSettingsTests(unittest.TestCase):
         self.assertEqual(updated["values"]["display.timezone"], "UTC")
 
     def test_dataset_setting_is_plugin_normalized_and_requires_local_metadata(self) -> None:
-        plugin = next(
-            item for item in builtin_plugins() if item.name == "findata/tushare/daily_basic"
-        )
+        plugin = daily_basic_plugin()
         key = "dataset.findata/tushare/daily_basic.update_symbols"
         with self.assertRaisesRegex(ValueError, "findata/tushare/index_basic complete"):
             plugin.normalize_setting(key, ["tushare:000300.SH@latest"], workspace=self.workspace)
 
-        self.service.run(
-            "findata/tushare/index_basic", "complete", {"indexes": ["tushare:000300.SH"]}
-        )
+        self.service.run("complete", {"indexes": ["tushare:000300.SH"]})
         normalized = plugin.normalize_setting(
             key,
             ["tushare:000300.SH@latest", "000001.SZ", "000001.SZ"],
@@ -54,18 +69,14 @@ class PluginSettingsTests(unittest.TestCase):
         self.assertEqual(normalized, ["000001.SZ", "tushare:000300.SH@latest"])
 
     def test_index_metadata_is_materialized_one_reference_at_a_time(self) -> None:
-        first = self.service.run(
-            "findata/tushare/index_basic", "complete", {"indexes": ["tushare:000300.SH"]}
-        )
+        first = self.service.run("complete", {"indexes": ["tushare:000300.SH"]})
         self.assertEqual(first.fetched_requests, 1)
         request = self.transport.requests[-1]["params"]
         self.assertEqual(request, {"ts_code": "000300.SH"})
         table = self.service.loader.dataset("findata/tushare/index_basic").query()
         self.assertEqual(table.column("ts_code").to_pylist(), ["000300.SH"])
 
-        self.service.run(
-            "findata/tushare/index_basic", "complete", {"indexes": ["tushare:000905.SH"]}
-        )
+        self.service.run("complete", {"indexes": ["tushare:000905.SH"]})
         table = self.service.loader.dataset("findata/tushare/index_basic").query()
         self.assertEqual(set(table.column("ts_code").to_pylist()), {"000300.SH", "000905.SH"})
         self.assertTrue(all("market" not in item["params"] for item in self.transport.requests))
