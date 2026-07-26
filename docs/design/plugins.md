@@ -23,12 +23,14 @@ walkthrough lives in the [custom-datasets guide](../site/guide/custom-datasets.m
 
 ## Naming: the author namespace
 
-A dataset's full name is `<author>/<free/path/...>`. The first component is the
+A plugin's full name is `<author>/<free/path/...>`. The first component is the
 publisher namespace; everything below it is author-chosen classification (any depth)
 that core treats as an opaque path, validating only component shape
-(`[a-z0-9_-]+`, no `.`/`..`). Official datasets are named like
+(`[a-z0-9_-]+`, no `.`/`..`). Official plugins are named like
 `findata/tushare/daily_basic`: `findata` is the publisher, `tushare/daily_basic` is the
-publisher's own classification.
+publisher's own classification. Each dataset plugin registers exactly one dataset, so
+the plugin's full name is also the dataset's registered name wherever a dataset is
+addressed (storage, configuration, routing, DataLoader).
 
 An author can keep their own namespace consistent but cannot control other publishers,
 so the author level is the only level the framework polices:
@@ -36,6 +38,13 @@ so the author level is the only level the framework polices:
 - one distribution may register datasets under exactly one author namespace
   (entry points are traced to their distribution at discovery);
 - full names must be unique across the environment (duplicate names fail validation).
+
+The author namespace is a **convention, not a verified identity** — the framework cannot
+know that `laiyk5` belongs to you, because plugins may arrive from PyPI, GitHub, another
+host, or a colleague. Choose an author name you control somewhere public (your PyPI or
+GitHub name, or a company domain) so casual collisions stay unlikely; if two installed
+distributions still produce the same full dataset name, registration fails loudly with a
+duplicate-name error and the user decides which package to keep.
 
 Provider plugin IDs stay flat (`tushare`), uniqueness-validated; providers are adapters,
 not data assets, and their IDs appear in configuration keys.

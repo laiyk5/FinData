@@ -49,7 +49,7 @@ Provider code never logs or returns credentials. Every external request, includi
 
 Before implementation, add its canonical entry to [design/dataset/index.md](design/dataset/index.md). Then define:
 
-1. full name (`<author>/<free/path>`), provider, logical Arrow schema, and keys;
+1. plugin full name (`<author>/<free/path>`), provider, logical Arrow schema, and keys;
 2. a `DatasetRuntime` implementing operations, normalization, planning, descriptions,
    dependency resolution, update readiness, and the operation worker;
 3. capabilities and any typed plugin settings, including defaults, normalization, help, and update-readiness rules;

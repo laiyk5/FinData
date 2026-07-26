@@ -28,12 +28,13 @@ safe concurrent reads through [DataLoader](dataloader.md).
 
 ## Naming: the author namespace
 
-A dataset's full name is `<author>/<free/path/...>`, for example
+A plugin's full name is `<author>/<free/path/...>`, for example
 `acme/finance/daily_bars`. The first component is your publisher namespace — one
-distribution registers datasets under exactly one author, and full names must be unique
+distribution registers plugins under exactly one author, and full names must be unique
 in the environment. Everything below the author is your own classification, at any
-depth; core treats it as an opaque path. Storage, snapshots, and configuration keys
-follow the full name (`datasets/acme/finance/daily_bars/`,
+depth; core treats it as an opaque path. Each dataset plugin registers exactly one
+dataset, so the full name also addresses the dataset everywhere: storage, snapshots,
+and configuration keys follow it (`datasets/acme/finance/daily_bars/`,
 `dataset.acme/finance/daily_bars.<setting>`).
 
 Distribution names follow a prefix convention that discovery validates:
