@@ -6,6 +6,20 @@ build-backend = "hatchling.build"
 name = "findata"
 version = "0.3.0"
 description = "Local, plugin-oriented financial dataset maintenance and querying"
+readme = "README.md"
+license = "Apache-2.0"
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Financial and Insurance Industry",
+  "Operating System :: POSIX",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Typing :: Typed",
+]
 requires-python = ">=3.11"
 dependencies = [
   "click==8.4.2",

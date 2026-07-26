@@ -16,68 +16,108 @@ walkthrough lives in the [custom-datasets guide](../site/guide/custom-datasets.m
 3. **Adding a plugin never changes core code.** A new provider or dataset ships as its
    own Python distribution; installing it is the only step required.
 4. **The framework installs no datasets.** `pip install findata` yields the framework
-   only. Plugins are ordinary packages that depend on `findata`, installed singly, as a
-   family umbrella, or as dependency chains resolved by the package manager.
+   only. Plugins are ordinary packages that depend on `findata`, installed singly or as
+   a family collection, at a packaging granularity the publisher chooses.
 5. **Third-party plugins mount identically.** Same entry points, same contracts, same
    naming rules, no privileged path.
 
-## Naming: the author namespace
+## Naming: the package namespace
 
-A plugin's full name is `<author>/<free/path/...>`. The first component is the
-publisher namespace; everything below it is author-chosen classification (any depth)
-that core treats as an opaque path, validating only component shape
-(`[a-z0-9_-]+`, no `.`/`..`). Official plugins are named like
-`findata/tushare/daily_basic`: `findata` is the publisher, `tushare/daily_basic` is the
-publisher's own classification. Each dataset plugin registers exactly one dataset, so
-the plugin's full name is also the dataset's registered name wherever a dataset is
-addressed (storage, configuration, routing, DataLoader).
+A plugin's full name is `<package-namespace>/<local-name>`. The namespace is a Python
+namespace package ([PEP 420](https://packaging.python.org/guides/packaging-namespace-packages/))
+shared by one publisher's plugin distributions; uniqueness is enforced mechanically by
+the packaging ecosystem itself — one environment cannot hold two distributions with the
+same name, so `findata-plugins` or `acme-finance` needs no registry and no
+identity verification. The local name is unique per plugin kind within the namespace,
+which the namespace owner controls and the framework validates at discovery.
 
-An author can keep their own namespace consistent but cannot control other publishers,
-so the author level is the only level the framework polices:
+- Full-name shape: `<namespace>/<local>` with `[a-z0-9_-]+` components.
+- The namespace of a plugin is derived, not declared: an entry point's module path
+  determines its top-level package (e.g. `findata_plugins.plugins.datasets.foo` →
+  `findata-plugins`), and validation requires the plugin's full name to match
+  `<that namespace>/<leaf name>`. A plugin can never impersonate another namespace —
+  it physically cannot live there.
+- Official example: namespace `findata_plugins`; provider `findata-plugins/tushare`
+  at `findata_plugins.plugins.providers.tushare`; datasets
+  `findata-plugins/tushare_daily_basic` at
+  `findata_plugins.plugins.datasets.tushare_daily_basic`; shared machinery at
+  `findata_plugins.shared`. Third parties mirror the layout under their own namespace.
+- The framework's own top-level package (`findata`) is a regular package and is never
+  a plugin namespace.
 
-- one distribution may register datasets under exactly one author namespace
-  (entry points are traced to their distribution at discovery);
-- full names must be unique across the environment (duplicate names fail validation).
+Names are structural everywhere they flow: storage nests by dataset name
+(`datasets/findata-plugins/tushare_daily_basic/`, snapshots mirror it), configuration
+keys are `dataset.<full-name>.<setting>` and `provider.<full-name>.<field>` (resolved
+by registry longest-match where parsing is required), HTTP routes match registered
+names greedily instead of counting path segments, and `_findata_metadata` stores the
+full dataset name. Renames are breaking for existing workspaces (dataset directories,
+configuration keys, task history); v1 is unreleased, so they ship as breaking changes
+with manual migration notes rather than core-carried migration code.
 
-The author namespace is a **convention, not a verified identity** — the framework cannot
-know that `laiyk5` belongs to you, because plugins may arrive from PyPI, GitHub, another
-host, or a colleague. Choose an author name you control somewhere public (your PyPI or
-GitHub name, or a company domain) so casual collisions stay unlikely; if two installed
-distributions still produce the same full dataset name, registration fails loudly with a
-duplicate-name error and the user decides which package to keep.
+A dataset plugin references its provider **by name**, resolved within its namespace
+first: `findata-plugins/tushare_daily_basic` declaring `provider="tushare"` resolves to
+`findata-plugins/tushare`; a provider from another namespace is written as a full name
+(`acme-finance/tushare`). An unresolved reference fails registration with an
+unknown-provider error. Data dependencies resolve the same way (namespace-relative
+shorthand, cross-namespace by full name).
 
-Provider plugin IDs stay flat (`tushare`), uniqueness-validated; providers are adapters,
-not data assets, and their IDs appear in configuration keys.
+## Granularity: plugins, distributions, and the family repository
 
-Names are structural everywhere they flow: storage nests by name
-(`datasets/findata/tushare/daily_basic/`, snapshots mirror it), configuration keys are
-`dataset.<full-name>.<setting>` resolved by registry longest-match, HTTP routes match
-registered names greedily instead of counting path segments, and `_findata_metadata`
-stores the full name.
+A **plugin** is a contract unit: one full name, one entry point, one isolated
+subpackage. A **distribution** is an install and versioning unit. A **family
+repository** is a maintenance unit only — a thin layer that hosts one namespace's
+plugin distributions, their shared machinery, and their shared test/mock code in one
+place. The three granularities are independent:
 
-## Dependency model: three relations, kept apart
+- plugins stay mutually independent: only *data* dependencies between them, never
+  imports, whether they share a distribution or not;
+- independent distributions contribute subpackages into one shared namespace package
+  (PEP 420), so install granularity stays per plugin: a dependency-free dataset plugin
+  installs and mounts alone, and a dependent one pulls exactly its own dependency
+  chain (the package manager resolves the mirrored hard package dependencies) — never
+  the whole namespace by force;
+- the family repository adds an umbrella distribution (metadata only, no entry points)
+  for users who *want* the whole namespace in one install.
+
+Within a namespace, plugin code follows one layout convention: provider plugins under
+`<ns>.plugins.providers`, dataset plugins under `<ns>.plugins.datasets`, shared
+machinery under `<ns>.shared`. The convention makes any namespace's anatomy
+predictable; the framework only requires the namespace/full-name coherence described
+under *Naming*.
+
+## Dependency model: the relations, kept apart
 
 | relation | expressed as | allowed directions | forbidden |
 | --- | --- | --- | --- |
-| **data dependency** (dataset → dataset) | `DatasetPlugin.dependencies` name strings | any dataset → any dataset, acyclic, cross-author allowed | imports or code calls |
-| **package dependency** (install-time) | distribution `dependencies` metadata | upward (dataset package → family provider package → `findata`); between dataset packages only when mirroring a declared data dependency | cross-author hard requirements; unrelated dataset-package edges |
+| **data dependency** (dataset → dataset) | `DatasetPlugin.dependencies` name strings | any dataset → any dataset, acyclic, cross-namespace allowed | imports or code calls |
+| **provider reference** (dataset → provider) | `DatasetPlugin.provider` name string (namespace-relative allowed) | a dataset plugin → exactly one provider plugin | imports or code calls into another provider |
+| **package dependency** (install-time) | distribution `dependencies` metadata | dataset distribution → its provider distribution (any namespace — reusing a provider is the point); dataset distribution → the distributions providing its declared data dependencies (any namespace) | dataset→dataset package edges unrelated to data dependencies |
 | **code sharing** | the three tiers below | the most general honestly-true tier | copy-paste across plugins; dataset-package imports |
 
-Data dependencies are name strings, resolved at validation with author-relative
-shorthand (`"tushare/trade_cal"` inside a `findata/*` plugin resolves to
-`findata/tushare/trade_cal`). They flow at runtime through exactly two channels: the
+Data dependencies are name strings, resolved at validation with namespace-relative
+shorthand (`"tushare_trade_cal"` inside the `findata-plugins` namespace
+resolves to `findata-plugins/tushare_trade_cal`). They flow at runtime through exactly two channels: the
 reporter's `fulfill(dataset, requirement)` (the framework executes the dependency
 through the parent's `resolve_dependency`) and DataLoader reads of a committed revision
 (settings normalization, planning). The dependent plugin never knows the provider
 plugin's package name.
 
-Same-author data dependencies that a plugin's `update` requires are mirrored as hard
-package dependencies, so installing one dataset plugin pulls the packages that provide
-its dependency data (`findata-dataset-tushare-daily-basic` pulls trade-cal, index-basic,
-and index-weight). This is metadata only: the package manager keeps installations
-complete while imports remain forbidden. Cross-author data dependencies are documented
-requirements, not hard package dependencies; a missing one fails validation with a clear
-error.
+The provider reference works the same way at the registry level: the dataset plugin
+names its provider (resolved namespace-relative like a data dependency), and the dataset
+**distribution** declares hard package dependencies on the distributions it imports —
+its namespace's provider distribution (the adapter: client, transport, selector syntax)
+and shared distribution (engine, mock, publication timing) — so installing a dataset
+plugin brings its provider along. Provider distributions never import dataset
+packages.
+
+Data dependencies that a plugin's `update` requires **and that live in another
+distribution** are mirrored as hard package dependencies — same-namespace or
+cross-namespace alike — so installing one dataset plugin lets the package manager
+resolve and pull the packages that provide its dependency data. Within one
+distribution the dependency ships together by construction and needs no metadata.
+This is metadata only: the package manager keeps installations
+complete while imports remain forbidden. A missing data dependency at runtime still
+fails validation with a clear error.
 
 ## Code sharing: three tiers by generality
 
@@ -87,11 +127,12 @@ When plugins genuinely share code, it lives at the most general tier it honestly
    `findata.plugins` (contract layer) and `findata.toolkit` (dataset-neutral helpers,
    promoted on second use, catalogued, boundary-tested). The only layer plugin authors
    may treat as stable long-term.
-2. **Family shared package**: code specific to one provider family (the Tushare client
-   and selector syntax, publication timing, the mock transport, the shared operation
-   engine). It lives in the family's provider package; family dataset packages use it
-   through an ordinary package dependency. It imports the SDK; the framework knows
-   nothing about it.
+2. **Namespace shared subpackage**: code specific to one plugin namespace and shared by
+   its dataset plugins (publication timing, the mock transport, the shared operation
+   engine). It lives at `<ns>.shared`; provider adapters (client, transport, selector
+   syntax) live in the provider plugin's own subpackage instead. Contributing
+   distributions declare package dependencies on what they import. Both import the SDK;
+   the framework knows nothing about either.
 3. **findata-unrelated third-party library**: domain-generic code with no findata
    imports, versioned independently. (No v1 candidate; the rule is recorded ahead of
    need.)
@@ -100,7 +141,8 @@ When plugins genuinely share code, it lives at the most general tier it honestly
 
 Behavior is dispatched through two protocols in `findata.plugins`:
 
-- `ProviderRuntime` — provider scope only: `ready`, `is_mock`, `probe`. Configuration,
+- `ProviderPlugin.provider_id` is the provider's full name (`findata-plugins/tushare`);
+  `ProviderRuntime` — provider scope only: `ready`, `is_mock`, `probe`. Configuration,
   credentials, transports, and rate limiting are the provider plugin's internal
   business.
 - `DatasetRuntime` — dataset scope, carried by every `DatasetPlugin`:
@@ -115,14 +157,15 @@ process, so a plugin installed after server start is picked up on the next dispa
 
 ## Discovery, mounting, and the blocklist
 
-Distribution names follow the prefix convention `findata-provider-*` /
-`findata-dataset-*` (family umbrellas are `findata-plugins-*` and carry no entry
-points); discovery validates it. Installed plugins **mount automatically**: discovery →
-prefix validation → author/dependency validation → storage registration, with no
-configuration required, and unmount on uninstall.
+Discovery validates each entry point against the naming rules under *Naming* — the
+plugin's full name must match its module's namespace — for official and third-party
+plugins alike; there is no distribution-name prefix convention beyond that coherence
+check. Installed plugins **mount automatically**: discovery → namespace validation →
+dependency validation → storage registration, with no configuration required, and
+unmount on uninstall.
 
-A workspace may block plugins via the `plugins.blocked` configuration key (dataset full
-names or provider IDs). A blocked plugin does not register and is invisible to routing
+A workspace may block plugins via the `plugins.blocked` configuration key (dataset or
+provider full names). A blocked plugin does not register and is invisible to routing
 and dispatch. A block is **ineffective for anything an unblocked plugin requires** —
 a declared data dependency or a mounted dataset's provider — and every repair (and every
 unknown entry) logs a warning. Registration, server discovery, and the task-process
@@ -130,23 +173,30 @@ dispatcher apply the same filter.
 
 ## Official plugins
 
-The Tushare family is the reference implementation: `findata-provider-tushare` (client,
-transport, mock, publication timing, shared operation engine) plus five
-`findata-dataset-tushare-*` packages and the `findata-plugins-tushare` umbrella. They
-live in this repository under `plugins/` as uv workspace members **only while the
-contracts stabilize**; they graduate to their own repository afterwards, with no
-mechanism change.
+The official Tushare family is the reference implementation and lives in one family
+repository (`plugins/` in this workspace **only while the contracts stabilize**, then
+its own repository), all contributing to the `findata_plugins` namespace package:
+
+- `findata-plugins-providers-tushare` → `findata_plugins.plugins.providers.tushare`:
+  the provider plugin (`findata-plugins/tushare`) with its adapter (client, transport,
+  selector syntax);
+- `findata-plugins-shared` → `findata_plugins.shared`: publication timing, mock
+  transport, shared operation engine;
+- `findata-plugins-datasets-tushare-*` → `findata_plugins.plugins.datasets.tushare_*`:
+  five dataset plugins (`findata-plugins/tushare_<name>`), each an independent
+  distribution pulling exactly its own data-dependency chain;
+- `findata-plugins` → metadata-only umbrella for the whole namespace.
 
 ## Invariants enforced by tests
 
-- author rule (one author per distribution), name shape and uniqueness, dependency
-  resolution and acyclicity;
-- prefix convention for plugin distributions;
+- namespace coherence (full name matches the plugin module's top-level namespace),
+  local-name uniqueness per kind, dependency and provider-reference resolution and
+  acyclicity;
 - blocklist semantics: unrequired blocks stick, dependency repairs mount and warn, the
   dispatcher applies the same filter;
 - import boundaries: core imports no plugin and no toolkit; toolkit imports no plugin;
-  dataset packages import only the SDK, their family provider package, and third-party
-  libraries; package-dependency metadata covers same-author data dependencies and never
-  reverses;
+  dataset plugin subpackages never import each other — each may import only the SDK,
+  its namespace's shared subpackage, and third-party libraries; package-dependency
+  metadata covers declared data dependencies and never reverses;
 - the wheel gate builds and installs every distribution and runs the mocked quick start
   through entry-point discovery in a clean environment.

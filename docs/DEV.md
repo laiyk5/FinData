@@ -293,6 +293,13 @@ Project scripts and plugin entry points remain standard `[project]` metadata and
 identically in both the sdist and wheel. A build-tool change must verify a clean sdist-to-wheel build,
 wheel contents, console scripts, and dataset/provider plugin discovery before it is merged.
 
+Until the plugin contracts stabilize, plugin distributions pin the framework exactly
+(`findata==<version>`) and release in lockstep with it; once the contracts are declared stable,
+plugin dependencies switch to PEP 440 range specifiers (`findata>=x,<y`) with a documented
+minor-version compatibility promise. The `findata` wheel ships `py.typed` (PEP 561); the typed
+SDK surface (`findata.contracts`, `findata.plugins`) is what plugin authors may type-check
+against.
+
 ## CLI presentation development
 
 Click owns command grouping, argument and option parsing, validation, help, and the embeddable
