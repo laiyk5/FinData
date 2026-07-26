@@ -42,7 +42,7 @@ Provider commands never display credentials; see
 ## 3. Backfill the index universe
 
 ```bash
-findata task run tushare_index_basic complete \
+findata task run findata/tushare/index_basic complete \
   --param indexes=tushare:000300.SH \
   --wait
 ```
@@ -53,7 +53,7 @@ index code; the plugins use it to resolve constituents without guessing.
 ## 4. Backfill daily valuation data
 
 ```bash
-findata task run tushare_daily_basic complete \
+findata task run findata/tushare/daily_basic complete \
   --param symbols=tushare:000300.SH \
   --param timerange=2026-06-29:2026-07-04 \
   --follow
@@ -75,12 +75,12 @@ current month, and resumes its remaining intervals — you never restart from sc
 ## 5. Enable recurring updates
 
 ```bash
-findata config set dataset.tushare_daily_basic.update_symbols \
+findata config set dataset.findata/tushare/daily_basic.update_symbols \
   --value-json '["tushare:000300.SH@latest"]'
-findata cron enable tushare_daily_basic
+findata cron enable findata/tushare/daily_basic
 ```
 
-The `update_symbols` setting belongs to the `tushare_daily_basic` plugin; it parses the
+The `update_symbols` setting belongs to the `findata/tushare/daily_basic` plugin; it parses the
 constituent selector and uses it only for later parameterless `update` operations.
 `@latest` is a plugin-defined suffix meaning "the current constituents" for future
 updates, so recurring updates resolve the constituent month containing each latest due
@@ -90,7 +90,7 @@ See [Scheduling](../guide/scheduling.md).
 ## 6. Read the data
 
 ```bash
-findata data preview tushare_daily_basic \
+findata data preview findata/tushare/daily_basic \
   --keys 600000.SH \
   --from 2026-06-29 --to 2026-07-04 \
   --columns ts_code,trade_date,close,pe,pb
@@ -105,7 +105,7 @@ from findata import DataLoader
 
 table = (
     DataLoader(Path("~/market-data").expanduser())
-    .dataset("tushare_daily_basic")
+    .dataset("findata/tushare/daily_basic")
     .query(
         keys=["600000.SH"],
         time_range=("2026-06-29", "2026-07-04"),
@@ -120,6 +120,6 @@ Continue with [Reading data](../guide/reading-data.md) and
 ## Using another index
 
 For another Tushare index, obtain its exact `ts_code`, materialize it with
-`tushare_index_basic complete`, and use the same plugin-owned `tushare:<ts_code>` form.
+`findata/tushare/index_basic complete`, and use the same plugin-owned `tushare:<ts_code>` form.
 This tracks only the requested reference. Metadata presence identifies the provider object
 but does not guarantee index-weight permission or historical coverage.

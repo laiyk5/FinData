@@ -12,20 +12,30 @@
 From a source checkout:
 
 ```bash
-python -m pip install .
+python -m pip install . ./plugins/tushare/umbrella
 ```
 
-This installs two commands:
+This installs the framework and the official Tushare plugin collection, and two
+commands:
 
 - `findata` — the client CLI (configuration, datasets, tasks, data reads)
 - `findata-server` — the local API server that performs maintenance work
 
-It also installs `findata-plugins-tushare`, the official Tushare provider and dataset
-plugins, as a default dependency — the quick start works out of the box. The plugins are
-ordinary separate distributions: `pip uninstall findata-plugins-tushare` gives you a
-lean core,
-and third-party plugins install the same way (`pip install <their-package>`; see
-[Custom datasets and providers](../guide/custom-datasets.md)).
+**The framework installs no datasets.** Plugins are ordinary separate distributions that
+depend on `findata` — install what you need and it mounts automatically at the next
+server start:
+
+```bash
+# the whole official Tushare family via its umbrella package
+python -m pip install findata-plugins-tushare
+
+# or just one dataset (its dependencies resolve automatically)
+python -m pip install findata-dataset-tushare-daily-basic
+```
+
+Third-party plugins install the same way (`pip install <their-package>`); a workspace
+can block individual plugins via the `plugins.blocked` configuration key. See
+[Custom datasets and providers](../guide/custom-datasets.md).
 
 !!! tip
     Use a virtual environment when isolation from other Python packages is desired.

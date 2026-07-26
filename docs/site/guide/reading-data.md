@@ -4,18 +4,18 @@ After maintaining a dataset, you can inspect and export its committed revision w
 starting the server and without learning the internal DuckDB layout:
 
 ```bash
-findata data schema tushare_daily_basic
+findata data schema findata/tushare/daily_basic
 
-findata data preview tushare_daily_basic \
+findata data preview findata/tushare/daily_basic \
   --keys 600000.SH \
   --from 2026-01-01 --to 2026-07-01 \
   --columns ts_code,trade_date,close,pe,pb
 
-findata data coverage tushare_daily_basic \
+findata data coverage findata/tushare/daily_basic \
   --keys 600000.SH \
   --from 2026-01-01 --to 2026-07-01
 
-findata data export tushare_daily_basic \
+findata data export findata/tushare/daily_basic \
   --keys 600000.SH \
   --from 2026-01-01 --to 2026-07-01 \
   --columns ts_code,trade_date,close,pe,pb \

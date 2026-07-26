@@ -1,4 +1,4 @@
-# `tushare_daily_basic`
+# `findata/tushare/daily_basic`
 
 API: <https://tushare.pro/document/2?doc_id=32>
 
@@ -20,9 +20,9 @@ Per-symbol daily valuation, share, and market-value indicators.
 - **provider**: `tushare`
 - **capabilities**: `symbol_set_cap: 1`, `row_limit: 6000`, `time-accumulating`
 - **keys**: primary key `(ts_code, trade_date)`; partition key `ts_code`; time field `trade_date`
-- **observation domain**: SSE/SZSE open trading dates from `tushare_trade_cal`; a suspension can resolve without a row
+- **observation domain**: SSE/SZSE open trading dates from `findata/tushare/trade_cal`; a suspension can resolve without a row
 - **settings**:
-  - `dataset.tushare_daily_basic.update_symbols`: required nonempty array for `update`; the plugin
+  - `dataset.findata/tushare/daily_basic.update_symbols`: required nonempty array for `update`; the plugin
     accepts direct Tushare security codes or its own `tushare:<ts_code>[@<selection>]`
     constituent-set selector syntax
   - `tushare:000300.SH@latest` resolves the membership month containing each update's latest due
@@ -34,10 +34,10 @@ Per-symbol daily valuation, share, and market-value indicators.
 - **missing-data policy**: `accept-empty`; a due empty result, including suspension, resolves that symbol-date
 - **request plan**: use the request optimizer; the operation chooses per-symbol bounded-range requests or full-market per-date requests, whichever needs fewer provider calls, filters each full-market response to the requested symbols before commit, falls back to per-symbol requests for any date whose full-market response reaches the declared 6000-row limit, and resolves empty per-date results under the accept-empty policy and publication-window rules — see [request optimizer](../toolkit/request_optimizer.md)
 - **dependencies**:
-  - `tushare_trade_cal` with requirement `{exchanges: ["SSE", "SZSE"], timerange}` for trading-day pruning
-  - `tushare_index_basic` with requirement `{indexes}` for local selector validation and exact
+  - `findata/tushare/trade_cal` with requirement `{exchanges: ["SSE", "SZSE"], timerange}` for trading-day pruning
+  - `findata/tushare/index_basic` with requirement `{indexes}` for local selector validation and exact
     reference metadata
-  - `tushare_index_weight` with requirement `{indexes, timerange}` for symbolic constituent selectors
+  - `findata/tushare/index_weight` with requirement `{indexes, timerange}` for symbolic constituent selectors
 - **operations**:
   - `update()` — resolve the configured `update_symbols` for the latest due trading date and extend those symbols through the next civil-date endpoint; a newly selected symbol begins at that latest due date
   - `complete(symbols, timerange)` — backfill or extend the requested canonical symbols and constituent selectors; a disjoint range is extended toward existing coverage until the intervals abut

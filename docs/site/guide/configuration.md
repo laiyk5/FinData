@@ -38,7 +38,7 @@ update readiness: `update` is not ready while it is unconfigured, and clients wa
 about unconfigured required settings.
 
 ```bash
-findata config set dataset.tushare_daily_basic.update_symbols \
+findata config set dataset.findata/tushare/daily_basic.update_symbols \
   --value-json '["tushare:000300.SH@latest"]'
 ```
 

@@ -21,10 +21,28 @@ safe concurrent reads through [DataLoader](dataloader.md).
     Everything on this page is the supported public API, typed and importable from one
     stop — `findata.plugins` (re-exporting the worker contracts from
     `findata.contracts`): `DatasetSpec`, `ProviderPlugin`, `DatasetPlugin`,
-    `SettingSpec`, `ProviderRuntime`, `OperationRequest`, `OperationReporter`, and
-    `OperationWorker`. Discovery rejects a provider whose runtime does not satisfy the
-    `ProviderRuntime` protocol. The built-in Tushare implementation remains the
-    reference example.
+    `SettingSpec`, `ProviderRuntime`, `DatasetRuntime`, `OperationRequest`,
+    `OperationReporter`, and `OperationWorker`. Discovery rejects a provider or dataset
+    plugin whose runtime does not satisfy its protocol. The built-in Tushare
+    implementation remains the reference example.
+
+## Naming: the author namespace
+
+A dataset's full name is `<author>/<free/path/...>`, for example
+`acme/finance/daily_bars`. The first component is your publisher namespace — one
+distribution registers datasets under exactly one author, and full names must be unique
+in the environment. Everything below the author is your own classification, at any
+depth; core treats it as an opaque path. Storage, snapshots, and configuration keys
+follow the full name (`datasets/acme/finance/daily_bars/`,
+`dataset.acme/finance/daily_bars.<setting>`).
+
+Distribution names follow a prefix convention that discovery validates:
+`findata-provider-*` for provider plugins and `findata-dataset-*` for dataset plugins
+(family umbrella collections are `findata-plugins-*` and carry no entry points).
+
+Installed plugins mount automatically; a workspace can block yours via the
+`plugins.blocked` config key — unless another mounted plugin requires it, in which case
+the block is ineffective and a warning is logged.
 
 ## Architecture in one paragraph
 
@@ -43,8 +61,8 @@ go through DataLoader.
 from findata.contracts import DatasetSpec
 
 spec = DatasetSpec(
-    name="mydaily",
-    api_name="mydaily",                  # your provider's API name, used in errors
+    name="acme/finance/daily_bars",      # full name: <author>/<free/path>
+    api_name="daily_bars",               # your provider's API name, used in errors
     schema=my_arrow_schema,              # pyarrow.Schema of the logical table
     provider_fields=("symbol", "date", "close"),  # fields the provider must return
     primary_key=("symbol", "date"),
@@ -78,19 +96,16 @@ plugin = ProviderPlugin(
 )
 ```
 
-### `DatasetPlugin` — binding and operations
-
-```python
-from findata.plugins import DatasetPlugin, SettingSpec
-
 plugin = DatasetPlugin(
-    name="mydaily",                      # must equal spec.name
+    name="acme/finance/daily_bars",      # must equal spec.name
     provider="myprovider",               # must be a registered provider_id
     spec=spec,
+    runtime=MyDatasetRuntime(),          # see the runtime protocols below
     operations=("update", "complete"),   # "update" is mandatory and parameterless
-    dependencies=(),                     # other dataset names; must stay acyclic
+    dependencies=("finance/stock_basic",),  # author-relative; must stay acyclic
+    schedule=("30 18 * * 1-5", "Asia/Shanghai"),  # optional suggested cron
     settings={
-        "update_symbols": SettingSpec(
+        "dataset.acme/finance/daily_bars.update_symbols": SettingSpec(
             schema={"type": "array", "items": {"type": "string"}},
             normalize=normalize_symbols, # (value, workspace) -> normalized value
             help="Symbols selected for parameterless update.",
@@ -100,9 +115,12 @@ plugin = DatasetPlugin(
 )
 ```
 
-Validation at load time rejects duplicate dataset names, plugin/spec name mismatches,
-unknown providers, a missing `update` operation, unknown dependencies, and dependency
-cycles.
+Validation at load time rejects malformed or duplicate dataset names, plugin/spec name
+mismatches, runtimes that do not satisfy `DatasetRuntime`, unknown providers, a missing
+`update` operation, unknown dependencies, and dependency cycles. Dependency names may be
+full names or author-relative (`"finance/stock_basic"` above resolves to
+`acme/finance/stock_basic`); they declare **data** dependencies only — the packages
+providing them are never imported.
 
 ## Registration: entry points
 
@@ -110,10 +128,10 @@ Publish both contracts from your own package's `pyproject.toml`:
 
 ```toml
 [project.entry-points."findata.providers"]
-myprovider = "my_package.providers:myprovider_plugin"
+myprovider = "acme_finance.provider:myprovider_plugin"
 
 [project.entry-points."findata.datasets"]
-mydaily = "my_package.datasets:mydaily_plugin"
+daily_bars = "acme_finance_daily_bars:plugin"
 ```
 
 Each entry point is the contract object itself or a zero-argument callable returning it.
@@ -121,23 +139,33 @@ Each entry point is the contract object itself or a zero-argument callable retur
 and creates or validates the dataset's storage in the workspace. Core never imports your
 module directly — discovery crosses the boundary through entry points only.
 
-## The provider runtime protocol
+## The runtime protocols
 
-Your `runtime` object implements the `ProviderRuntime` protocol from `findata.plugins`
-(inherit from it, as `findata_tushare_provider.provider.TushareProviderRuntime` does — it is
-the reference implementation). The server calls these methods:
+Behavior splits into two protocols, both in `findata.plugins`.
+
+**`ProviderRuntime`** — provider scope only (reference:
+`findata_tushare_provider.provider.TushareProviderRuntime`):
+
+| method | called for |
+| --- | --- |
+| `ready(workspace, mode)` | provider readiness shown by `provider status` and cron gating |
+| `is_mock(workspace, mode)` | whether the provider runs on mock data |
+| `probe(workspace, *, today)` | optional authenticated readiness check (`provider check`) |
+
+Configuration, credentials, transports, and rate limiting stay the provider plugin's
+internal business.
+
+**`DatasetRuntime`** — dataset scope, carried by every `DatasetPlugin`:
 
 | method | called for |
 | --- | --- |
 | `operation_worker(workspace, *, mode, today, now)` | returns the pickle-safe worker callable executed in a task subprocess |
-| `normalize_operation(dataset, operation, operands, *, today)` | canonicalize/validate operands; raises `OperandError` |
-| `plan_operation(workspace, dataset, operation, operands, *, today)` | `--dry-run` plan: strategy, dependencies, estimates |
-| `dataset_description(workspace, dataset, *, provider_ready)` | `dataset describe/status` payload |
-| `operation_description(dataset, operation)` | operand JSON schema + per-operand help |
-| `resolve_dependency(parent, target, requirement)` | map a dependency requirement to `(dataset, operands)` for fulfillment |
-| `ready(workspace, mode)` | provider readiness shown by `provider status` and cron gating |
-| `is_mock(workspace, mode)` | whether the provider runs on mock data |
-| `probe(workspace, *, today)` | optional authenticated readiness check (`provider check`) |
+| `normalize_operation(operation, operands, *, today)` | canonicalize/validate operands; raises `OperandError` |
+| `plan_operation(workspace, operation, operands, *, today)` | `--dry-run` plan: strategy, dependencies, estimates |
+| `dataset_description(workspace, *, provider_ready)` | `dataset describe/status` payload |
+| `operation_description(operation)` | operand JSON schema + per-operand help |
+| `resolve_dependency(target, requirement)` | map a dependency requirement to `(dataset, operands)` for fulfillment |
+| `update_ready(workspace)` | whether settings and committed state allow parameterless `update` |
 
 ## The operation worker
 
@@ -167,7 +195,7 @@ Commit through the core writer — never through DuckDB:
 ```python
 from findata.storage import Coverage, DataMutation, Workspace
 
-publisher = Workspace(workspace_path).publisher("mydaily")
+publisher = Workspace(workspace_path).publisher("acme/finance/daily_bars")
 publisher.commit(
     [DataMutation.replace_range(table, partition=symbol, start=start, end=end)],
     coverage=[Coverage(symbol, start, end)],

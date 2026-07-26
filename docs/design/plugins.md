@@ -7,90 +7,137 @@ walkthrough lives in the [custom-datasets guide](../site/guide/custom-datasets.m
 
 ## Design goals
 
-The plugin architecture exists so that:
-
-1. **Plugins are decoupled from each other.** One dataset plugin never imports, links
-   against, or names another plugin's code. A dataset that needs another dataset's data
-   reads a committed revision of a declared dependency through the public DataLoader.
+1. **Plugins are decoupled from each other at the code level.** A dataset plugin may
+   depend on another dataset's *data* — never on its *code*. No plugin imports another
+   dataset plugin's package.
 2. **Plugins are decoupled from core.** Core knows plugins only through entry-point
-   discovery and the typed contracts (`ProviderPlugin`, `DatasetPlugin`,
-   `ProviderRuntime`, `OperationRequest`, `OperationReporter`). No core module imports a
-   concrete plugin package or branches on a specific provider or dataset name.
+   discovery and the typed contracts. No core module imports a plugin package or
+   branches on a specific provider or dataset name.
 3. **Adding a plugin never changes core code.** A new provider or dataset ships as its
-   own Python distribution; installing it is the only step required for the next server
-   start to discover, validate, register, and serve it.
-4. **Official plugins are mountable on demand.** The plugins findata ships are ordinary
-   plugins through the same mechanism; users install only the provider families they
-   need. The Tushare family ships as separate `findata-provider-tushare` and
-   `findata-dataset-tushare-*` distributions (bundled by the `findata-plugins-tushare`
-   umbrella), which findata depends on by default so a plain install works out of the
-   box; uninstalling it yields a lean core.
-5. **Third-party plugins mount identically.** An external author uses the same entry
-   points and the same contracts as the official plugins, with no source changes to
-   findata and no privileged registration path.
+   own Python distribution; installing it is the only step required.
+4. **The framework installs no datasets.** `pip install findata` yields the framework
+   only. Plugins are ordinary packages that depend on `findata`, installed singly, as a
+   family umbrella, or as dependency chains resolved by the package manager.
+5. **Third-party plugins mount identically.** Same entry points, same contracts, same
+   naming rules, no privileged path.
 
-## Invariants
+## Naming: the author namespace
 
-These rules are what make the goals true; tests and review enforce them.
+A dataset's full name is `<author>/<free/path/...>`. The first component is the
+publisher namespace; everything below it is author-chosen classification (any depth)
+that core treats as an opaque path, validating only component shape
+(`[a-z0-9_-]+`, no `.`/`..`). Official datasets are named like
+`findata/tushare/daily_basic`: `findata` is the publisher, `tushare/daily_basic` is the
+publisher's own classification.
 
-- **Core never names a plugin.** Core dispatch resolves behavior per dataset through the
-  plugin contracts. A `switch` on a provider or dataset name in `findata` core modules
-  (server, cron, task runner, CLI, storage) is an architecture violation, not a style
-  issue. The only tolerated exception is time-bounded migration code for legacy
-  workspace formats.
-- **Discovery is the only registration path.** Core loads provider contracts from the
-  `findata.providers` entry-point group, validates them, then loads dataset contracts
-  from `findata.datasets` and validates provider references, dependencies, and cycles.
-  Core never imports the module behind an entry point directly.
-- **Plugins never import each other.** A dataset plugin may import public core
-  contracts, its own provider adapter, and selected toolkit components — never another
-  dataset plugin or another provider. Cross-dataset data flows through declared
-  dependencies and DataLoader reads of committed revisions.
-- **Shared behavior is promoted, not copied.** Behavior needed by a second dataset moves
-  into `findata.toolkit` as a dataset-neutral component; provider-specific values stay
-  as parameters inside the owning plugin.
-- **Plugin policy lives in the plugin.** Operation semantics, settings schemas and
-  normalization, update readiness, publication timing, and suggested schedules are
-  declared by the plugin through its contract. Core transports and executes them but
-  never encodes them.
+An author can keep their own namespace consistent but cannot control other publishers,
+so the author level is the only level the framework polices:
 
-## Lifecycle
+- one distribution may register datasets under exactly one author namespace
+  (entry points are traced to their distribution at discovery);
+- full names must be unique across the environment (duplicate names fail validation).
 
-1. **Discover** — the server reads both entry-point groups at startup.
-2. **Validate** — duplicate IDs, malformed contracts, unknown provider references,
-   missing `update`, incomplete runtimes, and dependency cycles are rejected before any
-   state changes.
-3. **Register** — each dataset plugin's storage is created or validated against its
-   declared spec in the workspace.
-4. **Dispatch** — every dataset-scoped call (normalize, plan, describe, execute) resolves
-   through the plugin's provider runtime; every provider-scoped call (readiness, probe)
-   resolves through the named provider. Neither path may assume a particular plugin.
-5. **Execute** — the worker runs in a task subprocess against the typed
-   `OperationRequest`/`OperationReporter` contracts and commits through the core
-   transactional writer.
+Provider plugin IDs stay flat (`tushare`), uniqueness-validated; providers are adapters,
+not data assets, and their IDs appear in configuration keys.
 
-## v1 status
+Names are structural everywhere they flow: storage nests by name
+(`datasets/findata/tushare/daily_basic/`, snapshots mirror it), configuration keys are
+`dataset.<full-name>.<setting>` resolved by registry longest-match, HTTP routes match
+registered names greedily instead of counting path segments, and `_findata_metadata`
+stores the full name.
 
-The goals above are implemented and enforced:
+## Dependency model: three relations, kept apart
 
-- **Dispatch is fully generic.** The TaskRunner worker is a `PluginWorkerDispatcher`
-  that resolves the executing dataset's provider runtime inside the task child process,
-  so a plugin installed after server start is picked up on the next dispatch. Update
-  readiness is reported by each plugin through `ProviderRuntime.update_ready`, provider
-  checks dispatch generically to the named provider's runtime, and suggested cron
-  schedules are declared by each `DatasetPlugin` and injected into the cron manager.
-  No core module branches on a provider or dataset name; the only tolerated exception
-  is the time-bounded legacy configuration migration in `storage.py`, removed with the
-  legacy format.
-- **Boundaries are test-enforced.** Core modules may not import a plugin distribution
-  or the toolkit; toolkit components may not import a plugin; plugin distributions may
-  not import another family's plugin or retired core plugin paths.
-- **Official plugins are separate distributions.** The Tushare provider and datasets,
-  including their mock transport, live under `plugins/tushare/` as the
-  `findata-provider-tushare` and per-dataset `findata-dataset-tushare-*` uv workspace
-  members — the reference implementation of every rule on this page. Each Tushare
-  dataset is its own plugin distribution within the family; the split required no
-  mechanism change.
+| relation | expressed as | allowed directions | forbidden |
+| --- | --- | --- | --- |
+| **data dependency** (dataset → dataset) | `DatasetPlugin.dependencies` name strings | any dataset → any dataset, acyclic, cross-author allowed | imports or code calls |
+| **package dependency** (install-time) | distribution `dependencies` metadata | upward (dataset package → family provider package → `findata`); between dataset packages only when mirroring a declared data dependency | cross-author hard requirements; unrelated dataset-package edges |
+| **code sharing** | the three tiers below | the most general honestly-true tier | copy-paste across plugins; dataset-package imports |
 
-The typed contracts, entry-point spelling, and a worked example live in the
-[custom-datasets guide](../site/guide/custom-datasets.md).
+Data dependencies are name strings, resolved at validation with author-relative
+shorthand (`"tushare/trade_cal"` inside a `findata/*` plugin resolves to
+`findata/tushare/trade_cal`). They flow at runtime through exactly two channels: the
+reporter's `fulfill(dataset, requirement)` (the framework executes the dependency
+through the parent's `resolve_dependency`) and DataLoader reads of a committed revision
+(settings normalization, planning). The dependent plugin never knows the provider
+plugin's package name.
+
+Same-author data dependencies that a plugin's `update` requires are mirrored as hard
+package dependencies, so installing one dataset plugin pulls the packages that provide
+its dependency data (`findata-dataset-tushare-daily-basic` pulls trade-cal, index-basic,
+and index-weight). This is metadata only: the package manager keeps installations
+complete while imports remain forbidden. Cross-author data dependencies are documented
+requirements, not hard package dependencies; a missing one fails validation with a clear
+error.
+
+## Code sharing: three tiers by generality
+
+When plugins genuinely share code, it lives at the most general tier it honestly fits:
+
+1. **findata SDK** (in `findata`): framework-generic code — `findata.contracts`,
+   `findata.plugins` (contract layer) and `findata.toolkit` (dataset-neutral helpers,
+   promoted on second use, catalogued, boundary-tested). The only layer plugin authors
+   may treat as stable long-term.
+2. **Family shared package**: code specific to one provider family (the Tushare client
+   and selector syntax, publication timing, the mock transport, the shared operation
+   engine). It lives in the family's provider package; family dataset packages use it
+   through an ordinary package dependency. It imports the SDK; the framework knows
+   nothing about it.
+3. **findata-unrelated third-party library**: domain-generic code with no findata
+   imports, versioned independently. (No v1 candidate; the rule is recorded ahead of
+   need.)
+
+## Contracts: two runtimes
+
+Behavior is dispatched through two protocols in `findata.plugins`:
+
+- `ProviderRuntime` — provider scope only: `ready`, `is_mock`, `probe`. Configuration,
+  credentials, transports, and rate limiting are the provider plugin's internal
+  business.
+- `DatasetRuntime` — dataset scope, carried by every `DatasetPlugin`:
+  `operation_worker`, `normalize_operation`, `plan_operation`,
+  `dataset_description`, `operation_description`, `resolve_dependency`,
+  `update_ready`.
+
+The server resolves dataset-scoped calls through `plugin.runtime`; the task worker is a
+`PluginWorkerDispatcher` that resolves the executing dataset's runtime inside the child
+process, so a plugin installed after server start is picked up on the next dispatch.
+`DatasetPlugin` also declares `schedule` (suggested cron expression + IANA timezone).
+
+## Discovery, mounting, and the blocklist
+
+Distribution names follow the prefix convention `findata-provider-*` /
+`findata-dataset-*` (family umbrellas are `findata-plugins-*` and carry no entry
+points); discovery validates it. Installed plugins **mount automatically**: discovery →
+prefix validation → author/dependency validation → storage registration, with no
+configuration required, and unmount on uninstall.
+
+A workspace may block plugins via the `plugins.blocked` configuration key (dataset full
+names or provider IDs). A blocked plugin does not register and is invisible to routing
+and dispatch. A block is **ineffective for anything an unblocked plugin requires** —
+a declared data dependency or a mounted dataset's provider — and every repair (and every
+unknown entry) logs a warning. Registration, server discovery, and the task-process
+dispatcher apply the same filter.
+
+## Official plugins
+
+The Tushare family is the reference implementation: `findata-provider-tushare` (client,
+transport, mock, publication timing, shared operation engine) plus five
+`findata-dataset-tushare-*` packages and the `findata-plugins-tushare` umbrella. They
+live in this repository under `plugins/` as uv workspace members **only while the
+contracts stabilize**; they graduate to their own repository afterwards, with no
+mechanism change.
+
+## Invariants enforced by tests
+
+- author rule (one author per distribution), name shape and uniqueness, dependency
+  resolution and acyclicity;
+- prefix convention for plugin distributions;
+- blocklist semantics: unrequired blocks stick, dependency repairs mount and warn, the
+  dispatcher applies the same filter;
+- import boundaries: core imports no plugin and no toolkit; toolkit imports no plugin;
+  dataset packages import only the SDK, their family provider package, and third-party
+  libraries; package-dependency metadata covers same-author data dependencies and never
+  reverses;
+- the wheel gate builds and installs every distribution and runs the mocked quick start
+  through entry-point discovery in a clean environment.

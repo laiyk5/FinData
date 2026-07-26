@@ -9,11 +9,11 @@ express these contracts without changing them.
 
 Datasets:
 
-- [`tushare_trade_cal`](tushare_trade_cal.md)
-- [`tushare_stock_basic`](tushare_stock_basic.md)
-- [`tushare_index_basic`](tushare_index_basic.md)
-- [`tushare_index_weight`](tushare_index_weight.md)
-- [`tushare_daily_basic`](tushare_daily_basic.md)
+- [`findata/tushare/trade_cal`](findata/tushare/trade_cal.md)
+- [`findata/tushare/stock_basic`](findata/tushare/stock_basic.md)
+- [`findata/tushare/index_basic`](findata/tushare/index_basic.md)
+- [`findata/tushare/index_weight`](findata/tushare/index_weight.md)
+- [`findata/tushare/daily_basic`](findata/tushare/daily_basic.md)
 
 ## Common conventions
 

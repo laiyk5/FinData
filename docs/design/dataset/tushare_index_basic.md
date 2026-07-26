@@ -1,4 +1,4 @@
-# `tushare_index_basic`
+# `findata/tushare/index_basic`
 
 API: <https://tushare.pro/document/2?doc_id=94>
 

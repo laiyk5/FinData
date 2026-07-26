@@ -29,11 +29,12 @@ loads and validates that contract before loading dataset entry points; it must n
 provider's concrete module directly. Registration tests cover duplicate IDs, malformed schemas,
 invalid limiter parameters, and datasets referring to an unregistered provider.
 
-The provider's runtime object must satisfy the `findata.plugins.ProviderRuntime` protocol;
-discovery rejects an incomplete runtime. The task-process contracts handed to its operation
-worker — `OperationRequest`, `OperationReporter`, and `OperationWorker` — are public contracts
-in `findata.contracts`, re-exported from `findata.plugins`, and the built-in Tushare runtime is
-the reference implementation.
+The provider's runtime object must satisfy the `findata.plugins.ProviderRuntime` protocol
+(provider scope only: `ready`, `is_mock`, `probe`); discovery rejects an incomplete
+runtime. Dataset-scoped behavior belongs to the dataset plugins' `DatasetRuntime`, whose
+worker receives the `OperationRequest`/`OperationReporter` contracts from
+`findata.contracts`, re-exported from `findata.plugins`. The distribution name must
+match the `findata-provider-*` prefix convention.
 
 If a provider exposes instrument-reference metadata, preserve its identifiers as opaque values,
 record how explicitly requested references are materialized and refreshed, and keep
@@ -48,14 +49,20 @@ Provider code never logs or returns credentials. Every external request, includi
 
 Before implementation, add its canonical entry to [design/dataset/index.md](design/dataset/index.md). Then define:
 
-1. provider, logical Arrow schema, and keys;
-2. capabilities and any typed plugin settings, including defaults, normalization, help, and update-readiness rules;
-3. publication window, schedule, and missing-data policy;
-4. dependencies and optional fulfillment requirement schema;
-5. operation entry points and operand JSON schemas;
-6. declarative database mutation scope and DataLoader metadata;
-7. coverage and status behavior;
-8. mock generator and dataset-specific tests.
+1. full name (`<author>/<free/path>`), provider, logical Arrow schema, and keys;
+2. a `DatasetRuntime` implementing operations, normalization, planning, descriptions,
+   dependency resolution, update readiness, and the operation worker;
+3. capabilities and any typed plugin settings, including defaults, normalization, help, and update-readiness rules;
+4. publication window, suggested schedule, and missing-data policy;
+5. data dependencies (name strings, author-relative allowed) and optional fulfillment requirement schema;
+6. operation entry points and operand JSON schemas;
+7. declarative database mutation scope and DataLoader metadata;
+8. coverage and status behavior;
+9. mock generator and dataset-specific tests.
+
+The distribution name must match the `findata-dataset-*` prefix convention, declare a
+dependency on `findata` (and on its family provider package), and mirror any same-author
+data dependencies its `update` requires as hard package dependencies.
 
 The plugin performs provider fetch, transformation, and validation, then submits Arrow data through
 the core transactional writer. It never opens DuckDB, emits SQL, defines public DataLoader query
@@ -97,11 +104,14 @@ orchestration inside its plugin package even when they use a toolkit resolver af
 Plugin mocks and test-only helpers live in the plugin's own testing module and are loaded only
 by an explicitly selected mock mode.
 
-findata depends on each official plugin distribution by default so a plain install works out of
-the box; a plugin distribution deliberately does not declare the reverse dependency, avoiding
-circular metadata. Adding a new provider family means adding a new `plugins/<family>/` workspace
-member with its own entry points — never editing core. The nox wheel gate builds and installs
-every distribution.
+findata never depends on a plugin distribution: `pip install findata` installs the
+framework only, and plugins are ordinary packages that declare their own dependency on
+findata (dataset packages also depend on their family's provider package and, mirroring
+declared data dependencies, on sibling dataset packages of the same author). Official
+plugins are development members of this workspace while the contracts stabilize and
+graduate to their own repository afterwards. Adding a new provider family means adding
+a new `plugins/<family>/` workspace member with its own entry points — never editing
+core. The nox wheel gate builds and installs every distribution.
 
 ## Adding a toolkit component
 
