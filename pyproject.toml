@@ -10,7 +10,6 @@ requires-python = ">=3.11"
 dependencies = [
   "click==8.4.2",
   "duckdb==1.5.4",
-  "findata-tushare==0.3.0",
   "pyarrow>=15",
   "rich==15.0.0",
 ]
@@ -21,6 +20,9 @@ findata-server = "findata.server_cli:main"
 
 [project.optional-dependencies]
 dev = [
+  # Official plugins are development/test-only members of this workspace;
+  # findata itself never depends on a plugin distribution.
+  "findata-tushare==0.3.0",
   "nox>=2025.5.1",
   "pytest>=8",
   "pytest-cov>=5",

@@ -326,13 +326,13 @@ source = { editable = "." }
 dependencies = [
     { name = "click" },
     { name = "duckdb" },
-    { name = "findata-tushare" },
     { name = "pyarrow" },
     { name = "rich" },
 ]
 
 [package.optional-dependencies]
 dev = [
+    { name = "findata-tushare" },
     { name = "nox" },
     { name = "pytest" },
     { name = "pytest-cov" },
@@ -348,7 +348,7 @@ docs = [
 requires-dist = [
     { name = "click", specifier = "==8.4.2" },
     { name = "duckdb", specifier = "==1.5.4" },
-    { name = "findata-tushare", editable = "plugins/tushare" },
+    { name = "findata-tushare", marker = "extra == 'dev'", editable = "plugins/tushare" },
     { name = "nox", marker = "extra == 'dev'", specifier = ">=2025.5.1" },
     { name = "pyarrow", specifier = ">=15" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
