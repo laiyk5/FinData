@@ -20,6 +20,12 @@ This installs two commands:
 - `findata` — the client CLI (configuration, datasets, tasks, data reads)
 - `findata-server` — the local API server that performs maintenance work
 
+It also installs `findata-tushare`, the official Tushare provider and dataset plugins,
+as a default dependency — the quick start works out of the box. The plugins are an
+ordinary separate distribution: `pip uninstall findata-tushare` gives you a lean core,
+and third-party plugins install the same way (`pip install <their-package>`; see
+[Custom datasets and providers](../guide/custom-datasets.md)).
+
 !!! tip
     Use a virtual environment when isolation from other Python packages is desired.
 

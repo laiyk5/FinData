@@ -21,9 +21,9 @@ The plugin architecture exists so that:
    start to discover, validate, register, and serve it.
 4. **Official plugins are mountable on demand.** The plugins findata ships are ordinary
    plugins through the same mechanism; users install only the provider families they
-   need. (v1 ships the Tushare family as built-in entry points inside the findata wheel;
-   splitting it into a separate distribution is the intended end state, not a new
-   mechanism.)
+   need. The Tushare family ships as the separate `findata-tushare` distribution, which
+   findata depends on by default so a plain install works out of the box; uninstalling
+   it yields a lean core.
 5. **Third-party plugins mount identically.** An external author uses the same entry
    points and the same contracts as the official plugins, with no source changes to
    findata and no privileged registration path.
@@ -68,29 +68,27 @@ These rules are what make the goals true; tests and review enforce them.
    `OperationRequest`/`OperationReporter` contracts and commits through the core
    transactional writer.
 
-## v1 status and known couplings
+## v1 status
 
-The contracts and discovery path are in place. The following v1 remnants still couple
-core to the built-in Tushare family and are tracked for removal; each item names its
-target shape:
+The goals above are implemented and enforced:
 
-- the server constructs the task worker from one hardcoded provider instead of
-  dispatching per execution dataset (`server.py`); target: worker resolution by the
-  execution's dataset at dispatch time;
-- update readiness for three built-in datasets is a name switch in the server
-  (`server.py`); target: readiness reported by the plugin through its contract;
-- the provider readiness probe is invoked through a provider-specific helper
-  (`server.py`); target: generic dispatch to the named provider's runtime;
-- default cron schedules for built-in datasets are a core table (`cron.py`); target:
-  suggested schedules declared by each dataset plugin;
-- legacy workspace configuration migration names two built-in datasets (`storage.py`);
-  tolerated as time-bounded migration code and removed with the legacy format.
-
-Likewise, the five Tushare datasets currently share one plugin package; per-dataset
-packaging is the direction as the family grows, and it requires no mechanism change.
-
-## Authoring
+- **Dispatch is fully generic.** The TaskRunner worker is a `PluginWorkerDispatcher`
+  that resolves the executing dataset's provider runtime inside the task child process,
+  so a plugin installed after server start is picked up on the next dispatch. Update
+  readiness is reported by each plugin through `ProviderRuntime.update_ready`, provider
+  checks dispatch generically to the named provider's runtime, and suggested cron
+  schedules are declared by each `DatasetPlugin` and injected into the cron manager.
+  No core module branches on a provider or dataset name; the only tolerated exception
+  is the time-bounded legacy configuration migration in `storage.py`, removed with the
+  legacy format.
+- **Boundaries are test-enforced.** Core modules may not import a plugin distribution
+  or the toolkit; toolkit components may not import a plugin; plugin distributions may
+  not import another plugin or retired core plugin paths.
+- **Official plugins are a separate distribution.** The Tushare provider and datasets,
+  including their mock transport, live under `plugins/tushare/` as the
+  `findata-tushare` uv workspace member — the reference implementation of every rule
+  on this page. The five Tushare datasets remain one plugin package per provider
+  family; splitting a family further requires no mechanism change.
 
 The typed contracts, entry-point spelling, and a worked example live in the
-[custom-datasets guide](../site/guide/custom-datasets.md). The built-in Tushare provider
-and dataset plugins are the reference implementation of every rule on this page.
+[custom-datasets guide](../site/guide/custom-datasets.md).

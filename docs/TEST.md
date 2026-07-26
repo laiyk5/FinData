@@ -302,19 +302,20 @@ gate regardless of elapsed time.
 
 ## Package-boundary checks
 
-Automated import checks reject dependencies from core modules to `findata.toolkit`, built-in
-dataset packages, built-in provider packages, or `findata.testing`. They also reject toolkit
-imports of concrete datasets or providers and read-path imports of maintenance plugins. Positive
+Automated import checks reject dependencies from core modules to `findata.toolkit` or any plugin
+distribution (for example `findata_tushare`). They also reject toolkit imports of concrete plugins
+and plugin-distribution imports of another plugin or retired core plugin paths. Positive
 fixtures prove provider-then-dataset entry-point discovery and that a dataset plugin can use public
 core contracts, its provider adapter, and selected toolkit components. Explicit mock mode is the
-only runtime path allowed to load `findata.testing`.
+only runtime path allowed to load a plugin's testing module.
 
 Packaging tests assert the pinned Hatchling backend and explicit `src/findata` wheel selection. A
 subprocess import check proves that importing the DataLoader read path pulls in no CLI, server,
 presentation, task, or provider modules, so external readers can depend on it alone.
-The release-readiness gate builds an sdist and then a wheel from that sdist, installs the wheel into
-an isolated environment, invokes both console scripts, and verifies that every declared
-`findata.datasets` and `findata.providers` entry point remains discoverable.
+The release-readiness gate builds an sdist and then a wheel from that sdist for every distribution
+(core and each official plugin), installs the wheels into an isolated environment, invokes both
+console scripts, and verifies that every declared `findata.datasets` and `findata.providers`
+entry point remains discoverable.
 
 ## Test ordering
 

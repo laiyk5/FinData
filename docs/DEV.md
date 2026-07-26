@@ -75,22 +75,29 @@ initialized, return an error with the ordinary dataset operation the user should
 
 ## Module organization and import boundaries
 
-Use the following package-level separation as the codebase grows:
+The repository is a uv workspace:
 
 - core services, public contracts, the DataLoader, server, CLI, transactional storage adapter, tasks,
-  configuration, cron, and events live outside concrete provider and dataset packages;
-- built-in concrete dataset plugins live under `findata.datasets.<provider>`;
-- built-in provider transports and clients live under `findata.providers.<provider>`;
-- reusable opt-in plugin helpers live under `findata.toolkit`; and
-- provider mocks and test-only helpers live under `findata.testing` and are loaded only by an
-  explicitly selected mock adapter.
+  configuration, cron, and events live in the `findata` distribution under `src/findata`;
+- each official provider family is its own plugin distribution under `plugins/<family>/`
+  (for example `plugins/tushare/` ships `findata-tushare` with the import package
+  `findata_tushare`, containing its provider adapter, dataset plugins, and mock/test helpers);
+- reusable opt-in plugin helpers live under `findata.toolkit` in the core distribution.
 
-Core modules must not import `findata.toolkit`, a concrete dataset package, or a concrete provider
-package. Discovery crosses that boundary through entry points and declared contracts. A dataset
-plugin may import public core contracts, its provider adapter, and selected toolkit components. A
-toolkit component may import public core contracts but never a concrete dataset or provider. Keep
-dataset-specific setting schemas, parsers, selector syntax, and orchestration inside its plugin
-package even when they use a toolkit resolver after parsing.
+Core modules must not import `findata.toolkit` or any plugin distribution. Discovery crosses that
+boundary through entry points and declared contracts. A dataset plugin may import public core
+contracts, its provider adapter, and selected toolkit components; a plugin distribution never
+imports another plugin distribution. A toolkit component may import public core contracts but
+never a concrete plugin. Keep dataset-specific setting schemas, parsers, selector syntax, and
+orchestration inside its plugin package even when they use a toolkit resolver after parsing.
+Plugin mocks and test-only helpers live in the plugin's own testing module and are loaded only
+by an explicitly selected mock mode.
+
+findata depends on each official plugin distribution by default so a plain install works out of
+the box; a plugin distribution deliberately does not declare the reverse dependency, avoiding
+circular metadata. Adding a new provider family means adding a new `plugins/<family>/` workspace
+member with its own entry points — never editing core. The nox wheel gate builds and installs
+every distribution.
 
 ## Adding a toolkit component
 
