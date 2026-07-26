@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime
 from importlib.metadata import entry_points
 from pathlib import Path
@@ -13,11 +13,14 @@ from findata.contracts import (
     OperationReporter,
     OperationRequest,
     OperationWorker,
+    dataset_author,
+    validate_dataset_name,
 )
 from findata.storage import Workspace
 
 __all__ = [
     "DatasetPlugin",
+    "DatasetRuntime",
     "DatasetSpec",
     "OperationReporter",
     "OperationRequest",
@@ -51,11 +54,29 @@ class ProviderPlugin:
 
 @runtime_checkable
 class ProviderRuntime(Protocol):
-    """Behavior contract the server calls on a provider plugin's runtime object.
+    """Provider-scoped behavior contract for a provider plugin's runtime object.
 
-    The built-in Tushare runtime (findata_tushare.provider) is the reference
-    implementation; findata.contracts documents the worker request and reporter.
+    Dataset-scoped behavior lives on DatasetRuntime; the built-in Tushare
+    runtimes (findata_tushare.provider / findata_tushare.datasets) are the
+    reference implementations.
     """
+
+    def ready(self, workspace: Workspace, mode: str) -> bool:
+        """Whether the provider is configured well enough to accept work."""
+        ...
+
+    def is_mock(self, workspace: Workspace, mode: str) -> bool:
+        """Whether the provider serves mock responses in this mode."""
+        ...
+
+    def probe(self, workspace: Workspace, *, today: date) -> None:
+        """Run the optional authenticated readiness probe through the limiter."""
+        ...
+
+
+@runtime_checkable
+class DatasetRuntime(Protocol):
+    """Dataset-scoped behavior contract carried by every DatasetPlugin."""
 
     def operation_worker(
         self,
@@ -70,7 +91,6 @@ class ProviderRuntime(Protocol):
 
     def normalize_operation(
         self,
-        dataset: str,
         operation: str,
         operands: dict[str, Any],
         *,
@@ -82,7 +102,6 @@ class ProviderRuntime(Protocol):
     def plan_operation(
         self,
         workspace: Workspace,
-        dataset: str,
         operation: str,
         operands: dict[str, Any],
         *,
@@ -94,40 +113,26 @@ class ProviderRuntime(Protocol):
     def dataset_description(
         self,
         workspace: Workspace,
-        dataset: str,
         *,
         provider_ready: bool,
     ) -> dict[str, Any]:
-        """Return the describe/status payload for one dataset."""
+        """Return the describe/status payload for this dataset."""
         ...
 
-    def operation_description(self, dataset: str, operation: str) -> dict[str, Any]:
+    def operation_description(self, operation: str) -> dict[str, Any]:
         """Return the operand JSON schema and per-operand help for one operation."""
         ...
 
     def resolve_dependency(
         self,
-        parent: str,
         target: str,
         requirement: dict[str, object],
     ) -> tuple[str, dict[str, object]]:
         """Map a dependency requirement to the fulfilling dataset and operands."""
         ...
 
-    def ready(self, workspace: Workspace, mode: str) -> bool:
-        """Whether the provider is configured well enough to accept work."""
-        ...
-
-    def update_ready(self, workspace: Workspace, dataset: str) -> bool:
-        """Whether a dataset's settings and committed state allow parameterless update."""
-        ...
-
-    def is_mock(self, workspace: Workspace, mode: str) -> bool:
-        """Whether the provider serves mock responses in this mode."""
-        ...
-
-    def probe(self, workspace: Workspace, *, today: date) -> None:
-        """Run the optional authenticated readiness probe through the limiter."""
+    def update_ready(self, workspace: Workspace) -> bool:
+        """Whether settings and committed state allow parameterless update."""
         ...
 
 
@@ -147,6 +152,7 @@ class DatasetPlugin:
     name: str
     provider: str
     spec: DatasetSpec
+    runtime: DatasetRuntime
     operations: tuple[str, ...]
     dependencies: tuple[str, ...] = ()
     settings: Mapping[str, SettingSpec] = field(default_factory=dict)
@@ -201,6 +207,8 @@ def discover_dataset_plugins(
     *, providers: Iterable[ProviderPlugin] | None = None
 ) -> list[DatasetPlugin]:
     discovered: list[DatasetPlugin] = []
+    authors_by_dist: dict[str, str] = {}
+    dist_by_author: dict[str, str] = {}
     for point in entry_points(group="findata.datasets"):
         loaded = point.load()
         value = loaded() if callable(loaded) and not isinstance(loaded, DatasetPlugin) else loaded
@@ -208,22 +216,53 @@ def discover_dataset_plugins(
             raise PluginRegistrationError(
                 f"entry point {point.name!r} did not return DatasetPlugin"
             )
+        author = dataset_author(value.name)
+        dist_name = point.dist.name if point.dist is not None else "<unknown>"
+        if authors_by_dist.setdefault(dist_name, author) != author:
+            raise PluginRegistrationError(
+                f"distribution {dist_name!r} registers datasets under multiple "
+                f"author namespaces including {author!r}"
+            )
+        if dist_by_author.setdefault(author, dist_name) != dist_name:
+            raise PluginRegistrationError(
+                f"author namespace {author!r} is claimed by both "
+                f"{dist_by_author[author]!r} and {dist_name!r}"
+            )
         discovered.append(value)
-    validate_plugins(discovered, providers=providers)
-    return discovered
+    resolved = _resolve_dependencies(discovered)
+    validate_plugins(resolved, providers=providers)
+    return resolved
+
+
+def _resolve_dependencies(plugins: Iterable[DatasetPlugin]) -> list[DatasetPlugin]:
+    """Resolve author-relative dependency names to full names (idempotent)."""
+    values = list(plugins)
+    known = {plugin.name for plugin in values}
+    resolved: list[DatasetPlugin] = []
+    for plugin in values:
+        author = dataset_author(plugin.name)
+        full = tuple(
+            dependency if dependency in known else f"{author}/{dependency}"
+            for dependency in plugin.dependencies
+        )
+        resolved.append(replace(plugin, dependencies=full))
+    return resolved
 
 
 def validate_plugins(
     plugins: Iterable[DatasetPlugin], *, providers: Iterable[ProviderPlugin] | None = None
 ) -> None:
-    values = list(plugins)
+    values = _resolve_dependencies(list(plugins))
     provider_ids = {provider.provider_id for provider in providers or ()}
     by_name: dict[str, DatasetPlugin] = {}
     for plugin in values:
         if plugin.name in by_name:
             raise PluginRegistrationError(f"duplicate dataset plugin {plugin.name!r}")
+        validate_dataset_name(plugin.name)
         if plugin.name != plugin.spec.name:
             raise PluginRegistrationError(f"plugin/spec name mismatch for {plugin.name!r}")
+        if not isinstance(plugin.runtime, DatasetRuntime):
+            raise PluginRegistrationError(f"{plugin.name} runtime does not satisfy DatasetRuntime")
         if plugin.provider not in provider_ids:
             raise PluginRegistrationError(f"unknown provider {plugin.provider!r}")
         if "update" not in plugin.operations:
@@ -259,7 +298,7 @@ def register_plugins(
     *,
     providers: Iterable[ProviderPlugin],
 ) -> None:
-    values = list(plugins)
+    values = _resolve_dependencies(list(plugins))
     validate_plugins(values, providers=providers)
     for plugin in values:
         workspace.register_dataset(
@@ -286,13 +325,9 @@ class PluginWorkerDispatcher:
         providers = discover_provider_plugins()
         plugins = {plugin.name: plugin for plugin in discover_dataset_plugins(providers=providers)}
         try:
-            plugin = plugins[dataset]
+            runtime = plugins[dataset].runtime
         except KeyError as exc:
             raise ValueError(f"unknown dataset {dataset!r}") from exc
-        runtime = next(
-            provider.runtime for provider in providers if provider.provider_id == plugin.provider
-        )
-        assert runtime is not None  # validate_provider_plugins enforces this
         worker = runtime.operation_worker(
             self.workspace,
             mode=self.mode,

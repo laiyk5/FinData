@@ -4,90 +4,20 @@ import json
 import os
 import time
 from collections.abc import Callable, Mapping
-from datetime import date, datetime
-from pathlib import Path
+from datetime import date
 from typing import Any
 from urllib.request import Request, urlopen
 from urllib.error import URLError
 
 import pyarrow as pa
 
-from findata.contracts import DatasetDataError, DatasetSpec, OperationWorker
+from findata.contracts import DatasetDataError, DatasetSpec
 from findata.plugins import ProviderPlugin, ProviderRuntime
 from findata.toolkit import FileRateLimiter
 from findata.storage import Workspace
 
 
 class TushareProviderRuntime(ProviderRuntime):
-    def operation_worker(
-        self,
-        workspace: Path,
-        *,
-        mode: str,
-        today: date,
-        now: datetime | None,
-    ) -> OperationWorker:
-        from findata_tushare.datasets.operations import OperationWorker as TushareWorker
-
-        return TushareWorker(
-            workspace=workspace,
-            provider=mode,
-            token="mock-token" if mode == "mock" else "",
-            today=today.isoformat(),
-            now=now.isoformat() if now is not None else None,
-        )
-
-    def normalize_operation(
-        self,
-        dataset: str,
-        operation: str,
-        operands: dict[str, Any],
-        *,
-        today: date,
-    ) -> dict[str, Any]:
-        from findata_tushare.datasets.operations import normalize_operation
-
-        return normalize_operation(dataset, operation, operands, today=today)
-
-    def dataset_description(
-        self,
-        workspace: Workspace,
-        dataset: str,
-        *,
-        provider_ready: bool,
-    ) -> dict[str, Any]:
-        from findata_tushare.datasets.operations import dataset_description
-
-        return dataset_description(workspace, dataset, provider_ready=provider_ready)
-
-    def operation_description(self, dataset: str, operation: str) -> dict[str, Any]:
-        from findata_tushare.datasets.operations import operation_description
-
-        return operation_description(dataset, operation)
-
-    def plan_operation(
-        self,
-        workspace: Workspace,
-        dataset: str,
-        operation: str,
-        operands: dict[str, Any],
-        *,
-        today: date,
-    ) -> dict[str, Any]:
-        from findata_tushare.datasets.operations import plan_operation
-
-        return plan_operation(workspace, dataset, operation, operands, today=today)
-
-    def resolve_dependency(
-        self,
-        parent: str,
-        target: str,
-        requirement: dict[str, object],
-    ) -> tuple[str, dict[str, object]]:
-        from findata_tushare.datasets.operations import resolve_v1_dependency
-
-        return resolve_v1_dependency(parent, target, requirement)
-
     def token(self, workspace: Workspace) -> str:
         configured = workspace.get_config("provider.tushare.token")
         if isinstance(configured, dict) and isinstance(configured.get("env"), str):
@@ -101,21 +31,6 @@ class TushareProviderRuntime(ProviderRuntime):
 
     def ready(self, workspace: Workspace, mode: str) -> bool:
         return self.is_mock(workspace, mode) or bool(self.token(workspace))
-
-    def update_ready(self, workspace: Workspace, dataset: str) -> bool:
-        if dataset == "tushare_index_weight":
-            return bool(workspace.get_config("dataset.tushare_index_weight.update_indexes"))
-        if dataset == "tushare_daily_basic":
-            return bool(workspace.get_config("dataset.tushare_daily_basic.update_symbols"))
-        if dataset == "tushare_index_basic":
-            from findata.loader import DataLoader, DatasetNotReadyError
-
-            try:
-                DataLoader(workspace.root).dataset(dataset).publication_id
-                return True
-            except DatasetNotReadyError:
-                return False
-        return True
 
     def probe(self, workspace: Workspace, *, today: date) -> None:
         limiter = FileRateLimiter(

@@ -46,7 +46,9 @@ class InstalledQuickStartTests(unittest.TestCase):
                     self.assertLess(time.monotonic(), deadline)
                     time.sleep(0.02)
 
-                def cli(*arguments: str, input_text: str | None = None) -> subprocess.CompletedProcess[str]:
+                def cli(
+                    *arguments: str, input_text: str | None = None
+                ) -> subprocess.CompletedProcess[str]:
                     return subprocess.run(
                         [findata, "--workspace", workspace, *arguments],
                         input=input_text,
@@ -57,7 +59,10 @@ class InstalledQuickStartTests(unittest.TestCase):
                     )
 
                 configured = cli(
-                    "config", "set", "provider.tushare.token", "--stdin",
+                    "config",
+                    "set",
+                    "provider.tushare.token",
+                    "--stdin",
                     input_text="findata-mock:fail=daily_basic@2\n",
                 )
                 self.assertEqual(configured.returncode, 0, configured.stderr)
@@ -65,20 +70,35 @@ class InstalledQuickStartTests(unittest.TestCase):
                 self.assertEqual(provider.returncode, 0, provider.stderr)
                 self.assertEqual(json.loads(provider.stdout)["mode"], "mock")
                 metadata = cli(
-                    "task", "run", "tushare_index_basic", "complete",
-                    "--param", "indexes=tushare:000300.SH", "--wait",
+                    "task",
+                    "run",
+                    "findata/tushare/index_basic",
+                    "complete",
+                    "--param",
+                    "indexes=tushare:000300.SH",
+                    "--wait",
                 )
                 self.assertEqual(metadata.returncode, 0, metadata.stderr)
                 setting = cli(
-                    "config", "set", "dataset.tushare_daily_basic.update_symbols",
-                    "--value-json", '["tushare:000300.SH@latest"]',
+                    "config",
+                    "set",
+                    "dataset.findata/tushare/daily_basic.update_symbols",
+                    "--value-json",
+                    '["tushare:000300.SH@latest"]',
                 )
                 self.assertEqual(setting.returncode, 0, setting.stderr)
 
                 task_arguments = (
-                    "--format", "json", "task", "run", "tushare_daily_basic", "complete",
-                    "--param", "symbols=tushare:000300.SH",
-                    "--param", "timerange=2026-06-29:2026-07-04",
+                    "--format",
+                    "json",
+                    "task",
+                    "run",
+                    "findata/tushare/daily_basic",
+                    "complete",
+                    "--param",
+                    "symbols=tushare:000300.SH",
+                    "--param",
+                    "timerange=2026-06-29:2026-07-04",
                     "--wait",
                 )
                 failed = cli(*task_arguments)
@@ -86,7 +106,7 @@ class InstalledQuickStartTests(unittest.TestCase):
                 self.assertEqual(json.loads(failed.stdout)["status"], "failed")
                 self.assertEqual(
                     DataLoader(workspace)
-                    .dataset("tushare_daily_basic")
+                    .dataset("findata/tushare/daily_basic")
                     .coverage()
                     .column("key")
                     .to_pylist(),
@@ -94,20 +114,27 @@ class InstalledQuickStartTests(unittest.TestCase):
                 )
 
                 configured = cli(
-                    "config", "set", "provider.tushare.token", "--stdin",
+                    "config",
+                    "set",
+                    "provider.tushare.token",
+                    "--stdin",
                     input_text="findata-mock\n",
                 )
                 self.assertEqual(configured.returncode, 0, configured.stderr)
                 resumed = cli(*task_arguments)
                 self.assertEqual(resumed.returncode, 0, resumed.stderr)
                 self.assertEqual(json.loads(resumed.stdout)["result"]["fetched_requests"], 2)
-                table = DataLoader(workspace).dataset("tushare_daily_basic").query(
-                    keys=["000001.SZ", "600000.SH", "600519.SH"],
-                    time_range=("2026-06-29", "2026-07-04"),
-                    require_coverage=True,
+                table = (
+                    DataLoader(workspace)
+                    .dataset("findata/tushare/daily_basic")
+                    .query(
+                        keys=["000001.SZ", "600000.SH", "600519.SH"],
+                        time_range=("2026-06-29", "2026-07-04"),
+                        require_coverage=True,
+                    )
                 )
                 self.assertEqual(table.num_rows, 15)
-                cron = cli("cron", "enable", "tushare_daily_basic")
+                cron = cli("cron", "enable", "findata/tushare/daily_basic")
                 self.assertEqual(cron.returncode, 0, cron.stderr)
                 self.assertIn("Enabled", cron.stdout)
             finally:

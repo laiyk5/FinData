@@ -59,7 +59,7 @@ class CLIPresentationTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(errors, "")
         self.assertIn("NAME", output)
-        self.assertIn("tushare_daily_basic", output)
+        self.assertIn("findata/tushare/daily_basic", output)
         self.assertNotIn("{", output)
 
         code, output, _ = self.run_cli("provider", "check", "tushare")
@@ -122,28 +122,26 @@ class CLIPresentationTests(unittest.TestCase):
 
     def test_operation_and_describe_render_operand_help(self) -> None:
         code, output, errors = self.run_cli(
-            "dataset", "operation", "tushare_daily_basic", "complete"
+            "dataset", "operation", "findata/tushare/daily_basic", "complete"
         )
         self.assertEqual(code, 0)
         self.assertEqual(errors, "")
-        self.assertIn(
-            "symbols: array of string — Tushare security codes like 600000.SH", output
-        )
+        self.assertIn("symbols: array of string — Tushare security codes like 600000.SH", output)
         self.assertIn("timerange: string (half-open-date-range) — Half-open", output)
 
         code, output, _ = self.run_cli(
-            "dataset", "operation", "tushare_index_weight", "update"
+            "dataset", "operation", "findata/tushare/index_weight", "update"
         )
         self.assertEqual(code, 0)
-        self.assertIn("dataset.tushare_index_weight.update_indexes", output)
+        self.assertIn("dataset.findata/tushare/index_weight.update_indexes", output)
 
-        code, output, _ = self.run_cli("dataset", "describe", "tushare_daily_basic")
+        code, output, _ = self.run_cli("dataset", "describe", "findata/tushare/daily_basic")
         self.assertEqual(code, 0)
         self.assertIn("update — Resolve the configured symbols", output)
         self.assertIn("refresh (required: symbols, timerange) — Re-fetch", output)
 
         code, output, _ = self.run_cli(
-            "--format", "json", "dataset", "operation", "tushare_daily_basic", "complete"
+            "--format", "json", "dataset", "operation", "findata/tushare/daily_basic", "complete"
         )
         self.assertEqual(code, 0)
         payload = json.loads(output)
@@ -165,7 +163,7 @@ class CLIPresentationTests(unittest.TestCase):
             "json",
             "task",
             "run",
-            "tushare_trade_cal",
+            "findata/tushare/trade_cal",
             "complete",
             "--params",
             '{"exchanges":["SSE"],"timerange":"2026-07-17:2026-07-20"}',
@@ -186,7 +184,7 @@ class CLIPresentationTests(unittest.TestCase):
             "jsonl",
             "task",
             "run",
-            "tushare_trade_cal",
+            "findata/tushare/trade_cal",
             "complete",
             "--params",
             '{"exchanges":["SSE"],"timerange":"2026-07-17:2026-07-20"}',
@@ -207,7 +205,7 @@ class CLIPresentationTests(unittest.TestCase):
             "json",
             "task",
             "run",
-            "tushare_trade_cal",
+            "findata/tushare/trade_cal",
             "complete",
             "--params",
             '{"exchanges":["SSE"],"timerange":"2026-07-17:2026-07-20"}',
@@ -222,7 +220,7 @@ class CLIPresentationTests(unittest.TestCase):
             code, output, errors = self.run_cli(
                 "task",
                 "run",
-                "tushare_trade_cal",
+                "findata/tushare/trade_cal",
                 "complete",
                 "--params",
                 '{"exchanges":["SSE"],"timerange":"2020-01-01:2026-07-20"}',
@@ -244,7 +242,7 @@ class CLIPresentationTests(unittest.TestCase):
                 "json",
                 "task",
                 "run",
-                "tushare_trade_cal",
+                "findata/tushare/trade_cal",
                 "complete",
                 "--params",
                 '{"exchanges":["SSE"],"timerange":"2020-01-01:2026-07-20"}',
@@ -287,7 +285,7 @@ class CLIPresentationTests(unittest.TestCase):
 
     def test_explain_and_status_of_failed_task_exit_zero_and_show_reason(self) -> None:
         code, output, _ = self.run_cli(
-            "--format", "json", "task", "run", "tushare_daily_basic", "update", "--wait"
+            "--format", "json", "task", "run", "findata/tushare/daily_basic", "update", "--wait"
         )
         self.assertEqual(code, 1)  # waiting on a failed task
         handle = str(json.loads(output)["handle_id"])
@@ -333,14 +331,14 @@ class ProgressPresentationTests(unittest.TestCase):
             output.state(
                 {
                     "status": "running",
-                    "stage": "fetching:tushare_daily_basic",
+                    "stage": "fetching:findata/tushare/daily_basic",
                     "progress": {"current": 1, "total": 3},
                 }
             )
             output.state(
                 {
                     "status": "running",
-                    "stage": "committing:tushare_daily_basic",
+                    "stage": "committing:findata/tushare/daily_basic",
                     "progress": {"current": 2, "total": 3},
                 }
             )

@@ -139,18 +139,91 @@ def register_v1_datasets(workspace: Workspace) -> None:
     )
 
 
+@dataclass(frozen=True, slots=True)
+class TushareDatasetRuntime:
+    """Dataset-scoped behavior for one Tushare dataset plugin."""
+
+    dataset: str
+
+    def operation_worker(
+        self,
+        workspace: Path,
+        *,
+        mode: str,
+        today: date,
+        now: datetime | None,
+    ) -> OperationWorker:
+        return OperationWorker(
+            workspace=workspace,
+            provider=mode,
+            token="mock-token" if mode == "mock" else "",
+            today=today.isoformat(),
+            now=now.isoformat() if now is not None else None,
+        )
+
+    def normalize_operation(
+        self,
+        operation: str,
+        operands: dict[str, Any],
+        *,
+        today: date,
+    ) -> dict[str, Any]:
+        return normalize_operation(self.dataset, operation, operands, today=today)
+
+    def plan_operation(
+        self,
+        workspace: Workspace,
+        operation: str,
+        operands: dict[str, Any],
+        *,
+        today: date,
+    ) -> dict[str, Any]:
+        return plan_operation(workspace, self.dataset, operation, operands, today=today)
+
+    def dataset_description(
+        self,
+        workspace: Workspace,
+        *,
+        provider_ready: bool,
+    ) -> dict[str, Any]:
+        return dataset_description(workspace, self.dataset, provider_ready=provider_ready)
+
+    def operation_description(self, operation: str) -> dict[str, Any]:
+        return operation_description(self.dataset, operation)
+
+    def resolve_dependency(
+        self,
+        target: str,
+        requirement: dict[str, object],
+    ) -> tuple[str, dict[str, object]]:
+        return resolve_v1_dependency(self.dataset, target, requirement)
+
+    def update_ready(self, workspace: Workspace) -> bool:
+        if self.dataset == "findata/tushare/index_weight":
+            return bool(workspace.get_config("dataset.findata/tushare/index_weight.update_indexes"))
+        if self.dataset == "findata/tushare/daily_basic":
+            return bool(workspace.get_config("dataset.findata/tushare/daily_basic.update_symbols"))
+        if self.dataset == "findata/tushare/index_basic":
+            try:
+                DataLoader(workspace.root).dataset(self.dataset).publication_id
+                return True
+            except DatasetNotReadyError:
+                return False
+        return True
+
+
 def resolve_v1_dependency(
     parent_dataset: str,
     target_dataset: str,
     requirement: dict[str, object],
 ) -> tuple[str, dict[str, object]]:
     allowed = {
-        "tushare_daily_basic": {
-            "tushare_trade_cal",
-            "tushare_index_basic",
-            "tushare_index_weight",
+        "findata/tushare/daily_basic": {
+            "findata/tushare/trade_cal",
+            "findata/tushare/index_basic",
+            "findata/tushare/index_weight",
         },
-        "tushare_index_weight": {"tushare_index_basic"},
+        "findata/tushare/index_weight": {"findata/tushare/index_basic"},
     }
     if target_dataset not in allowed.get(parent_dataset, set()):
         raise ValueError(
@@ -184,7 +257,7 @@ class DatasetService:
         self._settings = dict(settings) if settings is not None else None
 
     def _update_setting(self, dataset: str) -> list[str]:
-        suffix = "update_indexes" if dataset == "tushare_index_weight" else "update_symbols"
+        suffix = "update_indexes" if dataset == "findata/tushare/index_weight" else "update_symbols"
         key = f"dataset.{dataset}.{suffix}"
         value = (
             self._settings.get(key, [])
@@ -204,15 +277,15 @@ class DatasetService:
         # Execution and dry-run share validation and planning. Mutable state is
         # read again here so a previous preview is never treated as a reservation.
         plan_operation(self.workspace, dataset, operation, values, today=self.today)
-        if dataset == "tushare_trade_cal":
+        if dataset == "findata/tushare/trade_cal":
             publication = self._trade_cal(operation, values)
-        elif dataset == "tushare_stock_basic":
+        elif dataset == "findata/tushare/stock_basic":
             publication = self._stock_basic(operation, values)
-        elif dataset == "tushare_index_basic":
+        elif dataset == "findata/tushare/index_basic":
             publication = self._index_basic(operation, values)
-        elif dataset == "tushare_index_weight":
+        elif dataset == "findata/tushare/index_weight":
             publication = self._index_weight(operation, values)
-        elif dataset == "tushare_daily_basic":
+        elif dataset == "findata/tushare/daily_basic":
             publication = self._daily_basic(operation, values)
         else:
             raise KeyError(dataset)
@@ -277,7 +350,7 @@ class DatasetService:
         else:
             raise OperandError(f"unsupported trade calendar operation {operation!r}")
 
-        spec = TUSHARE_DATASETS["tushare_trade_cal"]
+        spec = TUSHARE_DATASETS["findata/tushare/trade_cal"]
         existing_coverage = self._coverage_map(spec.name)
         next_coverage = dict(existing_coverage)
         publication: str | None = None
@@ -328,7 +401,7 @@ class DatasetService:
 
     def _stock_basic(self, operation: str, operands: dict[str, Any]) -> str:
         if operation != "update":
-            raise OperandError("tushare_stock_basic supports only update")
+            raise OperandError("findata/tushare/stock_basic supports only update")
         _require_no_operands(operands)
         tables: list[pa.Table] = []
         jobs = [
@@ -344,7 +417,9 @@ class DatasetService:
         )
         self._progress(0, len(jobs))
         for completed, (status, exchange) in enumerate(jobs, start=1):
-            table = self._fetch("tushare_stock_basic", list_status=status, exchange=exchange)
+            table = self._fetch(
+                "findata/tushare/stock_basic", list_status=status, exchange=exchange
+            )
             if table.num_rows >= 6000:
                 raise RuntimeError(f"stock_basic response may be truncated for {status}/{exchange}")
             tables.append(table)
@@ -353,19 +428,19 @@ class DatasetService:
         if combined.num_rows == 0:
             raise RuntimeError("stock_basic merged snapshot is unexpectedly empty")
         if self._reporter is not None and hasattr(self._reporter, "stage"):
-            self._reporter.stage("committing:tushare_stock_basic")
-        return self._publisher("tushare_stock_basic").publish(
-            _merge_tables(TUSHARE_DATASETS["tushare_stock_basic"], None, combined)
+            self._reporter.stage("committing:findata/tushare/stock_basic")
+        return self._publisher("findata/tushare/stock_basic").publish(
+            _merge_tables(TUSHARE_DATASETS["findata/tushare/stock_basic"], None, combined)
         )
 
     def _index_basic(self, operation: str, operands: dict[str, Any]) -> str:
-        spec = TUSHARE_DATASETS["tushare_index_basic"]
+        spec = TUSHARE_DATASETS["findata/tushare/index_basic"]
         if operation == "update":
             _require_no_operands(operands)
             existing = self._existing_table(spec)
             if existing is None or existing.num_rows == 0:
                 raise OperandError(
-                    "tushare_index_basic update has no tracked indexes; run complete first"
+                    "findata/tushare/index_basic update has no tracked indexes; run complete first"
                 )
             indexes = [f"tushare:{code}" for code in existing.column("ts_code").to_pylist()]
         elif operation == "complete":
@@ -404,9 +479,9 @@ class DatasetService:
     def _index_weight(self, operation: str, operands: dict[str, Any]) -> str:
         if operation == "update":
             _require_no_operands(operands)
-            references = self._update_setting("tushare_index_weight")
+            references = self._update_setting("findata/tushare/index_weight")
             if not references:
-                raise OperandError("tushare_index_weight update requires update_indexes")
+                raise OperandError("findata/tushare/index_weight update requires update_indexes")
             self._ensure_index_metadata(references)
             indexes = [_canonical_index(value) for value in references]
             requested = _month_range(self.today, self.today)
@@ -419,7 +494,7 @@ class DatasetService:
         else:
             raise OperandError(f"unsupported index weight operation {operation!r}")
 
-        spec = TUSHARE_DATASETS["tushare_index_weight"]
+        spec = TUSHARE_DATASETS["findata/tushare/index_weight"]
         existing_coverage = self._coverage_map(spec.name)
         next_coverage = dict(existing_coverage)
         publication: str | None = None
@@ -475,9 +550,9 @@ class DatasetService:
     def _daily_basic(self, operation: str, operands: dict[str, Any]) -> str:
         if operation == "update":
             _require_no_operands(operands)
-            selectors = self._update_setting("tushare_daily_basic")
+            selectors = self._update_setting("findata/tushare/daily_basic")
             if not selectors:
-                raise OperandError("tushare_daily_basic update requires update_symbols")
+                raise OperandError("findata/tushare/daily_basic update requires update_symbols")
             requested = DateRange(self.today, self.today + timedelta(days=1))
         elif operation in {"complete", "refresh"}:
             selectors = _string_array(operands, "symbols")
@@ -496,16 +571,16 @@ class DatasetService:
         if due_end <= requested.start:
             if operation != "update":
                 raise OperandError(
-                    f"tushare_daily_basic {operation} range is entirely before the "
+                    f"findata/tushare/daily_basic {operation} range is entirely before the "
                     "publication window; nothing is due yet"
                 )
             if self._reporter is not None:
                 self._reporter.log("no daily_basic data is due yet")
             try:
-                return self.loader.dataset("tushare_daily_basic").publication_id
+                return self.loader.dataset("findata/tushare/daily_basic").publication_id
             except DataLoaderError as exc:
                 raise OperandError(
-                    "tushare_daily_basic update has no due work and the dataset is "
+                    "findata/tushare/daily_basic update has no due work and the dataset is "
                     "uninitialized; run complete with a historical range first"
                 ) from exc
         requested = DateRange(requested.start, due_end)
@@ -515,11 +590,11 @@ class DatasetService:
             "timerange": _format_range(requested),
         }
         if self._reporter is not None and hasattr(self._reporter, "fulfill"):
-            self._reporter.fulfill("tushare_trade_cal", trade_requirement)
+            self._reporter.fulfill("findata/tushare/trade_cal", trade_requirement)
         else:
             self._trade_cal("complete", trade_requirement)
         symbols = self._resolve_symbols(selectors, requested)
-        spec = TUSHARE_DATASETS["tushare_daily_basic"]
+        spec = TUSHARE_DATASETS["findata/tushare/daily_basic"]
         existing_coverage = self._coverage_map(spec.name)
         if operation == "refresh":
             for symbol in symbols:
@@ -567,7 +642,7 @@ class DatasetService:
         start = min(interval.start for _, interval in jobs)
         end = max(interval.end for _, interval in jobs)
         try:
-            table = self.loader.dataset("tushare_trade_cal").query(
+            table = self.loader.dataset("findata/tushare/trade_cal").query(
                 keys=["SSE", "SZSE"],
                 time_range=(start, end),
                 columns=["cal_date"],
@@ -748,7 +823,7 @@ class DatasetService:
                     "timerange": f"{fetch_start.isoformat()}:{fetch_end.isoformat()}",
                 }
                 if self._reporter is not None and hasattr(self._reporter, "fulfill"):
-                    self._reporter.fulfill("tushare_index_weight", requirement)
+                    self._reporter.fulfill("findata/tushare/index_weight", requirement)
                 else:
                     self._index_weight("complete", requirement)
 
@@ -756,7 +831,7 @@ class DatasetService:
                 resolve_constituents(
                     self.loader,
                     ConstituentRequest(
-                        "tushare_index_weight",
+                        "findata/tushare/index_weight",
                         index,
                         "con_code",
                         interval.start,
@@ -775,7 +850,7 @@ class DatasetService:
             code = _canonical_index(reference)
             try:
                 found = (
-                    self.loader.dataset("tushare_index_basic")
+                    self.loader.dataset("findata/tushare/index_basic")
                     .query(filters=[("ts_code", "=", code)])
                     .num_rows
                 )
@@ -787,7 +862,7 @@ class DatasetService:
             return
         requirement = {"indexes": missing}
         if self._reporter is not None and hasattr(self._reporter, "fulfill"):
-            self._reporter.fulfill("tushare_index_basic", requirement)
+            self._reporter.fulfill("findata/tushare/index_basic", requirement)
         else:
             self._index_basic("complete", requirement)
 
@@ -859,21 +934,21 @@ def normalize_operation(
     if operation == "update":
         _require_no_operands(values)
         return {}
-    if dataset == "tushare_index_basic":
+    if dataset == "findata/tushare/index_basic":
         arrays = sorted(
             {_normalize_index_reference(value) for value in _string_array(values, "indexes")}
         )
         _require_keys(values, {"indexes"})
         return {"indexes": arrays}
     timerange = _timerange(values, today=today)
-    if dataset == "tushare_trade_cal":
+    if dataset == "findata/tushare/trade_cal":
         if timerange.end > today + timedelta(days=1):
             raise OperandError("future trade-calendar intervals cannot be completed")
         arrays = sorted(_string_array(values, "exchanges"))
         if set(arrays) - {"SSE", "SZSE"}:
             raise OperandError("trade calendar supports only SSE and SZSE")
         key = "exchanges"
-    elif dataset == "tushare_index_weight":
+    elif dataset == "findata/tushare/index_weight":
         arrays = sorted(
             {_normalize_index_reference(value) for value in _string_array(values, "indexes")}
         )
@@ -907,12 +982,12 @@ def dataset_description(
         "provider_ready": provider_ready,
         "capabilities": dict(spec.capabilities),
         "dependencies": {
-            "tushare_daily_basic": [
-                "tushare_trade_cal",
-                "tushare_index_basic",
-                "tushare_index_weight",
+            "findata/tushare/daily_basic": [
+                "findata/tushare/trade_cal",
+                "findata/tushare/index_basic",
+                "findata/tushare/index_weight",
             ],
-            "tushare_index_weight": ["tushare_index_basic"],
+            "findata/tushare/index_weight": ["findata/tushare/index_basic"],
         }.get(dataset, []),
         "settings": _dataset_settings(workspace, dataset),
         "storage": "duckdb",
@@ -924,48 +999,48 @@ def dataset_description(
 
 _OPERATION_HELP: dict[tuple[str, str], str] = {
     (
-        "tushare_trade_cal",
+        "findata/tushare/trade_cal",
         "update",
     ): "Extend both SSE and SZSE calendars through tomorrow; parameterless.",
     (
-        "tushare_trade_cal",
+        "findata/tushare/trade_cal",
         "complete",
     ): "Fetch the requested historical civil-date range for the selected exchanges.",
     (
-        "tushare_stock_basic",
+        "findata/tushare/stock_basic",
         "update",
     ): "Fetch the complete A-share security table and replace the committed snapshot; "
     "parameterless.",
     (
-        "tushare_index_basic",
+        "findata/tushare/index_basic",
         "update",
     ): "Refresh the already-committed tracked indexes; parameterless.",
     (
-        "tushare_index_basic",
+        "findata/tushare/index_basic",
         "complete",
     ): "Fetch the explicitly requested index references and merge them into the tracked table.",
     (
-        "tushare_index_weight",
+        "findata/tushare/index_weight",
         "update",
     ): "Extend the configured indexes through the current month; requires "
-    "dataset.tushare_index_weight.update_indexes.",
+    "dataset.findata/tushare/index_weight.update_indexes.",
     (
-        "tushare_index_weight",
+        "findata/tushare/index_weight",
         "complete",
     ): "Fetch every intersecting calendar month for the requested index references, extending "
     "continuous monthly coverage.",
     (
-        "tushare_daily_basic",
+        "findata/tushare/daily_basic",
         "update",
     ): "Resolve the configured symbols for the latest due trading date; requires "
-    "dataset.tushare_daily_basic.update_symbols.",
+    "dataset.findata/tushare/daily_basic.update_symbols.",
     (
-        "tushare_daily_basic",
+        "findata/tushare/daily_basic",
         "complete",
     ): "Backfill or extend the requested symbols over the range; a disjoint range is extended "
     "toward existing coverage until the intervals abut.",
     (
-        "tushare_daily_basic",
+        "findata/tushare/daily_basic",
         "refresh",
     ): "Re-fetch the requested symbols strictly inside their existing resolved coverage.",
 }
@@ -987,15 +1062,15 @@ def operation_description(dataset: str, operation: str) -> dict[str, Any]:
     if operation == "update":
         return {"name": operation, "help": help_text, "required": [], "properties": {}}
     key = {
-        "tushare_trade_cal": "exchanges",
-        "tushare_index_basic": "indexes",
-        "tushare_index_weight": "indexes",
-        "tushare_daily_basic": "symbols",
+        "findata/tushare/trade_cal": "exchanges",
+        "findata/tushare/index_basic": "indexes",
+        "findata/tushare/index_weight": "indexes",
+        "findata/tushare/daily_basic": "symbols",
     }[dataset]
     return {
         "name": operation,
         "help": help_text,
-        "required": [key] if dataset == "tushare_index_basic" else [key, "timerange"],
+        "required": [key] if dataset == "findata/tushare/index_basic" else [key, "timerange"],
         "properties": {
             key: {
                 "type": "array",
@@ -1005,7 +1080,7 @@ def operation_description(dataset: str, operation: str) -> dict[str, Any]:
             },
             **(
                 {}
-                if dataset == "tushare_index_basic"
+                if dataset == "findata/tushare/index_basic"
                 else {
                     "timerange": {
                         "type": "string",
@@ -1040,7 +1115,7 @@ def plan_operation(
     estimated_requests: int | None = None
     if operation == "update":
         strategy = "configured update"
-    elif dataset == "tushare_daily_basic":
+    elif dataset == "findata/tushare/daily_basic":
         symbols = list(normalized["symbols"])
         if all(not value.startswith("tushare:") for value in symbols):
             strategy = (
@@ -1050,13 +1125,13 @@ def plan_operation(
             estimated_requests = len(symbols)
         else:
             strategy = "selector resolution required"
-    elif dataset == "tushare_trade_cal":
+    elif dataset == "findata/tushare/trade_cal":
         strategy = "one request per exchange"
         estimated_requests = len(normalized["exchanges"])
-    elif dataset == "tushare_index_basic":
+    elif dataset == "findata/tushare/index_basic":
         strategy = "one request per index"
         estimated_requests = len(normalized["indexes"])
-    elif dataset == "tushare_index_weight":
+    elif dataset == "findata/tushare/index_weight":
         strategy = "one request per uncovered index-month"
 
     return {
@@ -1074,11 +1149,11 @@ def plan_operation(
 def _operation_names(dataset: str) -> list[str]:
     try:
         return {
-            "tushare_trade_cal": ["update", "complete"],
-            "tushare_stock_basic": ["update"],
-            "tushare_index_basic": ["update", "complete"],
-            "tushare_index_weight": ["update", "complete"],
-            "tushare_daily_basic": ["update", "complete", "refresh"],
+            "findata/tushare/trade_cal": ["update", "complete"],
+            "findata/tushare/stock_basic": ["update"],
+            "findata/tushare/index_basic": ["update", "complete"],
+            "findata/tushare/index_weight": ["update", "complete"],
+            "findata/tushare/daily_basic": ["update", "complete", "refresh"],
         }[dataset]
     except KeyError as exc:
         raise OperandError(f"unknown dataset {dataset!r}") from exc

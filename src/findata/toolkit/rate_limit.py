@@ -64,9 +64,7 @@ class FileRateLimiter:
         descriptor, temporary = tempfile.mkstemp(prefix=".rate-", dir=self.path.parent)
         try:
             with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-                json.dump(
-                    {"tokens": tokens, "updated": updated}, stream, separators=(",", ":")
-                )
+                json.dump({"tokens": tokens, "updated": updated}, stream, separators=(",", ":"))
                 stream.flush()
                 os.fsync(stream.fileno())
             os.chmod(temporary, 0o600)

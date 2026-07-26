@@ -31,7 +31,10 @@ class PluginRegistryTests(unittest.TestCase):
             workspace = Workspace.init(Path(directory))
             register_plugins(workspace, plugins, providers=[tushare_provider_plugin()])
             self.assertEqual(
-                {path.name for path in workspace.datasets_root.iterdir()},
+                {
+                    str(path.parent.relative_to(workspace.datasets_root))
+                    for path in workspace.datasets_root.rglob("dataset.duckdb")
+                },
                 {plugin.name for plugin in plugins},
             )
 

@@ -48,6 +48,7 @@ def default_display_timezone() -> str:
         return name
     return FALLBACK_DISPLAY_TIMEZONE
 
+
 TIMESTAMP_FIELDS = {
     "created_at",
     "updated_at",

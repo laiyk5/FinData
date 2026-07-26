@@ -1,5 +1,5 @@
 ✓ Task succeeded
-  Dataset      tushare_trade_cal
+  Dataset      findata/tushare/trade_cal
   Operation    complete
   Task         <ID>
   Publication  <ID>

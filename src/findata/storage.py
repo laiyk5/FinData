@@ -19,7 +19,7 @@ from typing import Any, Literal
 import duckdb
 import pyarrow as pa
 
-from findata.contracts import DatasetSpec
+from findata.contracts import DatasetSpec, validate_dataset_name
 
 
 WORKSPACE_VERSION = 1
@@ -302,11 +302,11 @@ class Workspace:
         removed = 0
         if not self.datasets_root.exists():
             return removed
-        for dataset_root in self.datasets_root.iterdir():
-            database = dataset_root / DATABASE_NAME
+        for database in sorted(self.datasets_root.rglob(DATABASE_NAME)):
+            dataset_root = database.parent
             if not dataset_root.is_dir() or not database.is_file():
                 continue
-            name = dataset_root.name
+            name = str(dataset_root.relative_to(self.datasets_root))
             deadline = time.monotonic() + timeout
 
             def waiting(reason: str, *, dataset: str = name) -> None:
@@ -482,10 +482,8 @@ def decode_schema(value: str) -> pa.Schema:
 
 def dataset_root_path(datasets_root: Path, name: str) -> Path:
     """Resolve one dataset directory without permitting traversal outside its owner root."""
-    value = str(name)
-    if not value or value in {".", ".."} or Path(value).name != value:
-        raise ValueError(f"invalid dataset name {value!r}")
-    return Path(datasets_root) / value
+    components = validate_dataset_name(name)
+    return Path(datasets_root).joinpath(*components)
 
 
 def _create_database(dataset_root: Path, spec: DatasetSpec) -> Path:

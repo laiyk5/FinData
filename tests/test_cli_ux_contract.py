@@ -28,9 +28,7 @@ class TTYBuffer(io.StringIO):
         return True
 
 
-def diagnostic_worker(
-    request: dict[str, object], context: TaskContext
-) -> dict[str, object]:
+def diagnostic_worker(request: dict[str, object], context: TaskContext) -> dict[str, object]:
     context.log("started")
     context.diagnostic(
         "warning",
@@ -126,9 +124,7 @@ class PrefixHTTPTests(unittest.TestCase):
             caught.exception.close()
 
         event = self.server.events.record("example", "error", "example failure")
-        result = self.request(
-            "POST", "/v1/events/ack", {"event_id": event.event_id[:8]}
-        )
+        result = self.request("POST", "/v1/events/ack", {"event_id": event.event_id[:8]})
         self.assertEqual(result["event_id"], event.event_id)
 
     def test_cli_uses_the_workspace_display_timezone(self) -> None:
@@ -137,9 +133,7 @@ class PrefixHTTPTests(unittest.TestCase):
             "/v1/config",
             {"key": "display.timezone", "value": "Asia/Shanghai"},
         )
-        self.server.events.record(
-            "epoch", "warning", "epoch warning", timestamp=0
-        )
+        self.server.events.record("epoch", "warning", "epoch warning", timestamp=0)
         stdout = io.StringIO()
         stderr = io.StringIO()
 

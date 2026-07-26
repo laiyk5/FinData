@@ -775,9 +775,9 @@ def _local_dataset_completion(
         return []
     datasets = workspace / "datasets"
     candidates = sorted(
-        item.name
-        for item in datasets.iterdir()
-        if item.is_dir() and (item / DATABASE_NAME).is_file()
+        str(item.parent.relative_to(datasets))
+        for item in datasets.rglob(DATABASE_NAME)
+        if item.is_file()
     )
     prefix = words[2] if len(words) == 3 else ""
     return [item for item in candidates if item.startswith(prefix)]

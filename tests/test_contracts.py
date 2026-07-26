@@ -33,16 +33,16 @@ class DatasetContractTests(unittest.TestCase):
         self.assertEqual(
             set(TUSHARE_DATASETS),
             {
-                "tushare_trade_cal",
-                "tushare_stock_basic",
-                "tushare_index_basic",
-                "tushare_index_weight",
-                "tushare_daily_basic",
+                "findata/tushare/trade_cal",
+                "findata/tushare/stock_basic",
+                "findata/tushare/index_basic",
+                "findata/tushare/index_weight",
+                "findata/tushare/daily_basic",
             },
         )
 
     def test_trade_calendar_schema_normalizes_provider_values(self) -> None:
-        spec = TUSHARE_DATASETS["tushare_trade_cal"]
+        spec = TUSHARE_DATASETS["findata/tushare/trade_cal"]
 
         self.assertEqual(spec.api_name, "trade_cal")
         self.assertEqual(spec.primary_key, ("exchange", "cal_date"))
@@ -61,7 +61,7 @@ class DatasetContractTests(unittest.TestCase):
         )
 
     def test_index_weight_adds_effective_month_to_provider_fields(self) -> None:
-        spec = TUSHARE_DATASETS["tushare_index_weight"]
+        spec = TUSHARE_DATASETS["findata/tushare/index_weight"]
 
         self.assertEqual(spec.api_name, "index_weight")
         self.assertEqual(
@@ -74,7 +74,7 @@ class DatasetContractTests(unittest.TestCase):
         self.assertEqual(spec.aliases, {})
 
     def test_index_basic_accepts_the_documented_output_without_symbol(self) -> None:
-        spec = TUSHARE_DATASETS["tushare_index_basic"]
+        spec = TUSHARE_DATASETS["findata/tushare/index_basic"]
         fields = [
             "ts_code",
             "name",
@@ -117,7 +117,7 @@ class DatasetContractTests(unittest.TestCase):
         self.assertEqual(table.column("base_date").to_pylist(), [date(2004, 12, 31)])
 
     def test_daily_basic_schema_matches_declared_logical_contract(self) -> None:
-        spec = TUSHARE_DATASETS["tushare_daily_basic"]
+        spec = TUSHARE_DATASETS["findata/tushare/daily_basic"]
 
         self.assertEqual(len(spec.schema), 19)
         self.assertEqual(spec.schema.field("trade_date").type, pa.date32())

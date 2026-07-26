@@ -170,8 +170,8 @@ def _daily_basic_schema() -> pa.Schema:
 
 
 TUSHARE_DATASETS: Mapping[str, DatasetSpec] = {
-    "tushare_trade_cal": DatasetSpec(
-        name="tushare_trade_cal",
+    "findata/tushare/trade_cal": DatasetSpec(
+        name="findata/tushare/trade_cal",
         api_name="trade_cal",
         schema=pa.schema(
             [
@@ -188,16 +188,16 @@ TUSHARE_DATASETS: Mapping[str, DatasetSpec] = {
         capabilities={"time_accumulating": True},
         normalize_rows=_normalize_trade_cal,
     ),
-    "tushare_stock_basic": DatasetSpec(
-        name="tushare_stock_basic",
+    "findata/tushare/stock_basic": DatasetSpec(
+        name="findata/tushare/stock_basic",
         api_name="stock_basic",
         schema=_stock_basic_schema(),
         provider_fields=STOCK_BASIC_FIELDS,
         primary_key=("ts_code",),
         normalize_rows=_normalize_stock_basic,
     ),
-    "tushare_index_basic": DatasetSpec(
-        name="tushare_index_basic",
+    "findata/tushare/index_basic": DatasetSpec(
+        name="findata/tushare/index_basic",
         api_name="index_basic",
         schema=pa.schema(
             [
@@ -220,8 +220,8 @@ TUSHARE_DATASETS: Mapping[str, DatasetSpec] = {
         primary_key=("ts_code",),
         normalize_rows=_normalize_index_basic,
     ),
-    "tushare_index_weight": DatasetSpec(
-        name="tushare_index_weight",
+    "findata/tushare/index_weight": DatasetSpec(
+        name="findata/tushare/index_weight",
         api_name="index_weight",
         schema=pa.schema(
             [
@@ -241,8 +241,8 @@ TUSHARE_DATASETS: Mapping[str, DatasetSpec] = {
         capabilities={"time_accumulating": True},
         normalize_rows=_normalize_index_weight,
     ),
-    "tushare_daily_basic": DatasetSpec(
-        name="tushare_daily_basic",
+    "findata/tushare/daily_basic": DatasetSpec(
+        name="findata/tushare/daily_basic",
         api_name="daily_basic",
         schema=_daily_basic_schema(),
         provider_fields=DAILY_BASIC_FIELDS,
@@ -259,33 +259,35 @@ TUSHARE_DATASETS: Mapping[str, DatasetSpec] = {
 def builtin_plugins() -> list["DatasetPlugin"]:
     from findata.plugins import DatasetPlugin, SettingSpec
 
+    from findata_tushare.datasets.operations import TushareDatasetRuntime
+
     definitions = {
-        "tushare_trade_cal": (("update", "complete"), ()),
-        "tushare_stock_basic": (("update",), ()),
-        "tushare_index_basic": (("update", "complete"), ()),
-        "tushare_index_weight": (("update", "complete"), ("tushare_index_basic",)),
-        "tushare_daily_basic": (
+        "findata/tushare/trade_cal": (("update", "complete"), ()),
+        "findata/tushare/stock_basic": (("update",), ()),
+        "findata/tushare/index_basic": (("update", "complete"), ()),
+        "findata/tushare/index_weight": (("update", "complete"), ("tushare/index_basic",)),
+        "findata/tushare/daily_basic": (
             ("update", "complete", "refresh"),
-            ("tushare_trade_cal", "tushare_index_basic", "tushare_index_weight"),
+            ("tushare/trade_cal", "tushare/index_basic", "tushare/index_weight"),
         ),
     }
     schedules = {
-        "tushare_trade_cal": ("0 9 * * 1", "Asia/Shanghai"),
-        "tushare_stock_basic": ("0 8 * * 1", "Asia/Shanghai"),
-        "tushare_index_weight": ("0 18 * * 1", "Asia/Shanghai"),
-        "tushare_daily_basic": ("40 17 * * 1-5", "Asia/Shanghai"),
+        "findata/tushare/trade_cal": ("0 9 * * 1", "Asia/Shanghai"),
+        "findata/tushare/stock_basic": ("0 8 * * 1", "Asia/Shanghai"),
+        "findata/tushare/index_weight": ("0 18 * * 1", "Asia/Shanghai"),
+        "findata/tushare/daily_basic": ("40 17 * * 1-5", "Asia/Shanghai"),
     }
     settings = {
-        "tushare_index_weight": {
-            "dataset.tushare_index_weight.update_indexes": SettingSpec(
+        "findata/tushare/index_weight": {
+            "dataset.findata/tushare/index_weight.update_indexes": SettingSpec(
                 schema={"type": "array", "minItems": 1, "items": {"type": "string"}},
                 normalize=_normalize_update_indexes,
                 help="Exact Tushare index references maintained by update.",
                 required=True,
             )
         },
-        "tushare_daily_basic": {
-            "dataset.tushare_daily_basic.update_symbols": SettingSpec(
+        "findata/tushare/daily_basic": {
+            "dataset.findata/tushare/daily_basic.update_symbols": SettingSpec(
                 schema={"type": "array", "minItems": 1, "items": {"type": "string"}},
                 normalize=_normalize_update_symbols,
                 help="Direct securities and Tushare constituent selectors maintained by update.",
@@ -298,6 +300,7 @@ def builtin_plugins() -> list["DatasetPlugin"]:
             name=name,
             provider="tushare",
             spec=TUSHARE_DATASETS[name],
+            runtime=TushareDatasetRuntime(name),
             operations=operations,
             dependencies=dependencies,
             settings=settings.get(name, {}),
@@ -345,7 +348,7 @@ def _materialized(workspace: Any, code: str) -> bool:
     try:
         return (
             DataLoader(workspace.root)
-            .dataset("tushare_index_basic")
+            .dataset("findata/tushare/index_basic")
             .query(filters=[("ts_code", "=", code)])
             .num_rows
             > 0
@@ -370,7 +373,7 @@ def _normalize_update_indexes(value: Any, workspace: Any) -> list[str]:
         code = _index_code(item, allow_suffix=False)
         if not _materialized(workspace, code):
             raise ValueError(
-                f"unknown index {item!r}; run tushare_index_basic complete for it first"
+                f"unknown index {item!r}; run findata/tushare/index_basic complete for it first"
             )
     return sorted(values)
 
@@ -383,6 +386,6 @@ def _normalize_update_symbols(value: Any, workspace: Any) -> list[str]:
         code = _index_code(item, allow_suffix=True)
         if not _materialized(workspace, code):
             raise ValueError(
-                f"unknown index {item!r}; run tushare_index_basic complete for it first"
+                f"unknown index {item!r}; run findata/tushare/index_basic complete for it first"
             )
     return sorted(values)

@@ -105,7 +105,7 @@ class TaskRunnerTests(unittest.TestCase):
     def test_execution_runs_in_child_process_and_persists_progress_and_logs(self) -> None:
         with TaskRunner(self.root, successful_worker, global_concurrency=2) as runner:
             handle_id = runner.submit(
-                "tushare_trade_cal",
+                "findata/tushare/trade_cal",
                 "complete",
                 {"exchanges": ["SSE"], "timerange": "2026-07-01:2026-07-02"},
             )
@@ -168,7 +168,7 @@ class TaskRunnerTests(unittest.TestCase):
 
     def test_canceled_execution_logs_the_terminal_state(self) -> None:
         with TaskRunner(self.root, slow_worker, cancel_grace=0.2) as runner:
-            handle_id = runner.submit("tushare_daily_basic", "complete", {"duration": 10.0})
+            handle_id = runner.submit("findata/tushare/daily_basic", "complete", {"duration": 10.0})
             runner.wait_for_status(handle_id, {"running"}, timeout=TASK_TIMEOUT)
             runner.cancel(handle_id)
 
@@ -203,8 +203,10 @@ class TaskRunnerTests(unittest.TestCase):
             "timerange": "2026-07-01:2026-07-02",
         }
         with TaskRunner(self.root, slow_worker, global_concurrency=2) as runner:
-            first = runner.submit("tushare_daily_basic", "complete", operands, owner="alice")
-            second = runner.submit("tushare_daily_basic", "complete", operands, owner="bob")
+            first = runner.submit(
+                "findata/tushare/daily_basic", "complete", operands, owner="alice"
+            )
+            second = runner.submit("findata/tushare/daily_basic", "complete", operands, owner="bob")
 
             self.assertNotEqual(first, second)
             self.assertEqual(runner.status(first).execution_id, runner.status(second).execution_id)
@@ -216,8 +218,8 @@ class TaskRunnerTests(unittest.TestCase):
 
     def test_parameterless_updates_never_coalesce_and_serialize_per_dataset(self) -> None:
         with TaskRunner(self.root, slow_worker, global_concurrency=2) as runner:
-            first = runner.submit("tushare_stock_basic", "update", {"duration": 0.08})
-            second = runner.submit("tushare_stock_basic", "update", {"duration": 0.08})
+            first = runner.submit("findata/tushare/stock_basic", "update", {"duration": 0.08})
+            second = runner.submit("findata/tushare/stock_basic", "update", {"duration": 0.08})
 
             self.assertNotEqual(
                 runner.status(first).execution_id, runner.status(second).execution_id
@@ -244,23 +246,23 @@ class TaskRunnerTests(unittest.TestCase):
             global_concurrency=1,
             per_dataset_queue_limit=2,
         ) as runner:
-            running = runner.submit("tushare_daily_basic", "update", {"duration": 0.3})
-            queued_one = runner.submit("tushare_daily_basic", "update", {"duration": 0.2})
-            queued_two = runner.submit("tushare_daily_basic", "complete", {"duration": 0.2})
-            shared = runner.submit("tushare_daily_basic", "complete", {"duration": 0.2})
+            running = runner.submit("findata/tushare/daily_basic", "update", {"duration": 0.3})
+            queued_one = runner.submit("findata/tushare/daily_basic", "update", {"duration": 0.2})
+            queued_two = runner.submit("findata/tushare/daily_basic", "complete", {"duration": 0.2})
+            shared = runner.submit("findata/tushare/daily_basic", "complete", {"duration": 0.2})
 
             self.assertEqual(
                 runner.status(queued_two).execution_id, runner.status(shared).execution_id
             )
             with self.assertRaises(QueueFullError):
-                runner.submit("tushare_daily_basic", "refresh", {"duration": 0.2})
+                runner.submit("findata/tushare/daily_basic", "refresh", {"duration": 0.2})
 
             for handle in (running, queued_one, queued_two, shared):
                 runner.cancel(handle)
 
     def test_canceling_last_subscriber_stops_execution_after_cooperative_checkpoint(self) -> None:
         with TaskRunner(self.root, slow_worker, cancel_grace=0.2) as runner:
-            handle = runner.submit("tushare_daily_basic", "complete", {"duration": 10.0})
+            handle = runner.submit("findata/tushare/daily_basic", "complete", {"duration": 10.0})
             runner.wait_for_status(handle, {"running"}, timeout=TASK_TIMEOUT)
 
             cancellation = runner.cancel(handle)
@@ -272,7 +274,7 @@ class TaskRunnerTests(unittest.TestCase):
     def test_recovery_marks_active_records_failed_with_server_interrupted(self) -> None:
         runner = TaskRunner(self.root, slow_worker, cancel_grace=0.1)
         runner.start()
-        handle = runner.submit("tushare_daily_basic", "complete", {"duration": 10.0})
+        handle = runner.submit("findata/tushare/daily_basic", "complete", {"duration": 10.0})
         runner.wait_for_status(handle, {"running"}, timeout=TASK_TIMEOUT)
         runner.crash_for_test()
 
@@ -298,7 +300,7 @@ class TaskRunnerTests(unittest.TestCase):
             dependency_resolver=resolve_v1_dependency,
         ) as runner:
             handle = runner.submit(
-                "tushare_daily_basic",
+                "findata/tushare/daily_basic",
                 "complete",
                 {
                     "symbols": ["tushare:000300.SH"],
@@ -323,10 +325,10 @@ class TaskRunnerTests(unittest.TestCase):
         self.assertEqual(
             {item.dataset for item in handles},
             {
-                "tushare_daily_basic",
-                "tushare_trade_cal",
-                "tushare_index_basic",
-                "tushare_index_weight",
+                "findata/tushare/daily_basic",
+                "findata/tushare/trade_cal",
+                "findata/tushare/index_basic",
+                "findata/tushare/index_weight",
             },
         )
         self.assertTrue(
@@ -334,7 +336,7 @@ class TaskRunnerTests(unittest.TestCase):
         )
         table = (
             DataLoader(self.root)
-            .dataset("tushare_daily_basic")
+            .dataset("findata/tushare/daily_basic")
             .query(
                 keys=["000001.SZ", "600000.SH", "600519.SH"],
                 time_range=("2026-06-29", "2026-07-04"),
@@ -396,7 +398,7 @@ class TaskRunnerTests(unittest.TestCase):
             events.append((kind, severity, message, context))
 
         with TaskRunner(self.root, liveness_worker, event_sink=sink) as runner:
-            handle = runner.submit("tushare_stock_basic", "update", {})
+            handle = runner.submit("findata/tushare/stock_basic", "update", {})
             result = runner.wait(handle, timeout=TASK_TIMEOUT)
 
         self.assertEqual(result.status, "succeeded")
@@ -406,14 +408,14 @@ class TaskRunnerTests(unittest.TestCase):
     def test_rate_limit_wait_is_cancelable_and_releases_global_slot(self) -> None:
         with TaskRunner(self.root, rate_wait_worker, global_concurrency=1) as runner:
             waiting = runner.submit(
-                "tushare_trade_cal",
+                "findata/tushare/trade_cal",
                 "complete",
                 {"path": str(self.root / "provider-rate.json")},
             )
             runner.wait_for_status(waiting, {"waiting"}, timeout=TASK_TIMEOUT)
             self.assertEqual(runner.status(waiting).reason, "provider_rate_limit")
             quick = runner.submit(
-                "tushare_stock_basic", "update", {"path": str(self.root / "fast-rate.json")}
+                "findata/tushare/stock_basic", "update", {"path": str(self.root / "fast-rate.json")}
             )
             # The second task also waits for its own empty bucket, proving it was dispatched
             # while the first waiting task no longer occupied global capacity.
@@ -427,7 +429,9 @@ class TaskRunnerTests(unittest.TestCase):
         with TaskRunner(self.root, successful_worker, terminal_history=2) as runner:
             handles = []
             for sequence in range(3):
-                handle = runner.submit("tushare_stock_basic", "update", {"sequence": sequence})
+                handle = runner.submit(
+                    "findata/tushare/stock_basic", "update", {"sequence": sequence}
+                )
                 runner.wait(handle, timeout=TASK_TIMEOUT)
                 handles.append(handle)
 

@@ -54,9 +54,7 @@ def resolve_constituents(
         }
     )
     if not available:
-        raise ValueError(
-            f"no constituent snapshot exists before {request.end.isoformat()}"
-        )
+        raise ValueError(f"no constituent snapshot exists before {request.end.isoformat()}")
     if request.selection == "latest":
         selected = {available[-1]}
     else:

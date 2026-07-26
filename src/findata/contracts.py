@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date, timedelta
+import re
 from types import MappingProxyType
 from typing import Any, Protocol, TypedDict, runtime_checkable
 
@@ -15,6 +16,32 @@ class OperandError(ValueError):
 
 class DatasetDataError(ValueError):
     """Provider data violates a registered dataset contract."""
+
+
+_DATASET_COMPONENT = re.compile(r"[a-z][a-z0-9_-]*\Z")
+
+
+def validate_dataset_name(value: str) -> tuple[str, ...]:
+    """Return the components of a full dataset name, or raise ValueError.
+
+    A dataset name is ``<author>/<free/path/...>``: the first component is the
+    publisher namespace; everything below it is author-chosen classification
+    that core treats as opaque.
+    """
+    components = tuple(str(value).split("/"))
+    if len(components) < 2 or any(
+        not _DATASET_COMPONENT.fullmatch(component) for component in components
+    ):
+        raise ValueError(
+            f"invalid dataset name {value!r}; expected <author>/<path> with "
+            "lowercase [a-z0-9_-] components"
+        )
+    return components
+
+
+def dataset_author(name: str) -> str:
+    """The publisher namespace (first component) of a full dataset name."""
+    return str(name).split("/", 1)[0]
 
 
 @dataclass(frozen=True, slots=True)

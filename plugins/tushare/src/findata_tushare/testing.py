@@ -221,7 +221,7 @@ class MockTushareTransport:
                         "limit_status": seed % 7,
                     }
                     for index, field in enumerate(
-                        TUSHARE_DATASETS["tushare_daily_basic"].provider_fields[2:-1]
+                        TUSHARE_DATASETS["findata/tushare/daily_basic"].provider_fields[2:-1]
                     ):
                         row[field] = round((seed % 1000 + index + 1) / 10.0, 4)
                     result.append(row)

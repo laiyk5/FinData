@@ -36,7 +36,7 @@ class RealTushareContractTests(unittest.TestCase):
         client = self.client()
 
         table = client.query(
-            TUSHARE_DATASETS["tushare_trade_cal"],
+            TUSHARE_DATASETS["findata/tushare/trade_cal"],
             exchange="SSE",
             start_date="20260720",
             end_date="20260720",
@@ -46,13 +46,17 @@ class RealTushareContractTests(unittest.TestCase):
         self.assertEqual(table.num_rows, 1)
 
     def test_10_stock_basic_exact_code_contract(self) -> None:
-        table = self.client().query(TUSHARE_DATASETS["tushare_stock_basic"], ts_code="600000.SH")
+        table = self.client().query(
+            TUSHARE_DATASETS["findata/tushare/stock_basic"], ts_code="600000.SH"
+        )
 
         self.assertEqual(table.num_rows, 1)
         self.assertEqual(table.column("ts_code").to_pylist(), ["600000.SH"])
 
     def test_20_index_basic_exact_code_contract(self) -> None:
-        table = self.client().query(TUSHARE_DATASETS["tushare_index_basic"], ts_code="000300.SH")
+        table = self.client().query(
+            TUSHARE_DATASETS["findata/tushare/index_basic"], ts_code="000300.SH"
+        )
 
         self.assertEqual(table.num_rows, 1)
         self.assertEqual(table.column("ts_code").to_pylist(), ["000300.SH"])
@@ -60,7 +64,7 @@ class RealTushareContractTests(unittest.TestCase):
 
     def test_30_index_weight_month_contract(self) -> None:
         table = self.client().query(
-            TUSHARE_DATASETS["tushare_index_weight"],
+            TUSHARE_DATASETS["findata/tushare/index_weight"],
             index_code="000300.SH",
             start_date="20260601",
             end_date="20260630",
@@ -72,7 +76,7 @@ class RealTushareContractTests(unittest.TestCase):
 
     def test_40_daily_basic_exact_symbol_contract(self) -> None:
         table = self.client().query(
-            TUSHARE_DATASETS["tushare_daily_basic"],
+            TUSHARE_DATASETS["findata/tushare/daily_basic"],
             ts_code="600000.SH",
             start_date="20260630",
             end_date="20260630",
@@ -90,17 +94,17 @@ class RealTushareContractTests(unittest.TestCase):
             service = DatasetService(workspace, self.client(), today=date(2026, 7, 22))
 
             calendar = service.run(
-                "tushare_trade_cal",
+                "findata/tushare/trade_cal",
                 "complete",
                 {"exchanges": ["SSE", "SZSE"], "timerange": "2026-06-30:2026-07-01"},
             )
             index = service.run(
-                "tushare_index_basic",
+                "findata/tushare/index_basic",
                 "complete",
                 {"indexes": ["tushare:000300.SH"]},
             )
             weights = service.run(
-                "tushare_index_weight",
+                "findata/tushare/index_weight",
                 "complete",
                 {
                     "indexes": ["tushare:000300.SH"],
@@ -113,7 +117,7 @@ class RealTushareContractTests(unittest.TestCase):
             self.assertEqual(weights.fetched_requests, 1)
             stored = (
                 DataLoader(root)
-                .dataset("tushare_index_weight")
+                .dataset("findata/tushare/index_weight")
                 .query(
                     keys=["000300.SH"],
                     time_range=("2026-06-01", "2026-07-01"),

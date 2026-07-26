@@ -113,9 +113,11 @@ class CronManagerTests(unittest.TestCase):
         jobs = self.manager.list_jobs(now=datetime(2026, 7, 20, 0, 0, tzinfo=UTC))
         self.assertEqual(len(jobs), 4)
         self.assertTrue(all(not job.enabled for job in jobs))
-        self.manager.enable("tushare_daily_basic", now=datetime(2026, 7, 20, 0, 0, tzinfo=UTC))
+        self.manager.enable(
+            "findata/tushare/daily_basic", now=datetime(2026, 7, 20, 0, 0, tzinfo=UTC)
+        )
         self.manager.tick(datetime(2026, 7, 20, 9, 40, tzinfo=UTC))
-        self.assertEqual(self.submissions, [("tushare_daily_basic", "update", {})])
+        self.assertEqual(self.submissions, [("findata/tushare/daily_basic", "update", {})])
 
     def test_failed_precondition_skips_and_records_actionable_event(self) -> None:
         manager = CronManager(
@@ -127,31 +129,37 @@ class CronManagerTests(unittest.TestCase):
             suggested=_suggested_schedules(),
         )
         with self.assertRaises(ValueError):
-            manager.enable("tushare_daily_basic", now=datetime(2026, 7, 20, tzinfo=UTC))
+            manager.enable("findata/tushare/daily_basic", now=datetime(2026, 7, 20, tzinfo=UTC))
         self.assertEqual(self.events.list_events()[0].kind, "cron_skipped")
 
     def test_missed_run_is_recorded_without_submission(self) -> None:
-        self.manager.enable("tushare_trade_cal", now=datetime(2026, 7, 19, 0, 0, tzinfo=UTC))
+        self.manager.enable(
+            "findata/tushare/trade_cal", now=datetime(2026, 7, 19, 0, 0, tzinfo=UTC)
+        )
         self.manager.note_shutdown(datetime(2026, 7, 19, 1, 0, tzinfo=UTC))
         self.manager.recover(datetime(2026, 7, 20, 2, 0, tzinfo=UTC))
         self.assertEqual(self.submissions, [])
         self.assertEqual(self.events.list_events()[0].kind, "cron_missed")
 
     def test_repeated_tick_within_one_minute_does_not_kill_scheduler(self) -> None:
-        self.manager.enable("tushare_daily_basic", now=datetime(2026, 7, 20, 8, 0, tzinfo=UTC))
+        self.manager.enable(
+            "findata/tushare/daily_basic", now=datetime(2026, 7, 20, 8, 0, tzinfo=UTC)
+        )
         first = datetime(2026, 7, 20, 9, 0, 1, tzinfo=UTC)
 
         self.manager.tick(first)
         self.manager.tick(first + timedelta(seconds=10))
 
         self.assertEqual(
-            self.workspace.get_config("cron.jobs")["tushare_daily_basic"]["last_checked"],
+            self.workspace.get_config("cron.jobs")["findata/tushare/daily_basic"]["last_checked"],
             "2026-07-20T09:00:00+00:00",
         )
 
     def test_dst_gap_records_warning_event(self) -> None:
-        self.manager.set_schedule("tushare_trade_cal", "30 2 * * *", "Europe/Berlin")
-        self.manager.enable("tushare_trade_cal", now=datetime(2026, 3, 28, 12, 0, tzinfo=UTC))
+        self.manager.set_schedule("findata/tushare/trade_cal", "30 2 * * *", "Europe/Berlin")
+        self.manager.enable(
+            "findata/tushare/trade_cal", now=datetime(2026, 3, 28, 12, 0, tzinfo=UTC)
+        )
         self.manager.tick(datetime(2026, 3, 29, 3, 0, tzinfo=UTC))
         event = next(item for item in self.events.list_events() if item.kind == "cron_dst_gap")
         self.assertEqual(event.severity, "warning")

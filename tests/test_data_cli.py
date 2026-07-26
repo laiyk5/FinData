@@ -33,7 +33,7 @@ class DataCLITests(unittest.TestCase):
             today=date(2026, 7, 20),
         )
         service.run(
-            "tushare_daily_basic",
+            "findata/tushare/daily_basic",
             "complete",
             {
                 "symbols": ["600000.SH"],
@@ -52,7 +52,7 @@ class DataCLITests(unittest.TestCase):
                 str(self.root),
                 "data",
                 "preview",
-                "tushare_daily_basic",
+                "findata/tushare/daily_basic",
                 "--keys",
                 "600000.SH",
                 "--limit",
@@ -73,7 +73,7 @@ class DataCLITests(unittest.TestCase):
                 str(self.root),
                 "data",
                 "preview",
-                "tushare_daily_basic",
+                "findata/tushare/daily_basic",
                 "--keys",
                 "600000.SH",
                 "--columns",
@@ -97,7 +97,7 @@ class DataCLITests(unittest.TestCase):
                 str(self.root),
                 "data",
                 "preview",
-                "tushare_daily_basic",
+                "findata/tushare/daily_basic",
                 "--require-coverage",
                 "--allow-partial",
             ],
@@ -115,7 +115,7 @@ class DataCLITests(unittest.TestCase):
                 str(self.root),
                 "data",
                 "coverage",
-                "tushare_daily_basic",
+                "findata/tushare/daily_basic",
                 "--from",
                 "2026-07-01",
             ],
@@ -138,7 +138,7 @@ class DataCLITests(unittest.TestCase):
                 str(self.root),
                 "data",
                 "export",
-                "tushare_daily_basic",
+                "findata/tushare/daily_basic",
                 "--output-format",
                 "parquet",
                 "--output",
@@ -160,7 +160,7 @@ class DataCLITests(unittest.TestCase):
                 str(self.root),
                 "data",
                 "export",
-                "tushare_daily_basic",
+                "findata/tushare/daily_basic",
                 "--keys",
                 "600000.SH",
                 "--from",
@@ -181,8 +181,8 @@ class DataCLITests(unittest.TestCase):
         self.assertIn("partial coverage allowed", stderr.getvalue())
 
     def test_snapshot_writes_default_and_explicit_destinations(self) -> None:
-        default = self.run_json("data", "snapshot", "tushare_daily_basic")
-        default_path = self.root / "snapshots" / "tushare_daily_basic.duckdb"
+        default = self.run_json("data", "snapshot", "findata/tushare/daily_basic")
+        default_path = self.root / "snapshots" / "findata/tushare/daily_basic.duckdb"
         # The CLI resolves the workspace, so compare resolved paths.
         self.assertEqual(Path(default["path"]), default_path.resolve())
         self.assertTrue(default_path.is_file())
@@ -191,11 +191,13 @@ class DataCLITests(unittest.TestCase):
         self.assertGreater(rows[0], 0)
 
         explicit = self.root / "copies" / "daily.duckdb"
-        result = self.run_json("data", "snapshot", "tushare_daily_basic", "--output", str(explicit))
+        result = self.run_json(
+            "data", "snapshot", "findata/tushare/daily_basic", "--output", str(explicit)
+        )
         self.assertEqual(result["path"], str(explicit))
         self.assertTrue(explicit.is_file())
         # A repeated snapshot replaces the previous copy atomically.
-        second = self.run_json("data", "snapshot", "tushare_daily_basic")
+        second = self.run_json("data", "snapshot", "findata/tushare/daily_basic")
         self.assertEqual(Path(second["path"]), default_path.resolve())
 
     def run_json(self, *arguments: str) -> dict[str, object]:
@@ -212,7 +214,7 @@ class DataCLITests(unittest.TestCase):
         return json.loads(stdout.getvalue())
 
     def test_schema_preview_and_coverage_need_no_running_server(self) -> None:
-        schema = self.run_json("data", "schema", "tushare_daily_basic")
+        schema = self.run_json("data", "schema", "findata/tushare/daily_basic")
         self.assertEqual(schema["partition_key"], "ts_code")
         self.assertEqual(schema["time_field"], "trade_date")
         self.assertIn("trade_date", [field["name"] for field in schema["fields"]])
@@ -220,7 +222,7 @@ class DataCLITests(unittest.TestCase):
         preview = self.run_json(
             "data",
             "preview",
-            "tushare_daily_basic",
+            "findata/tushare/daily_basic",
             "--keys",
             "600000.SH",
             "--from",
@@ -233,14 +235,16 @@ class DataCLITests(unittest.TestCase):
         self.assertEqual(len(preview["items"]), 5)
         self.assertEqual(set(preview["items"][0]), {"ts_code", "trade_date", "close"})
 
-        coverage = self.run_json("data", "coverage", "tushare_daily_basic", "--keys", "600000.SH")
+        coverage = self.run_json(
+            "data", "coverage", "findata/tushare/daily_basic", "--keys", "600000.SH"
+        )
         self.assertEqual(coverage["items"][0]["start"], "2026-07-13")
         self.assertEqual(coverage["items"][0]["end"], "2026-07-18")
 
         checked = self.run_json(
             "data",
             "coverage",
-            "tushare_daily_basic",
+            "findata/tushare/daily_basic",
             "--keys",
             "600000.SH",
             "--from",
@@ -261,7 +265,7 @@ class DataCLITests(unittest.TestCase):
                 str(self.root),
                 "data",
                 "coverage",
-                "tushare_daily_basic",
+                "findata/tushare/daily_basic",
                 "--keys",
                 "600000.SH",
                 "--from",
@@ -286,14 +290,14 @@ class DataCLITests(unittest.TestCase):
                 "_complete",
                 "data",
                 "preview",
-                "tushare_daily_",
+                "findata/tushare/daily_",
             ],
             stdout=completion,
             stderr=io.StringIO(),
             environ={},
         )
         self.assertEqual(code, 0)
-        self.assertEqual(completion.getvalue(), "tushare_daily_basic\n")
+        self.assertEqual(completion.getvalue(), "findata/tushare/daily_basic\n")
 
         completion = io.StringIO()
         code = cli_main(
@@ -309,7 +313,7 @@ class DataCLITests(unittest.TestCase):
             environ={},
         )
         self.assertEqual(code, 0)
-        self.assertIn("tushare_daily_basic", completion.getvalue().splitlines())
+        self.assertIn("findata/tushare/daily_basic", completion.getvalue().splitlines())
         self.assertNotIn("STALE_DIRECTORY", completion.getvalue().splitlines())
 
         completion = io.StringIO()
@@ -320,26 +324,26 @@ class DataCLITests(unittest.TestCase):
                 "_complete",
                 "task",
                 "run",
-                "tushare_daily_",
+                "findata/tushare/daily_",
             ],
             stdout=completion,
             stderr=io.StringIO(),
             environ={},
         )
         self.assertEqual(code, 0)
-        self.assertEqual(completion.getvalue(), "tushare_daily_basic\n")
+        self.assertEqual(completion.getvalue(), "findata/tushare/daily_basic\n")
 
     def test_unknown_dataset_reads_never_create_directories(self) -> None:
         datasets = self.root / "datasets"
         before = {path.name for path in datasets.iterdir()}
         commands = [
-            ["data", "schema", "NOT_EXIST_DATASET"],
-            ["data", "coverage", "NOT_EXIST_DATASET"],
-            ["data", "preview", "NOT_EXIST_DATASET"],
+            ["data", "schema", "nobody/not_exist"],
+            ["data", "coverage", "nobody/not_exist"],
+            ["data", "preview", "nobody/not_exist"],
             [
                 "data",
                 "export",
-                "NOT_EXIST_DATASET",
+                "nobody/not_exist",
                 "--output-format",
                 "csv",
                 "--output",
@@ -356,7 +360,7 @@ class DataCLITests(unittest.TestCase):
                     environ={},
                 )
                 self.assertEqual(code, 1)
-                self.assertIn("unknown dataset 'NOT_EXIST_DATASET'", stderr.getvalue())
+                self.assertIn("unknown dataset 'nobody/not_exist'", stderr.getvalue())
                 self.assertEqual({path.name for path in datasets.iterdir()}, before)
                 self.assertFalse((self.root / "unexpected.csv").exists())
 
@@ -378,7 +382,7 @@ class DataCLITests(unittest.TestCase):
                         str(self.root),
                         "data",
                         "export",
-                        "tushare_daily_basic",
+                        "findata/tushare/daily_basic",
                         "--keys",
                         "600000.SH",
                         "--from",
@@ -416,7 +420,7 @@ class DataCLITests(unittest.TestCase):
                 str(self.root),
                 "data",
                 "export",
-                "tushare_daily_basic",
+                "findata/tushare/daily_basic",
                 "--output-format",
                 "csv",
                 "--output",
@@ -439,7 +443,7 @@ class DataCLITests(unittest.TestCase):
                 str(self.root),
                 "data",
                 "preview",
-                "tushare_daily_basic",
+                "findata/tushare/daily_basic",
                 "--keys",
                 "600000.SH",
                 "--from",
@@ -453,12 +457,12 @@ class DataCLITests(unittest.TestCase):
         )
         self.assertEqual(code, 1)
         self.assertIn("2026-07-10", stderr.getvalue())
-        self.assertIn("findata dataset complete tushare_daily_basic", stderr.getvalue())
+        self.assertIn("findata dataset complete findata/tushare/daily_basic", stderr.getvalue())
 
         partial = self.run_json(
             "data",
             "preview",
-            "tushare_daily_basic",
+            "findata/tushare/daily_basic",
             "--keys",
             "600000.SH",
             "--from",
@@ -479,7 +483,7 @@ class DataCLITests(unittest.TestCase):
                 str(self.root),
                 "data",
                 "export",
-                "tushare_daily_basic",
+                "findata/tushare/daily_basic",
                 "--keys",
                 "600000.SH",
                 "--from",
@@ -512,7 +516,7 @@ class DataCLITests(unittest.TestCase):
                 str(self.root),
                 "data",
                 "export",
-                "tushare_daily_basic",
+                "findata/tushare/daily_basic",
                 "--columns",
                 "unknown",
                 "--output-format",

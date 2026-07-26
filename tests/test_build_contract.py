@@ -12,7 +12,5 @@ def test_hatchling_build_backend_and_src_package_selection() -> None:
         "requires": ["hatchling==1.31.0"],
         "build-backend": "hatchling.build",
     }
-    assert project["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
-        "src/findata"
-    ]
+    assert project["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == ["src/findata"]
     assert "setuptools" not in project["tool"]

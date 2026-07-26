@@ -59,7 +59,7 @@ class ReadProtocolImportTests(unittest.TestCase):
 class OperationNormalizationTests(unittest.TestCase):
     def test_resolves_today_once_and_canonicalizes_array_operands(self) -> None:
         values = normalize_operation(
-            "tushare_daily_basic",
+            "findata/tushare/daily_basic",
             "complete",
             {
                 "symbols": ["600000.SH", "600000.SH", "000001.SZ"],
@@ -74,17 +74,19 @@ class OperationNormalizationTests(unittest.TestCase):
         with self.assertRaises(OperandError):
             normalize_operation("unknown", "update", {}, today=date(2026, 7, 20))
         with self.assertRaises(OperandError):
-            normalize_operation("tushare_stock_basic", "complete", {}, today=date(2026, 7, 20))
+            normalize_operation(
+                "findata/tushare/stock_basic", "complete", {}, today=date(2026, 7, 20)
+            )
         with self.assertRaises(OperandError):
             normalize_operation(
-                "tushare_trade_cal",
+                "findata/tushare/trade_cal",
                 "complete",
                 {"exchanges": ["SSE"], "timerange": "2026-07-01:2026-07-02", "extra": 1},
                 today=date(2026, 7, 20),
             )
         with self.assertRaisesRegex(OperandError, "future trade-calendar"):
             normalize_operation(
-                "tushare_trade_cal",
+                "findata/tushare/trade_cal",
                 "complete",
                 {"exchanges": ["SSE"], "timerange": "2026-07-20:2026-07-22"},
                 today=date(2026, 7, 20),

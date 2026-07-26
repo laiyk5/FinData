@@ -14,7 +14,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.metadata import PackageNotFoundError, version as package_version
 from pathlib import Path
 from typing import Any, Iterable
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from findata.cron import CronManager
@@ -259,7 +259,7 @@ class FindataServer:
         return status
 
     def _update_ready(self, dataset: str) -> bool:
-        return bool(self._runtime_for_dataset(dataset).update_ready(self.workspace, dataset))
+        return bool(self._runtime_for_dataset(dataset).update_ready(self.workspace))
 
     def _execution_context(self, dataset: str) -> dict[str, Any]:
         snapshot = self.workspace.config_snapshot()
@@ -273,17 +273,22 @@ class FindataServer:
 
     def _runtime_for_dataset(self, dataset: str) -> Any:
         try:
-            provider_id = self.plugins[dataset].provider
-            runtime = self.providers[provider_id].runtime
+            return self.plugins[dataset].runtime
         except KeyError as exc:
             raise ValueError(f"unknown dataset {dataset!r}") from exc
-        assert runtime is not None
-        return runtime
+
+    def _match_dataset(self, parts: list[str]) -> tuple[str, list[str]] | None:
+        """Greedy-match a registered dataset name against path parts (longest first)."""
+        for name in sorted(self.plugins, key=lambda item: item.count("/"), reverse=True):
+            name_parts = name.split("/")
+            if parts[: len(name_parts)] == name_parts:
+                return name, parts[len(name_parts) :]
+        return None
 
     def _resolve_dependency(
         self, parent: str, target: str, requirement: dict[str, object]
     ) -> tuple[str, dict[str, object]]:
-        return self._runtime_for_dataset(parent).resolve_dependency(parent, target, requirement)
+        return self._runtime_for_dataset(parent).resolve_dependency(target, requirement)
 
     def _acquire_lock(self) -> None:
         lock_path = self.root / "server.lock"
@@ -334,7 +339,7 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
             if not self._authenticated():
                 self._send(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
                 return
-            parts = [part for part in parsed.path.split("/") if part]
+            parts = [unquote(part) for part in parsed.path.split("/") if part]
             query = parse_qs(parsed.query)
             try:
                 if method == "GET" and parts == ["v1", "system", "status"]:
@@ -364,7 +369,6 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                         raise ValueError(f"provider {provider_id} is not ready")
                     operation = str(body.get("operation") or "update")
                     operands = app._runtime_for_dataset(dataset).normalize_operation(
-                        dataset,
                         operation,
                         dict(body.get("operands") or {}),
                         today=app.today,
@@ -383,33 +387,32 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                         },
                     )
                     return
-                if (
-                    method == "POST"
-                    and len(parts) == 6
-                    and parts[:2] == ["v1", "datasets"]
-                    and parts[3] == "operations"
-                    and parts[5] == "plan"
-                ):
-                    dataset, operation = parts[2], parts[4]
-                    body = self._body()
-                    runtime = app._runtime_for_dataset(dataset)
-                    operands = runtime.normalize_operation(
-                        dataset,
-                        operation,
-                        dict(body.get("operands") or {}),
-                        today=app.today,
-                    )
-                    self._send(
-                        HTTPStatus.OK,
-                        runtime.plan_operation(
-                            app.workspace,
-                            dataset,
+                if method == "POST" and parts[:2] == ["v1", "datasets"] and len(parts) > 2:
+                    plan_match = app._match_dataset(parts[2:])
+                    if (
+                        plan_match is not None
+                        and len(plan_match[1]) == 3
+                        and plan_match[1][0] == "operations"
+                        and plan_match[1][2] == "plan"
+                    ):
+                        dataset, operation = plan_match[0], plan_match[1][1]
+                        body = self._body()
+                        runtime = app._runtime_for_dataset(dataset)
+                        operands = runtime.normalize_operation(
                             operation,
-                            operands,
+                            dict(body.get("operands") or {}),
                             today=app.today,
-                        ),
-                    )
-                    return
+                        )
+                        self._send(
+                            HTTPStatus.OK,
+                            runtime.plan_operation(
+                                app.workspace,
+                                operation,
+                                operands,
+                                today=app.today,
+                            ),
+                        )
+                        return
                 if method == "GET" and parts == ["v1", "tasks"]:
                     items = app.taskrunner.list_handles(
                         dataset=_query_one(query, "dataset"),
@@ -559,13 +562,13 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                             },
                         )
                     return
-                if method == "DELETE" and len(parts) == 3 and parts[:2] == ["v1", "config"]:
-                    key = parts[2]
+                if method == "DELETE" and len(parts) >= 3 and parts[:2] == ["v1", "config"]:
+                    key = "/".join(parts[2:])
                     if _reserved_config_key(key):
                         raise ValueError(f"configuration key {key!r} is reserved")
                     if key.startswith("dataset."):
                         _dataset_plugin_for_key(app, key)
-                    self._send(HTTPStatus.OK, {"removed": app.workspace.unset_config(parts[2])})
+                    self._send(HTTPStatus.OK, {"removed": app.workspace.unset_config(key)})
                     return
                 if method == "GET" and parts == ["v1", "config", "keys"]:
                     self._send(HTTPStatus.OK, {"items": _declared_config_keys(app)})
@@ -654,7 +657,6 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                             "items": [
                                 app._runtime_for_dataset(name).dataset_description(
                                     app.workspace,
-                                    name,
                                     provider_ready=app._provider_ready(app.plugins[name].provider),
                                 )
                                 for name in app.plugins
@@ -662,20 +664,18 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                         },
                     )
                     return
-                if (
-                    method == "POST"
-                    and len(parts) == 4
-                    and parts[:2] == ["v1", "datasets"]
-                    and parts[3] == "reset"
-                ):
+                dataset_route = (
+                    parts[2:] if parts[:2] == ["v1", "datasets"] and len(parts) > 2 else None
+                )
+                dataset_match = (
+                    app._match_dataset(dataset_route) if dataset_route is not None else None
+                )
+                if method == "POST" and dataset_match is not None and dataset_match[1] == ["reset"]:
                     body = self._body()
                     if body.get("confirm") is not True:
                         raise ValueError("dataset reset requires confirm=true")
-                    dataset = parts[2]
-                    try:
-                        plugin = app.plugins[dataset]
-                    except KeyError as exc:
-                        raise ValueError(f"unknown dataset {dataset!r}") from exc
+                    dataset = dataset_match[0]
+                    plugin = app.plugins[dataset]
                     with app.taskrunner.reserve_dataset_reset(dataset):
                         app.workspace.reset_dataset(dataset, spec=plugin.spec)
                     self._send(
@@ -689,49 +689,46 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                         {"items": [app._dataset_status(name) for name in app.plugins]},
                     )
                     return
-                if method == "GET" and len(parts) == 3 and parts[:2] == ["v1", "datasets"]:
-                    self._send(
-                        HTTPStatus.OK,
-                        app._runtime_for_dataset(parts[2]).dataset_description(
-                            app.workspace,
-                            parts[2],
-                            provider_ready=app._provider_ready(app.plugins[parts[2]].provider),
-                        ),
-                    )
-                    return
-                if method == "GET" and len(parts) == 4 and parts[:2] == ["v1", "datasets"]:
-                    dataset, action = parts[2], parts[3]
-                    if action == "status":
+                if method == "GET" and dataset_match is not None:
+                    dataset, tail = dataset_match
+                    if not tail:
+                        self._send(
+                            HTTPStatus.OK,
+                            app._runtime_for_dataset(dataset).dataset_description(
+                                app.workspace,
+                                provider_ready=app._provider_ready(app.plugins[dataset].provider),
+                            ),
+                        )
+                        return
+                    if tail == ["status"]:
                         self._send(HTTPStatus.OK, app._dataset_status(dataset))
                         return
-                    if action == "operations":
+                    if tail == ["operations"]:
                         description = app._runtime_for_dataset(dataset).dataset_description(
                             app.workspace,
-                            dataset,
                             provider_ready=app._provider_ready(app.plugins[dataset].provider),
                         )
                         self._send(HTTPStatus.OK, {"items": description["operations"]})
                         return
-                if (
-                    method == "GET"
-                    and len(parts) == 5
-                    and parts[:2] == ["v1", "datasets"]
-                    and parts[3] == "operations"
-                ):
-                    self._send(
-                        HTTPStatus.OK,
-                        app._runtime_for_dataset(parts[2]).operation_description(
-                            parts[2], parts[4]
-                        ),
-                    )
-                    return
+                    if len(tail) == 2 and tail[0] == "operations":
+                        self._send(
+                            HTTPStatus.OK,
+                            app._runtime_for_dataset(dataset).operation_description(tail[1]),
+                        )
+                        return
+                if dataset_route is not None and dataset_match is None:
+                    raise ValueError(f"unknown dataset {'/'.join(dataset_route)!r}")
                 if method == "GET" and parts == ["v1", "cron"]:
                     self._send(
                         HTTPStatus.OK, {"items": [asdict(job) for job in app.cron.list_jobs()]}
                     )
                     return
-                if len(parts) >= 4 and parts[:2] == ["v1", "cron"]:
-                    dataset, action = parts[2], parts[3]
+                if len(parts) > 2 and parts[:2] == ["v1", "cron"]:
+                    cron_match = app._match_dataset(parts[2:])
+                    if cron_match is None or len(cron_match[1]) != 1:
+                        self._send(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+                        return
+                    dataset, (action,) = cron_match
                     if method == "POST" and action == "enable":
                         self._send(HTTPStatus.OK, asdict(app.cron.enable(dataset)))
                     elif method == "POST" and action == "disable":
@@ -938,16 +935,19 @@ CORE_CONFIG_KEYS: dict[str, dict[str, Any]] = {
 
 def _dataset_plugin_for_key(app: FindataServer, key: str) -> DatasetPlugin:
     """Resolve a dataset.<name>.* configuration key to its owning plugin."""
-    components = key.split(".", 2)
-    if len(components) != 3 or components[1] not in app.plugins:
+    if not key.startswith("dataset."):
         raise ValueError(f"unknown dataset setting {key!r}")
-    plugin = app.plugins[components[1]]
-    if key not in plugin.settings:
-        declared = ", ".join(sorted(plugin.settings)) or "none"
-        raise ValueError(
-            f"unknown setting {key!r} for {plugin.name}; declared settings: {declared}"
-        )
-    return plugin
+    remainder = key[len("dataset.") :]
+    for name in sorted(app.plugins, key=len, reverse=True):
+        if remainder.startswith(f"{name}."):
+            plugin = app.plugins[name]
+            if key not in plugin.settings:
+                declared = ", ".join(sorted(plugin.settings)) or "none"
+                raise ValueError(
+                    f"unknown setting {key!r} for {plugin.name}; declared settings: {declared}"
+                )
+            return plugin
+    raise ValueError(f"unknown dataset setting {key!r}")
 
 
 def _provider_key_help(provider: ProviderPlugin, field: str) -> str:

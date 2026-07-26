@@ -911,7 +911,9 @@ class TaskRunner:
         request_id = str(message.get("request_id"))
         target = str(message.get("dataset"))
         requirement = message.get("requirement")
-        requirement_text = json.dumps(requirement, sort_keys=True, separators=(",", ":"), default=str)
+        requirement_text = json.dumps(
+            requirement, sort_keys=True, separators=(",", ":"), default=str
+        )
         self._append_log(execution_id, f"dependency requested: {target} {requirement_text}")
         try:
             if self.dependency_resolver is None:
