@@ -36,6 +36,11 @@ dev = [
   "ruff==0.15.22",
 ]
 
+[dependency-groups]
+docs = [
+  "mkdocs-material==9.7.7",
+]
+
 [tool.hatch.build]
 # The WebUI bundle is built from web/ (npm run build) and git-ignored; it must
 # still ship in the sdist and wheel.

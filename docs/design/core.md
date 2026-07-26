@@ -185,7 +185,7 @@ transformation, and validation outside the write gate, then commits its accumula
 transaction. A later failure preserves completed batches and loses at most the in-flight batch.
 Progress distinguishes processed work from durably checkpointed work.
 
-Execution records contain state, progress, logs, PID, and process start time. Separate handle records contain each submission's subscriber, execution, and public handle state. Active records persist; after completion, the newest 1,000 terminal handles per dataset and every execution they still reference are retained. Public task states and listing behavior are defined in [USER.md](../USER.md#task-lifecycle).
+Execution records contain state, progress, logs, PID, and process start time. Separate handle records contain each submission's subscriber, execution, and public handle state. Active records persist; after completion, the newest 1,000 terminal handles per dataset and every execution they still reference are retained. Public task states and listing behavior are defined in the [tasks guide](../site/guide/tasks-and-events.md).
 
 Each dataset operation exposes a pure planning entry point. Planning consumes normalized operands,
 captured configuration, capabilities, coverage, publication time, and locally committed dependency
@@ -223,7 +223,7 @@ One task execution holds the dataset mutex. Additional executions wait in that d
 
 ## crond and events
 
-Every suggested dataset schedule appears as a disabled default job; automatic maintenance is opt-in. Workspace configuration owns enabled state and schedule/timezone overrides. Schedules are evaluated in their declared IANA timezone using the daylight-saving behavior defined in [USER.md](../USER.md#cron). Market jobs should use the exchange timezone. Enabling and firing validate the operation, provider readiness, and plugin-reported update readiness. A failed precondition skips submission and records an actionable event.
+Every suggested dataset schedule appears as a disabled default job; automatic maintenance is opt-in. Workspace configuration owns enabled state and schedule/timezone overrides. Schedules are evaluated in their declared IANA timezone using the daylight-saving behavior defined in the [scheduling guide](../site/guide/scheduling.md). Market jobs should use the exchange timezone. Enabling and firing validate the operation, provider readiness, and plugin-reported update readiness. A failed precondition skips submission and records an actionable event.
 
 Enabled jobs missed during downtime are recorded but not run automatically. The user decides whether to submit the corresponding update.
 
@@ -279,7 +279,7 @@ Alternative database engines, plugin-defined SQL, private reader adapters, and t
 entry points are outside v1. A future storage backend must preserve central query semantics, Arrow
 results, transactional data/coverage commits, and the DataLoader concurrency contract.
 
-The public API and examples live in [USER.md](../USER.md#discovering-previewing-and-exporting-committed-data). Reader-strategy verification lives in [TEST.md](../TEST.md#duckdb-storage-and-dataloader-contract-matrix).
+The public API and examples live in the [reading-data guide](../site/guide/reading-data.md) and the [DataLoader guide](../site/guide/dataloader.md). Reader-strategy verification lives in [TEST.md](../TEST.md#duckdb-storage-and-dataloader-contract-matrix).
 
 ## Configuration and security
 

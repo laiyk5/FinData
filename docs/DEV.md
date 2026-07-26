@@ -148,6 +148,21 @@ Detailed workspace, database metadata, plugin, task-message, and HTTP schemas be
 - Reference sections by name rather than number because numbering moves.
 - Archive superseded implementation specs instead of leaving them to compete with current design.
 
+### User documentation site
+
+User-facing documentation lives in `docs/site/` and is published with MkDocs Material to
+<https://laiyk5.github.io/FinData/> by the `docs` GitHub Actions workflow; `docs/USER.md`
+is only a redirect stub. Build it locally with `nox -s docs` (equivalently
+`uv run --group docs mkdocs build --strict`); the strict build is the gate for broken
+links and nav entries. The workflow deploys on pushes to `dev` until the first release,
+then only on pushes to `main` (flip the marked line in `.github/workflows/docs.yml`).
+
+- User-visible behavior and syntax are documented once in `docs/site/` and linked from other documents.
+- The quick start (`docs/site/get-started/quickstart.md`) must be executed as written before every release.
+- Examples should use normal user operations rather than internal shortcuts.
+- User documentation may lag unreleased implementation work, but must match every released version.
+- Secrets, internal storage paths, and unstable implementation details must not appear in examples.
+
 ## Coding-agent guidance
 
 Keep `AGENTS.md` and `CLAUDE.md` short. Project design, development, testing, dataset, toolkit, and user knowledge belongs in the documents that own those subjects rather than in agent-specific instruction files.
@@ -155,7 +170,8 @@ Keep `AGENTS.md` and `CLAUDE.md` short. Project design, development, testing, da
 ## Environments
 
 Use `uv` for dependency resolution and the project development environment. Keep its lockfile in
-version control and use locked environments in CI. Development and automated tests must not mutate
+version control and use locked environments in CI. The documentation toolchain is the `docs`
+dependency group in `pyproject.toml`; sync it with `uv sync --group docs`. Development and automated tests must not mutate
 user data outside their allocated temporary workspace. Normal operating-system temporary
 directories and tool caches are allowed; the repository's `workspaces/` directory is reserved for
 manual verification and must never be used by automated tests.

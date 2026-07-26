@@ -42,3 +42,10 @@ def webui(session: nox.Session) -> None:
     session.run("npm", "run", "typecheck", external=True)
     session.run("npm", "test", external=True)
     session.run("npm", "run", "build", external=True)
+
+
+@nox.session(python="3.11")
+def docs(session: nox.Session) -> None:
+    """Build the documentation site; strict mode fails on broken links or nav."""
+    session.install("mkdocs-material==9.7.7")
+    session.run("mkdocs", "build", "--strict")

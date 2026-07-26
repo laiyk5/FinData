@@ -2,7 +2,7 @@
 
 This file owns the CLI design: the thin-client boundary, human output principles, and structured
 output contracts. Architectural rules shared by the whole system live in [core.md](../core.md);
-detailed terminal behavior and examples are defined once in [USER.md](../../USER.md#cli-behavior),
+detailed terminal behavior and examples are defined once in the [CLI reference](../../site/reference/cli.md),
 and their verification belongs in [TEST.md](../../TEST.md#cli-presentation-matrix).
 
 ## Thin-client boundary
@@ -48,7 +48,7 @@ task and event retention rules. Retained task logs record lifecycle transitions 
 fetch, plan, and commit summaries with timestamps, so the history of a running or finished task
 stays reviewable. A live human view keeps a bounded set visible and reports exact
 additional counts without flooding the terminal; structured streaming preserves every logical
-diagnostic occurrence. Detailed behavior is defined in [USER.md](../../USER.md#cli-behavior).
+diagnostic occurrence. Detailed behavior is defined in the [CLI reference](../../site/reference/cli.md).
 
 ## Structured output
 

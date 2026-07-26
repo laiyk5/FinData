@@ -16,7 +16,7 @@ alongside:
 
 - **[DEV.md](../DEV.md)** — contributor workflow and implementation guidance
 - **[TEST.md](../TEST.md)** — testing methodology and required verification
-- **[USER.md](../USER.md)** — installation, workflows, CLI/DataLoader usage, and user-documentation principles
+- **[User documentation](../site/index.md)** — installation, workflows, CLI/DataLoader usage (published site; sources in `docs/site/`)
 
 Every fact has one owning document. Other documents link to it rather than copying it. Development-time schemas and protocol specifications may live under `docs/specs/`; they may elaborate but never override this design.
 
@@ -27,7 +27,7 @@ findata serves two purposes:
 1. maintain datasets through plugins that are easy to install and run;
 2. provide one DataLoader interface so readers do not need to know physical storage layouts.
 
-The primary v1 user is a quantitative researcher who backfills daily valuation data for an index universe, opts into recurring maintenance, and queries covered data safely from Python. The story is complete when provider readiness is diagnosable, dependency data is fulfilled deterministically, failed work is resumable, automatic maintenance is explicit, and DataLoader either returns covered data or identifies exact missing intervals. The executable workflow lives in [USER.md](../USER.md#quick-start).
+The primary v1 user is a quantitative researcher who backfills daily valuation data for an index universe, opts into recurring maintenance, and queries covered data safely from Python. The story is complete when provider readiness is diagnosable, dependency data is fulfilled deterministically, failed work is resumable, automatic maintenance is explicit, and DataLoader either returns covered data or identifies exact missing intervals. The executable workflow lives in the [quick start](../site/get-started/quickstart.md).
 
 Features that do not materially support this story may be deferred from v1.
 

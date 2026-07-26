@@ -1,0 +1,56 @@
+site_name: findata
+site_description: Local, plugin-oriented financial dataset maintenance and querying
+site_url: https://laiyk5.github.io/FinData/
+repo_url: https://github.com/laiyk5/FinData
+docs_dir: docs/site
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: blue grey
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: blue grey
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - navigation.indexes
+    - toc.follow
+    - content.action.view
+    - content.code.copy
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+  - pymdownx.highlight
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+
+nav:
+  - Home: index.md
+  - Get started:
+      - get-started/installation.md
+      - get-started/quickstart.md
+  - Guide:
+      - guide/workspace.md
+      - guide/providers-and-datasets.md
+      - guide/tasks-and-events.md
+      - guide/configuration.md
+      - guide/scheduling.md
+      - guide/reading-data.md
+      - guide/dataloader.md
+  - Reference:
+      - reference/cli.md
