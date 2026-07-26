@@ -23,6 +23,7 @@ __all__ = [
     "OperationRequest",
     "OperationWorker",
     "PluginRegistrationError",
+    "PluginWorkerDispatcher",
     "ProviderPlugin",
     "ProviderRuntime",
     "SettingSpec",
@@ -117,6 +118,10 @@ class ProviderRuntime(Protocol):
         """Whether the provider is configured well enough to accept work."""
         ...
 
+    def update_ready(self, workspace: Workspace, dataset: str) -> bool:
+        """Whether a dataset's settings and committed state allow parameterless update."""
+        ...
+
     def is_mock(self, workspace: Workspace, mode: str) -> bool:
         """Whether the provider serves mock responses in this mode."""
         ...
@@ -145,6 +150,7 @@ class DatasetPlugin:
     operations: tuple[str, ...]
     dependencies: tuple[str, ...] = ()
     settings: Mapping[str, SettingSpec] = field(default_factory=dict)
+    schedule: tuple[str, str] | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "settings", MappingProxyType(dict(self.settings)))
@@ -260,3 +266,44 @@ def register_plugins(
             plugin.name,
             spec=plugin.spec,
         )
+
+
+@dataclass(frozen=True, slots=True)
+class PluginWorkerDispatcher:
+    """Pickle-safe worker resolving each task's dataset plugin at dispatch time.
+
+    Resolution happens inside the task child process, so a plugin installed after
+    server start is picked up by the next dispatch without a restart.
+    """
+
+    workspace: Path
+    mode: str
+    today: str
+    now: str | None = None
+
+    def __call__(
+        self, request: OperationRequest, context: OperationReporter
+    ) -> Mapping[str, Any]:
+        dataset = str(request["dataset"])
+        providers = discover_provider_plugins()
+        plugins = {
+            plugin.name: plugin
+            for plugin in discover_dataset_plugins(providers=providers)
+        }
+        try:
+            plugin = plugins[dataset]
+        except KeyError as exc:
+            raise ValueError(f"unknown dataset {dataset!r}") from exc
+        runtime = next(
+            provider.runtime
+            for provider in providers
+            if provider.provider_id == plugin.provider
+        )
+        assert runtime is not None  # validate_provider_plugins enforces this
+        worker = runtime.operation_worker(
+            self.workspace,
+            mode=self.mode,
+            today=date.fromisoformat(self.today),
+            now=datetime.fromisoformat(self.now) if self.now is not None else None,
+        )
+        return worker(request, context)

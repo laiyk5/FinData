@@ -269,6 +269,12 @@ def builtin_plugins() -> list["DatasetPlugin"]:
             ("tushare_trade_cal", "tushare_index_basic", "tushare_index_weight"),
         ),
     }
+    schedules = {
+        "tushare_trade_cal": ("0 9 * * 1", "Asia/Shanghai"),
+        "tushare_stock_basic": ("0 8 * * 1", "Asia/Shanghai"),
+        "tushare_index_weight": ("0 18 * * 1", "Asia/Shanghai"),
+        "tushare_daily_basic": ("40 17 * * 1-5", "Asia/Shanghai"),
+    }
     settings = {
         "tushare_index_weight": {
             "dataset.tushare_index_weight.update_indexes": SettingSpec(
@@ -295,6 +301,7 @@ def builtin_plugins() -> list["DatasetPlugin"]:
             operations=operations,
             dependencies=dependencies,
             settings=settings.get(name, {}),
+            schedule=schedules.get(name),
         )
         for name, (operations, dependencies) in definitions.items()
     ]

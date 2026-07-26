@@ -7,9 +7,18 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from findata.cron import CronManager, CronSchedule
+from findata.datasets.tushare import builtin_plugins
 from findata.events import EventStore
 from findata.toolkit.rate_limit import FileRateLimiter
 from findata.storage import Workspace
+
+
+def _suggested_schedules() -> dict[str, tuple[str, str]]:
+    return {
+        plugin.name: plugin.schedule
+        for plugin in builtin_plugins()
+        if plugin.schedule is not None
+    }
 
 
 class EventStoreTests(unittest.TestCase):
@@ -99,6 +108,7 @@ class CronManagerTests(unittest.TestCase):
             ),
             provider_ready=lambda _dataset: True,
             update_ready=lambda _dataset: True,
+            suggested=_suggested_schedules(),
         )
 
     def test_defaults_are_disabled_and_enabled_job_fires_update(self) -> None:
@@ -116,6 +126,7 @@ class CronManagerTests(unittest.TestCase):
             submit=lambda *_args: self.fail("must not submit"),
             provider_ready=lambda _dataset: False,
             update_ready=lambda _dataset: True,
+            suggested=_suggested_schedules(),
         )
         with self.assertRaises(ValueError):
             manager.enable("tushare_daily_basic", now=datetime(2026, 7, 20, tzinfo=UTC))

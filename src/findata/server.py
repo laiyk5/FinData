@@ -25,6 +25,7 @@ from findata.presentation import default_display_timezone
 from findata.storage import DATABASE_NAME, Workspace
 from findata.plugins import (
     DatasetPlugin,
+    PluginWorkerDispatcher,
     ProviderPlugin,
     discover_dataset_plugins,
     discover_provider_plugins,
@@ -108,15 +109,13 @@ class FindataServer:
         self._cron_thread: threading.Thread | None = None
         self._cron_stop = threading.Event()
         self.events = EventStore(self.root)
-        runtime = self.providers["tushare"].runtime
-        assert runtime is not None
         self.taskrunner = TaskRunner(
             self.root,
-            runtime.operation_worker(
+            PluginWorkerDispatcher(
                 self.root,
                 mode=provider_mode,
-                today=self.today,
-                now=operation_now,
+                today=self.today.isoformat(),
+                now=operation_now.isoformat(),
             ),
             global_concurrency=global_concurrency,
             event_sink=self.events.record,
@@ -131,6 +130,11 @@ class FindataServer:
             ),
             provider_ready=lambda dataset: self._provider_ready(self.plugins[dataset].provider),
             update_ready=self._update_ready,
+            suggested={
+                name: plugin.schedule
+                for name, plugin in self.plugins.items()
+                if plugin.schedule is not None
+            },
         )
 
     @property
@@ -255,17 +259,7 @@ class FindataServer:
         return status
 
     def _update_ready(self, dataset: str) -> bool:
-        if dataset == "tushare_index_weight":
-            return bool(self.workspace.get_config("dataset.tushare_index_weight.update_indexes"))
-        if dataset == "tushare_daily_basic":
-            return bool(self.workspace.get_config("dataset.tushare_daily_basic.update_symbols"))
-        if dataset == "tushare_index_basic":
-            try:
-                DataLoader(self.workspace.root).dataset(dataset).publication_id
-                return True
-            except DatasetNotReadyError:
-                return False
-        return True
+        return bool(self._runtime_for_dataset(dataset).update_ready(self.workspace, dataset))
 
     def _execution_context(self, dataset: str) -> dict[str, Any]:
         snapshot = self.workspace.config_snapshot()
@@ -290,11 +284,6 @@ class FindataServer:
         self, parent: str, target: str, requirement: dict[str, object]
     ) -> tuple[str, dict[str, object]]:
         return self._runtime_for_dataset(parent).resolve_dependency(parent, target, requirement)
-
-    def _probe_tushare(self) -> None:
-        runtime = self.providers["tushare"].runtime
-        assert runtime is not None
-        runtime.probe(self.workspace, today=self.today)
 
     def _acquire_lock(self) -> None:
         lock_path = self.root / "server.lock"

@@ -102,6 +102,21 @@ class TushareProviderRuntime(ProviderRuntime):
     def ready(self, workspace: Workspace, mode: str) -> bool:
         return self.is_mock(workspace, mode) or bool(self.token(workspace))
 
+    def update_ready(self, workspace: Workspace, dataset: str) -> bool:
+        if dataset == "tushare_index_weight":
+            return bool(workspace.get_config("dataset.tushare_index_weight.update_indexes"))
+        if dataset == "tushare_daily_basic":
+            return bool(workspace.get_config("dataset.tushare_daily_basic.update_symbols"))
+        if dataset == "tushare_index_basic":
+            from findata.loader import DataLoader, DatasetNotReadyError
+
+            try:
+                DataLoader(workspace.root).dataset(dataset).publication_id
+                return True
+            except DatasetNotReadyError:
+                return False
+        return True
+
     def probe(self, workspace: Workspace, *, today: date) -> None:
         limiter = FileRateLimiter(
             workspace.root / "providers" / "tushare-rate.json",

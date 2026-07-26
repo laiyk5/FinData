@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, time, timedelta
 from typing import Any
@@ -8,14 +8,6 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from findata.events import EventStore
 from findata.storage import Workspace
-
-
-SUGGESTED_JOBS = {
-    "tushare_trade_cal": ("0 9 * * 1", "Asia/Shanghai"),
-    "tushare_stock_basic": ("0 8 * * 1", "Asia/Shanghai"),
-    "tushare_index_weight": ("0 18 * * 1", "Asia/Shanghai"),
-    "tushare_daily_basic": ("40 17 * * 1-5", "Asia/Shanghai"),
-}
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,17 +94,19 @@ class CronManager:
         submit: Callable[[str, str, dict[str, object]], Any],
         provider_ready: Callable[[str], bool],
         update_ready: Callable[[str], bool],
+        suggested: Mapping[str, tuple[str, str]],
     ) -> None:
         self.workspace = workspace
         self.events = events
         self.submit = submit
         self.provider_ready = provider_ready
         self.update_ready = update_ready
+        self.suggested = dict(suggested)
 
     def list_jobs(self, *, now: datetime | None = None) -> list[CronJob]:
         current = (now or datetime.now(UTC)).astimezone(UTC)
         state = self._state()
-        return [self._job(dataset, state.get(dataset, {}), current) for dataset in SUGGESTED_JOBS]
+        return [self._job(dataset, state.get(dataset, {}), current) for dataset in self.suggested]
 
     def enable(self, dataset: str, *, now: datetime | None = None) -> CronJob:
         current = (now or datetime.now(UTC)).astimezone(UTC)
@@ -169,7 +163,7 @@ class CronManager:
         for key in ("expression", "timezone", "source"):
             entry.pop(key, None)
         if entry.get("enabled"):
-            expression, timezone = SUGGESTED_JOBS[dataset]
+            expression, timezone = self.suggested[dataset]
             entry["next_run"] = CronSchedule(expression, timezone).next_after(datetime.now(UTC)).isoformat()
         state[dataset] = entry
         self._save(state)
@@ -179,7 +173,7 @@ class CronManager:
         current = (now or datetime.now(UTC)).astimezone(UTC).replace(second=0, microsecond=0)
         state = self._state()
         changed = False
-        for dataset in SUGGESTED_JOBS:
+        for dataset in self.suggested:
             entry = dict(state.get(dataset) or {})
             if not entry.get("enabled"):
                 continue
@@ -231,7 +225,7 @@ class CronManager:
         current = (now or datetime.now(UTC)).astimezone(UTC)
         state = self._state()
         changed = False
-        for dataset in SUGGESTED_JOBS:
+        for dataset in self.suggested:
             entry = dict(state.get(dataset) or {})
             if not entry.get("enabled") or not entry.get("next_run"):
                 continue
@@ -249,7 +243,7 @@ class CronManager:
             self._save(state)
 
     def _job(self, dataset: str, entry: dict[str, Any], now: datetime) -> CronJob:
-        suggested_expression, suggested_timezone = SUGGESTED_JOBS[dataset]
+        suggested_expression, suggested_timezone = self.suggested[dataset]
         expression = str(entry.get("expression") or suggested_expression)
         timezone = str(entry.get("timezone") or suggested_timezone)
         enabled = bool(entry.get("enabled", False))
@@ -273,9 +267,8 @@ class CronManager:
     def _save(self, state: dict[str, Any]) -> None:
         self.workspace.set_config("cron.jobs", state)
 
-    @staticmethod
-    def _validate_dataset(dataset: str) -> None:
-        if dataset not in SUGGESTED_JOBS:
+    def _validate_dataset(self, dataset: str) -> None:
+        if dataset not in self.suggested:
             raise ValueError(f"unknown scheduled dataset {dataset!r}")
 
 
