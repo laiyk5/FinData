@@ -25,7 +25,11 @@ from findata.loader import (
     UnsupportedCoverageError,
 )
 from findata.providers.tushare import TushareClient, TushareHTTPTransport
-from findata.publication import PublicationWindow, daily_window, monthly_window
+from findata.datasets.tushare.publication import (
+    PublicationWindow,
+    daily_window,
+    monthly_window,
+)
 from findata.toolkit import FileRateLimiter
 from findata.storage import (
     DATABASE_NAME,
