@@ -13,7 +13,8 @@ This file owns contributor workflow and implementation guidance. Architecture be
 
 ## Adding a provider
 
-Define and document:
+The decoupling goals and invariants for plugins live in [design/plugins.md](design/plugins.md); this
+section is the implementation checklist. Define and document:
 
 1. stable provider ID;
 2. configuration schema and secret fields;

@@ -6,6 +6,12 @@ discovered through Python entry points. To manage your own dataset with findata,
 write a small Python package that declares the same contracts the built-in plugins use.
 There is no configuration-file-only path; the extension API is code.
 
+Mounting needs **no changes to findata itself**: installing your distribution is the
+only step — the next server start discovers, validates, registers, and serves the
+plugin, and uninstalling removes it. Official and third-party plugins go through the
+exact same mechanism; the design goals and invariants behind this are recorded in
+`docs/design/plugins.md` in the repository.
+
 Once declared, your dataset gets the full operational surface for free: `dataset
 ls/describe/status/operations`, `task run` with your operations, cron scheduling,
 plugin-owned settings, Web UI forms, transactional commits with coverage tracking, and

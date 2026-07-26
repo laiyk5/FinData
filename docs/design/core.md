@@ -45,6 +45,7 @@ Provider plugins are discovered through the `findata.providers` entry-point grou
 rejects duplicate IDs and validates their configuration schema, secret declarations, limiter
 parameters, readiness contract, and optional probe before dataset registration. Dataset plugins
 refer to providers only by registered ID; an unknown provider makes dataset registration fail.
+The plugin decoupling goals and invariants live in [plugins.md](plugins.md).
 
 Missing provider configuration does not prevent server startup. A task using an unready provider is rejected before queueing. Credentials are resolved from literal protected configuration or environment-variable references at use time and are inherited by task processes from the server environment.
 
