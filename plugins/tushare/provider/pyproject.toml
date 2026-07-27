@@ -4,13 +4,13 @@ build-backend = "hatchling.build"
 
 [project]
 name = "findata-plugins-providers-tushare"
-version = "0.3.0"
+version = "0.4.0"
 description = "Official Tushare provider plugin for findata"
 requires-python = ">=3.11"
 license = "Apache-2.0"
 dependencies = [
-  "findata==0.3.0",
-  "findata-plugins-shared==0.3.0",
+  "findata==0.4.0",
+  "findata-plugins-shared==0.4.0",
 ]
 
 [project.entry-points."findata.providers"]

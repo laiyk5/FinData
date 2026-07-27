@@ -15,6 +15,10 @@ PLUGIN_DISTRIBUTIONS = (
     "plugins/tushare/index-weight",
     "plugins/tushare/daily-basic",
     "plugins/tushare/umbrella",
+    "plugins/demo/provider",
+    "plugins/demo/datasets/demo-hello",
+    "plugins/demo/datasets/demo-random",
+    "plugins/demo/datasets/umbrella",
 )
 nox.options.default_venv_backend = "uv"
 

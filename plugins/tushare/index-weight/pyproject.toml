@@ -4,15 +4,15 @@ build-backend = "hatchling.build"
 
 [project]
 name = "findata-plugins-datasets-tushare-index-weight"
-version = "0.3.0"
+version = "0.4.0"
 description = "Official Tushare index weight dataset plugin for findata"
 requires-python = ">=3.11"
 license = "Apache-2.0"
 dependencies = [
-  "findata-plugins-datasets-tushare-index-basic==0.3.0",
-  "findata-plugins-providers-tushare==0.3.0",
-  "findata-plugins-shared==0.3.0",
-  "findata==0.3.0",
+  "findata-plugins-datasets-tushare-index-basic==0.4.0",
+  "findata-plugins-providers-tushare==0.4.0",
+  "findata-plugins-shared==0.4.0",
+  "findata==0.4.0",
   "pyarrow>=15",
 ]
 

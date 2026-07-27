@@ -4,12 +4,12 @@ build-backend = "hatchling.build"
 
 [project]
 name = "findata-plugins-shared"
-version = "0.3.0"
+version = "0.4.0"
 description = "Shared operation engine, publication windows, and mock transport for findata plugins"
 requires-python = ">=3.11"
 license = "Apache-2.0"
 dependencies = [
-  "findata==0.3.0",
+  "findata==0.4.0",
   "pyarrow>=15",
 ]
 

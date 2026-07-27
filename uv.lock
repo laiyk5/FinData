@@ -236,7 +236,7 @@ wheels = [
 
 [[package]]
 name = "findata"
-version = "0.3.0"
+version = "0.4.0"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
@@ -300,7 +300,7 @@ docs = [{ name = "zensical", specifier = ">=0.0.51" }]
 
 [[package]]
 name = "findata-plugins"
-version = "0.3.0"
+version = "0.4.0"
 source = { editable = "plugins/tushare/umbrella" }
 dependencies = [
     { name = "findata-plugins-datasets-tushare-daily-basic" },
@@ -325,7 +325,7 @@ requires-dist = [
 
 [[package]]
 name = "findata-plugins-datasets-tushare-daily-basic"
-version = "0.3.0"
+version = "0.4.0"
 source = { editable = "plugins/tushare/daily-basic" }
 dependencies = [
     { name = "findata" },
@@ -350,7 +350,7 @@ requires-dist = [
 
 [[package]]
 name = "findata-plugins-datasets-tushare-index-basic"
-version = "0.3.0"
+version = "0.4.0"
 source = { editable = "plugins/tushare/index-basic" }
 dependencies = [
     { name = "findata" },
@@ -369,7 +369,7 @@ requires-dist = [
 
 [[package]]
 name = "findata-plugins-datasets-tushare-index-weight"
-version = "0.3.0"
+version = "0.4.0"
 source = { editable = "plugins/tushare/index-weight" }
 dependencies = [
     { name = "findata" },
@@ -390,7 +390,7 @@ requires-dist = [
 
 [[package]]
 name = "findata-plugins-datasets-tushare-stock-basic"
-version = "0.3.0"
+version = "0.4.0"
 source = { editable = "plugins/tushare/stock-basic" }
 dependencies = [
     { name = "findata" },
@@ -409,7 +409,7 @@ requires-dist = [
 
 [[package]]
 name = "findata-plugins-datasets-tushare-trade-cal"
-version = "0.3.0"
+version = "0.4.0"
 source = { editable = "plugins/tushare/trade-cal" }
 dependencies = [
     { name = "findata" },
@@ -428,7 +428,7 @@ requires-dist = [
 
 [[package]]
 name = "findata-plugins-providers-tushare"
-version = "0.3.0"
+version = "0.4.0"
 source = { editable = "plugins/tushare/provider" }
 dependencies = [
     { name = "findata" },
@@ -443,7 +443,7 @@ requires-dist = [
 
 [[package]]
 name = "findata-plugins-shared"
-version = "0.3.0"
+version = "0.4.0"
 source = { editable = "plugins/tushare/shared" }
 dependencies = [
     { name = "findata" },
