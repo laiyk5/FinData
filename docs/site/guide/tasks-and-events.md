@@ -7,9 +7,9 @@ the task was accepted.
 ## Following work
 
 ```bash
-findata task run findata-plugins/tushare_daily_basic complete --param symbols=600000.SH   # submit, return
-findata task run findata-plugins/tushare_daily_basic update --wait                        # wait for terminal state
-findata task run findata-plugins/tushare_daily_basic update --follow                      # stream logs, implies --wait
+findata task run findata-test/demo_random complete --param symbols=600000.SH   # submit, return
+findata task run findata-test/demo_random update --wait                        # wait for terminal state
+findata task run findata-test/demo_random update --follow                      # stream logs, implies --wait
 
 findata task ls [--all] [--dataset NAME] [--status STATUS]
 findata task status <id>

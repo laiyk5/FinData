@@ -36,10 +36,22 @@ findata-server --help
 **The framework installs no datasets.** Plugins are separate distributions that depend on
 `findata` — install what you need and it mounts automatically at the next server start.
 
-Official plugins (the Tushare family) ship in this repository under `plugins/tushare/`:
+### Demo plugins (no credentials required)
+
+This repository includes a demo plugin family for evaluation. It needs no API token:
 
 ```bash
-# Install the full Tushare plugin family
+pip install -e ./plugins/demo/provider \
+             ./plugins/demo/datasets/demo-hello \
+             ./plugins/demo/datasets/demo-random
+```
+
+### Official Tushare plugins
+
+The Tushare family provides Chinese A-share market data. It requires a
+[Tushare API token](https://tushare.pro) with sufficient credits:
+
+```bash
 pip install -e ./plugins/tushare/provider \
              ./plugins/tushare/trade-cal \
              ./plugins/tushare/stock-basic \
@@ -48,9 +60,9 @@ pip install -e ./plugins/tushare/provider \
              ./plugins/tushare/daily-basic
 ```
 
-Third-party plugins install the same way (`pip install <their-package>` or
-`pip install -e ./path/to/plugin`); a workspace can block individual plugins via the
-`plugins.blocked` configuration key. See [Custom datasets and providers](../guide/custom-datasets.md).
+Third-party plugins install the same way (`pip install -e ./path/to/plugin`); a
+workspace can block individual plugins via the `plugins.blocked` configuration key.
+See [Custom datasets and providers](../guide/custom-datasets.md).
 
 !!! tip
     Use a virtual environment when isolation from other Python packages is desired.

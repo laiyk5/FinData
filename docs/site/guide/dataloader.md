@@ -24,14 +24,14 @@ from pathlib import Path
 from findata import DataLoader
 
 loader = DataLoader(Path("~/market-data").expanduser())
-dataset = loader.dataset("findata-plugins/tushare_daily_basic")
+dataset = loader.dataset("findata-test/demo_random")
 
 table = dataset.query(
-    keys=["000001.SZ", "600000.SH"],
-    time_range=("2025-01-01", "2026-01-01"),
-    columns=["ts_code", "trade_date", "pe", "pb"],
-    filters=[("pe", ">", 0)],
-    order_by=["trade_date", "ts_code"],
+    keys=["AAPL", "GOOGL"],
+    time_range=("2026-07-01", "2026-07-10"),
+    columns=["ticker", "trade_date", "close", "daily_return"],
+    filters=[("close", ">", 100)],
+    order_by=["trade_date", "ticker"],
     require_coverage=True,
 )
 ```
@@ -48,7 +48,7 @@ Filters are `(column, operator, value)` tuples combined with AND. Supported oper
 For low-memory reads:
 
 ```python
-with dataset.iter_batches(batch_size=65536, keys=["600000.SH"]) as batches:
+with dataset.iter_batches(batch_size=65536, keys=["AAPL"]) as batches:
     for batch in batches:
         ...  # pyarrow.RecordBatch
 ```
@@ -84,8 +84,8 @@ Readers that cannot use DataLoader — non-Python, third-party, or offline consu
 receive a snapshot copy instead of touching live files:
 
 ```bash
-findata data snapshot findata-plugins/tushare_daily_basic            # writes <workspace>/snapshots/findata-plugins/tushare_daily_basic.duckdb
-findata data snapshot findata-plugins/tushare_daily_basic --output /path/to/copy.duckdb
+findata data snapshot findata-test/demo_random            # writes <workspace>/snapshots/findata-test/demo_random.duckdb
+findata data snapshot findata-test/demo_random --output /path/to/copy.duckdb
 ```
 
 The snapshot is checkpointed and copied while holding the dataset's exclusive gate, so it

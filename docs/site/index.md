@@ -10,9 +10,9 @@ data safely from Python or the command line — while the server is running.
 
 - **Plugin-oriented.** Datasets and providers are ordinary Python packages discovered
   through entry points; the framework installs no datasets by itself. The
-  [official Tushare plugins](plugins/index.md) provide trade calendars, stock and index
-  metadata, index constituents, and daily valuation metrics. Build your own with the
-  [Custom datasets](guide/custom-datasets.md) guide.
+  [demo plugins](plugins/demo.md) let you evaluate the system without any API token.
+  The [official Tushare plugins](plugins/index.md) provide real Chinese A-share market
+  data. Build your own with the [Custom datasets](guide/custom-datasets.md) guide.
 - **Transactional.** Every update is one atomic commit with declared coverage; a failed
   run resumes exactly where the data leaves off, never halfway.
 - **Runs on your schedule.** Opt-in cron jobs keep datasets current in exchange timezones.
@@ -26,7 +26,7 @@ data safely from Python or the command line — while the server is running.
 
 - :rocket: **[Installation](get-started/installation.md)** — requirements and install
 - :zap: **[Quick start](get-started/quickstart.md)** — start the server and explore
-  through the Web UI
+  through the Web UI with the demo plugins
 - :gear: **[Server](guide/workspace.md)** — workspaces, configuration, scheduling
 - :package: **[Data](guide/providers-and-datasets.md)** — datasets, tasks, reading data, DataLoader API
 - :wrench: **[Custom datasets](guide/custom-datasets.md)** — bring your own data with a plugin
@@ -37,9 +37,13 @@ data safely from Python or the command line — while the server is running.
 ## A taste
 
 ```bash
+pip install -e ./plugins/demo/provider ./plugins/demo/datasets/demo-random
 findata-server init ~/market-data
 findata-server start ~/market-data --provider-mode mock
-# Open http://127.0.0.1:8765 in your browser
+findata task run findata-test/demo_random complete \
+  --param tickers=AAPL \
+  --param timerange=2026-07-01:2026-07-10 \
+  --wait
 ```
 
 ```python
@@ -48,8 +52,8 @@ from findata import DataLoader
 
 table = (
     DataLoader(Path("~/market-data").expanduser())
-    .dataset("findata-plugins/tushare_daily_basic")
-    .query(keys=["600000.SH"], time_range=("2026-06-29", "2026-07-04"))
+    .dataset("findata-test/demo_random")
+    .query(keys=["AAPL"], time_range=("2026-07-01", "2026-07-10"))
 )
 ```
 

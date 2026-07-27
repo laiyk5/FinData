@@ -1,7 +1,10 @@
 # Official plugins
 
-The **findata-plugins** family adds Tushare financial data support. Install it from a
-checkout of this repository:
+The **findata-plugins** family adds Tushare financial data support. This family requires
+a [Tushare API token](https://tushare.pro) with sufficient credits. For evaluation
+without any credentials, see the [Demo plugins](demo.md).
+
+Install from a checkout of this repository:
 
 ```bash
 pip install -e ./plugins/tushare/provider \

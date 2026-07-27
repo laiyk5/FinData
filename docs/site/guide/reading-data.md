@@ -4,23 +4,23 @@ After maintaining a dataset, you can inspect and export its committed revision w
 starting the server and without learning the internal DuckDB layout:
 
 ```bash
-findata data schema findata-plugins/tushare_daily_basic
+findata data schema findata-test/demo_random
 
-findata data preview findata-plugins/tushare_daily_basic \
-  --keys 600000.SH \
-  --from 2026-01-01 --to 2026-07-01 \
-  --columns ts_code,trade_date,close,pe,pb
+findata data preview findata-test/demo_random \
+  --keys AAPL \
+  --from 2026-07-01 --to 2026-07-10 \
+  --columns ticker,trade_date,close,volume
 
-findata data coverage findata-plugins/tushare_daily_basic \
-  --keys 600000.SH \
-  --from 2026-01-01 --to 2026-07-01
+findata data coverage findata-test/demo_random \
+  --keys AAPL \
+  --from 2026-07-01 --to 2026-07-10
 
-findata data export findata-plugins/tushare_daily_basic \
-  --keys 600000.SH \
-  --from 2026-01-01 --to 2026-07-01 \
-  --columns ts_code,trade_date,close,pe,pb \
+findata data export findata-test/demo_random \
+  --keys AAPL \
+  --from 2026-07-01 --to 2026-07-10 \
+  --columns ticker,trade_date,close,volume \
   --output-format parquet \
-  --output daily-basic.parquet
+  --output demo-random.parquet
 ```
 
 This is a read-only workflow. It creates no task, performs no provider request, changes

@@ -1,7 +1,7 @@
 # Quick start
 
-This walkthrough starts findata and explores the server through the Web UI — no
-external credentials required.
+This walkthrough starts findata with the included demo plugins and explores the server
+through the Web UI — no external credentials required.
 
 ## 1. Install
 
@@ -11,7 +11,19 @@ pip install <path-to-findata>
 
 See [Installation](installation.md) for system requirements and alternative methods.
 
-## 2. Start the server and open the Web UI
+## 2. Install the demo plugins
+
+From a checkout of this repository, install the demo plugin family:
+
+```bash
+pip install -e ./plugins/demo/provider \
+             ./plugins/demo/datasets/demo-hello \
+             ./plugins/demo/datasets/demo-random
+```
+
+These plugins require no API token and work immediately with mock data.
+
+## 3. Start the server and open the Web UI
 
 ```bash
 findata-server init ~/market-data
@@ -19,11 +31,11 @@ findata-server start ~/market-data --provider-mode mock
 ```
 
 `init` creates the workspace directory and an API credential. `start` runs the server
-in the foreground with mock responses so you can explore without any API token.
+in the foreground with mock responses — no token needed.
 
-Open your browser to `http://127.0.0.1:8765` and paste the token from
-`~/market-data/token`. The Web UI shows the server status, registered plugins, and
-available datasets — everything is empty at first because no plugins are installed yet.
+Open your browser to **http://127.0.0.1:8765** and paste the token from
+`~/market-data/token`. The Web UI shows the server status, the demo provider
+(`findata-test/demo`), and two demo datasets (`demo_hello` and `demo_random`).
 
 Leave the server running; the Web UI polls for live updates.
 
@@ -32,61 +44,29 @@ Leave the server running; the Web UI polls for live updates.
     share. The Web UI is the primary interface for exploration; the CLI is designed for
     scripting and automation.
 
-## 3. Install plugins
-
-Datasets and data sources are added by installing plugin distributions. findata ships
-with no datasets by default — plugins bring their own.
-
-From a checkout of this repository, install the official Tushare family:
-
-```bash
-pip install -e ./plugins/tushare/provider \
-             ./plugins/tushare/trade-cal \
-             ./plugins/tushare/stock-basic \
-             ./plugins/tushare/index-basic \
-             ./plugins/tushare/index-weight \
-             ./plugins/tushare/daily-basic
-```
-
-Stop the server (`Ctrl-C`) and restart it:
-
-```bash
-findata-server start ~/market-data --provider-mode mock
-```
-
-Refresh the Web UI — the **Datasets** and **Providers** pages now list the installed
-plugins.
-
-!!! tip
-    Plugins don't have to come from a financial API. Run
-    ``findata plugin scaffold mycompany hello`` to generate your own — see
-    [Custom datasets](../guide/custom-datasets.md).
-
 ## 4. Run a task
 
-From the Web UI, navigate to a dataset and click **Complete** to backfill data, or use
-the CLI:
+From the Web UI, navigate to **demo_random** and click **Complete**, or use the CLI:
 
 ```bash
-findata task run findata-plugins/tushare_daily_basic complete \
-  --param symbols=tushare:000300.SH \
-  --param timerange=2026-06-29:2026-07-04 \
+findata task run findata-test/demo_random complete \
+  --param tickers=AAPL \
+  --param timerange=2026-07-01:2026-07-10 \
   --wait
 ```
 
-With `--provider-mode mock`, the server returns deterministic fake data — no API token
-needed. Tasks run in a child process, publish data transactionally, and report their
-result. The Web UI shows live progress.
+The task generates deterministic random-walk price data, commits it transactionally,
+and reports the result. The Web UI shows live progress.
 
 ## 5. Read the data
 
 Data is readable whether the server is running or not:
 
 ```bash
-findata data preview findata-plugins/tushare_daily_basic \
-  --keys 600000.SH \
-  --from 2026-06-29 --to 2026-07-04 \
-  --columns ts_code,trade_date,close
+findata data preview findata-test/demo_random \
+  --keys AAPL \
+  --from 2026-07-01 --to 2026-07-10 \
+  --columns ticker,trade_date,close
 ```
 
 or from Python:
@@ -97,10 +77,10 @@ from findata import DataLoader
 
 table = (
     DataLoader(Path("~/market-data").expanduser())
-    .dataset("findata-plugins/tushare_daily_basic")
+    .dataset("findata-test/demo_random")
     .query(
-        keys=["600000.SH"],
-        time_range=("2026-06-29", "2026-07-04"),
+        keys=["AAPL"],
+        time_range=("2026-07-01", "2026-07-10"),
     )
 )
 ```
