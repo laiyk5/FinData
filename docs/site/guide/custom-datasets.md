@@ -26,23 +26,55 @@ safe concurrent reads through [DataLoader](dataloader.md).
     plugin whose runtime does not satisfy its protocol. The built-in Tushare
     implementation remains the reference example.
 
-## Naming: the author namespace
+## Naming: the package namespace
 
-A plugin's full name is `<author>/<free/path/...>`, for example
-`acme/finance/daily_bars`. The first component is your publisher namespace — one
-distribution registers plugins under exactly one author, and full names must be unique
-in the environment. Everything below the author is your own classification, at any
-depth; core treats it as an opaque path. Each dataset plugin registers exactly one
-dataset, so the full name also addresses the dataset everywhere: storage, snapshots,
-and configuration keys follow it (`datasets/acme/finance/daily_bars/`,
-`dataset.acme/finance/daily_bars.<setting>`).
+A plugin's full name is `<package-namespace>/<local-name>`, for example
+`findata-plugins/tushare_daily_basic`. The first component is the Python **namespace
+package** ([PEP 420](https://packaging.python.org/guides/packaging-namespace-packages/))
+that one publisher's distributions share. It is **derived from the module path** of the
+entry point, not arbitrarily chosen:
 
-Distribution names follow a prefix convention that discovery validates:
-`findata-provider-*` for provider plugins and `findata-dataset-*` for dataset plugins
-(family umbrella collections are `findata-plugins-*` and carry no entry points).
+- An entry point at module
+  ``acme_finance.plugins.datasets.daily_bars`` → namespace ``acme-finance``
+- The plugin's full name must be ``acme-finance/daily-bars``
+
+Discovery validates this automatically — a plugin can never claim a namespace that
+doesn't match its Python package. Within the namespace, the local name is your own
+classification, at any depth; core treats it as an opaque path.
+
+Each dataset plugin registers exactly one dataset, so the full name also addresses the
+dataset everywhere: storage, snapshots, and configuration keys follow it
+(``datasets/acme-finance/daily-bars/``,
+``dataset.acme-finance/daily-bars.<setting>``).
+
+A namespace package is organized by convention:
+
+```
+acme_finance/                  # PEP 420 — no __init__.py
+  shared/                      # shared machinery, no entry points
+  plugins/
+    providers/
+      mydatasrc/               # provider plugin distribution
+        __init__.py
+        provider.py
+    datasets/
+      daily_bars/              # dataset plugin distribution
+        __init__.py
+        operations.py
+```
+
+Each leaf under ``plugins/`` is an **independent distribution** that contributes a
+subpackage into the shared namespace. Install one leaf or all of them — the namespace
+(PEP 420) makes them appear as a coherent tree without any leaf depending on another.
+
+Distribution names are free-form but should reflect the namespace and plugin type
+for clarity — for example ``mycompany-provider-mydatasrc`` and
+``mycompany-datasets-daily-bars``. The official ``findata-plugins`` family uses the
+``findata-provider-*`` / ``findata-dataset-*`` convention; this is a project policy
+for that namespace, not a framework-enforced rule.
 
 Installed plugins mount automatically; a workspace can block yours via the
-`plugins.blocked` config key — unless another mounted plugin requires it, in which case
+``plugins.blocked`` config key — unless another mounted plugin requires it, in which case
 the block is ineffective and a warning is logged.
 
 ## Architecture in one paragraph
@@ -103,7 +135,7 @@ plugin = DatasetPlugin(
     spec=spec,
     runtime=MyDatasetRuntime(),          # see the runtime protocols below
     operations=("update", "complete"),   # "update" is mandatory and parameterless
-    dependencies=("finance/stock_basic",),  # author-relative; must stay acyclic
+    dependencies=("finance/stock_basic",),  # namespace-relative; must stay acyclic
     schedule=("30 18 * * 1-5", "Asia/Shanghai"),  # optional suggested cron
     settings={
         "dataset.acme/finance/daily_bars.update_symbols": SettingSpec(
@@ -119,7 +151,7 @@ plugin = DatasetPlugin(
 Validation at load time rejects malformed or duplicate dataset names, plugin/spec name
 mismatches, runtimes that do not satisfy `DatasetRuntime`, unknown providers, a missing
 `update` operation, unknown dependencies, and dependency cycles. Dependency names may be
-full names or author-relative (`"finance/stock_basic"` above resolves to
+full names or namespace-relative (`"finance/stock_basic"` above resolves to
 `acme/finance/stock_basic`); they declare **data** dependencies only — the packages
 providing them are never imported.
 
