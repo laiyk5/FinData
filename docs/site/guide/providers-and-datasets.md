@@ -29,9 +29,8 @@ runtime companion: initialization state, current publication, and a coverage sum
 ### Available datasets
 
 Run `findata dataset ls` after installing any plugin distribution to see what's
-registered. The [Demo plugins](../plugins/demo.md) page lists the evaluation datasets
-that work without any API token. The [Official plugins](../plugins/index.md) page lists
-the built-in Tushare datasets.
+registered. The [Official plugins](../plugins/index.md) page lists available plugin families,
+including the evaluation datasets that work without any API token.
 
 To maintain datasets from your own provider, see
 [Custom datasets and providers](custom-datasets.md).

@@ -99,7 +99,7 @@ pub.publish(table, coverage=[Coverage(key=ticker, start=start, end=end)])
 ### Naming: the package namespace
 
 A plugin's full name is `<package-namespace>/<local-name>` — for example
-`findata-plugins/tushare_daily_basic`. The namespace is the **Python package name**
+`findata-test/demo_random`. The namespace is the **Python package name**
 ([PEP 420](https://packaging.python.org/guides/packaging-namespace-packages/)),
 derived from the entry point's module path. Discovery rejects a plugin whose full
 name doesn't match its package, so a plugin can never impersonate another namespace.
@@ -235,6 +235,6 @@ with create_test_workspace(plugins=[my_plugin]) as ws:
 
 ## Reference implementation
 
-The built-in Tushare plugins are the canonical example of every rule on this page.
-Their source lives in `plugins/tushare/` in the repository under the
-`findata_plugins` namespace package.
+The demo plugins under `plugins/demo/` in the repository are a complete working
+reference for every rule on this page. The official Tushare plugins under
+`plugins/tushare/` are a more complex example featuring real API integration.

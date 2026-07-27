@@ -46,21 +46,8 @@ pip install -e ./plugins/demo/provider \
              ./plugins/demo/datasets/demo-random
 ```
 
-### Official Tushare plugins
-
-The Tushare family provides Chinese A-share market data. It requires a
-[Tushare API token](https://tushare.pro) with sufficient credits:
-
-```bash
-pip install -e ./plugins/tushare/provider \
-             ./plugins/tushare/trade-cal \
-             ./plugins/tushare/stock-basic \
-             ./plugins/tushare/index-basic \
-             ./plugins/tushare/index-weight \
-             ./plugins/tushare/daily-basic
-```
-
-Third-party plugins install the same way (`pip install -e ./path/to/plugin`); a
+Other plugin families — including the [official Tushare plugins](../plugins/index.md) —
+install the same way (`pip install -e ./path/to/plugin`); a
 workspace can block individual plugins via the `plugins.blocked` configuration key.
 See [Custom datasets and providers](../guide/custom-datasets.md).
 

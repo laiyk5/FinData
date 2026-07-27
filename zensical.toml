@@ -29,8 +29,6 @@ nav = [
   { "Custom datasets" = "guide/custom-datasets.md" },
   { "Official plugins" = [
     "plugins/index.md",
-  ]},
-  { "Demo plugins" = [
     "plugins/demo.md",
   ]},
   { "Reference" = [
