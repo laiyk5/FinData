@@ -61,6 +61,13 @@ def main(
         stdout.flush()
         return 0
     workspace = Path(args.workspace).expanduser().resolve()
+    stopped = threading.Event()
+
+    def stop(_signum: int, _frame: object) -> None:
+        stopped.set()
+
+    signal.signal(signal.SIGINT, stop)
+    signal.signal(signal.SIGTERM, stop)
     try:
         server = FindataServer(
             workspace,
@@ -77,13 +84,6 @@ def main(
         stderr.write(f"Error: cannot start the server: {exc}\n")
         stderr.flush()
         return 1
-    stopped = threading.Event()
-
-    def stop(_signum: int, _frame: object) -> None:
-        stopped.set()
-
-    signal.signal(signal.SIGINT, stop)
-    signal.signal(signal.SIGTERM, stop)
     summaries = server.provider_summaries()
     labels = {
         str(item["name"]): (
