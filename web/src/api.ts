@@ -299,7 +299,11 @@ async function request<T>(
   return data as T;
 }
 
-const enc = encodeURIComponent;
+/** Encode a URL path segment but preserve slashes so dataset names like
+ *  ``findata-test/demo_random`` become separate path segments. */
+function enc(value: string): string {
+  return value.split("/").map(encodeURIComponent).join("/");
+}
 
 // ---------------------------------------------------------------------------
 // Endpoints
