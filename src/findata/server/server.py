@@ -44,7 +44,7 @@ class ServerAlreadyRunningError(RuntimeError):
     pass
 
 
-WEBUI_ROOT = Path(__file__).resolve().parent / "webui"
+WEBUI_ROOT = Path(__file__).resolve().parent.parent / "webui"
 
 _WEBUI_CONTENT_TYPES = {
     ".html": "text/html; charset=utf-8",
