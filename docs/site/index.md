@@ -25,10 +25,10 @@ data safely from Python or the command line — while the server is running.
 
 <div class="grid cards" markdown>
 
-- :rocket: **[Installation](get-started/installation.md)** — requirements and install
-- :zap: **[Quick start](get-started/quickstart.md)** — start the server and explore
+- 🚀 **[Installation](get-started/installation.md)** — requirements and install
+- ⚡ **[Quick start](get-started/quickstart.md)** — start the server and explore
   through the Web UI with the demo plugins
-- :gear: **[Server](guide/workspace.md)** — workspaces, configuration, scheduling
+- ⚙️ **[Server](guide/workspace.md)** — workspaces, configuration, scheduling
 - :package: **[Data](guide/providers-and-datasets.md)** — datasets, tasks, reading data, DataLoader API
 - :wrench: **[Custom datasets](guide/custom-datasets/)** — bring your own data with a plugin
 - :computer: **[CLI reference](reference/cli.md)** — every command, output format, and exit code
