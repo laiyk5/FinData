@@ -376,6 +376,8 @@ def _execute(
         )
     if args.group == "system" and args.action == "status":
         return client.request("GET", "/v1/system/status")
+    if args.group == "system" and args.action == "health":
+        return client.request("GET", "/v1/system/health")
     raise ValueError("unsupported command")
 
 
@@ -389,6 +391,10 @@ def execute_plugin_command(args: Any) -> dict[str, object]:
         return _plugin_blocked(args)
     if args.action == "scaffold":
         return _plugin_scaffold(args)
+    if args.action == "block":
+        return _plugin_block(args)
+    if args.action == "unblock":
+        return _plugin_unblock(args)
     raise ValueError(f"unsupported plugin action: {args.action}")
 
 
@@ -419,33 +425,72 @@ def _plugin_ls() -> dict[str, object]:
 
 
 def _plugin_check(name: str) -> dict[str, object]:
-    """Try to load an entry point and report success or failure."""
+    """Try to load an entry point and report success or failure.
+
+    Accepts both short entry-point names (``demo``) and full plugin names
+    (``findata-test/demo``).
+    """
     from importlib.metadata import entry_points
 
     groups = {"findata.providers": "findata.providers", "findata.datasets": "findata.datasets"}
+
+    # Phase 1 — match by entry-point name or value suffix (fast path).
     for group_key, group_name in groups.items():
         for ep in entry_points(group=group_key):
             if ep.name == name or ep.value.endswith(f":{name}"):
-                try:
-                    loaded = ep.load()
-                    value = loaded() if callable(loaded) else loaded
-                    return {
-                        "name": ep.name,
-                        "group": group_name,
-                        "module": ep.module,
-                        "loaded": True,
-                        "type": type(value).__name__,
-                    }
-                except Exception as exc:
-                    return {
-                        "name": ep.name,
-                        "group": group_name,
-                        "module": ep.module,
-                        "loaded": False,
-                        "error_type": type(exc).__name__,
-                        "error_message": str(exc),
-                    }
-    return {"name": name, "loaded": False, "error_type": "NotFound", "error_message": f"No entry point named {name!r} found in installed packages"}
+                return _try_load(ep, group_name)
+            # Also match the part after the last dot in the module path,
+            # so "demo" matches "...providers.demo:provider_plugin"
+            module_part = ep.module.rpartition(".")[-1]
+            if module_part == name:
+                return _try_load(ep, group_name)
+
+    # Phase 2 — match by full plugin name (<namespace>/<name>).
+    # Load each entry point and check the returned plugin's provider_id or name.
+    for group_key, group_name in groups.items():
+        for ep in entry_points(group=group_key):
+            result = _try_load(ep, group_name)
+            if result.get("loaded"):
+                full_name = result.get("full_name", "")
+                if full_name == name:
+                    return result
+
+    return {
+        "name": name,
+        "loaded": False,
+        "error_type": "NotFound",
+        "error_message": f"No entry point or plugin named {name!r} found in installed packages",
+    }
+
+
+def _try_load(ep: Any, group_name: str) -> dict[str, object]:
+    """Load one entry point and return a check result."""
+    try:
+        loaded = ep.load()
+        value = loaded() if callable(loaded) else loaded
+        full_name = ""
+        type_name = type(value).__name__
+        if hasattr(value, "provider_id"):  # ProviderPlugin
+            full_name = value.provider_id
+        elif hasattr(value, "name"):  # DatasetPlugin
+            full_name = value.name
+        return {
+            "name": ep.name,
+            "group": group_name,
+            "module": ep.module,
+            "full_name": full_name,
+            "loaded": True,
+            "type": type_name,
+        }
+    except Exception as exc:
+        return {
+            "name": ep.name,
+            "group": group_name,
+            "module": ep.module,
+            "loaded": False,
+            "error_type": type(exc).__name__,
+            "error_message": str(exc),
+        }
 
 
 def _plugin_blocked(args: Any) -> dict[str, object]:
@@ -470,11 +515,22 @@ def _plugin_scaffold(args: Any) -> dict[str, object]:
     name = str(args.name)
     try:
         root = scaffold_plugin(namespace, name)
+        ns_pkg = namespace.replace("-", "_")
+        local_pkg = name.replace("-", "_")
         return {
             "namespace": namespace,
             "name": name,
             "path": str(root),
             "succeeded": True,
+            "next_steps": (
+                f"cd {namespace}/\n"
+                f"  pip install -e ./provider -e ./datasets/{name}\n"
+                f"  findata-server init ~/my-workspace\n"
+                f"  findata-server start ~/my-workspace\n"
+                f"  findata plugin check {name}\n"
+                f"\nEdit {namespace}/datasets/{name}/src/{ns_pkg}/plugins/datasets/{local_pkg}/operations.py"
+                f" to add your data logic."
+            ),
         }
     except ScaffoldError as exc:
         return {
@@ -484,6 +540,41 @@ def _plugin_scaffold(args: Any) -> dict[str, object]:
             "succeeded": False,
             "error": str(exc),
         }
+
+
+def _plugin_block(args: Any) -> dict[str, object]:
+    """Add a plugin to the workspace blocklist."""
+    return _modify_blocklist(args, add=True)
+
+
+def _plugin_unblock(args: Any) -> dict[str, object]:
+    """Remove a plugin from the workspace blocklist."""
+    return _modify_blocklist(args, add=False)
+
+
+def _modify_blocklist(args: Any, *, add: bool) -> dict[str, object]:
+    from findata.plugins import plugin_blocklist as read_blocklist
+    from findata.storage import Workspace
+
+    try:
+        environ = os.environ if not hasattr(args, "_environ") else args._environ
+        ws_path = resolve_workspace(getattr(args, "workspace", None), environ=environ)
+        ws = Workspace(ws_path)
+        current = list(read_blocklist(ws))
+        name = str(args.name)
+        if add:
+            if name not in current:
+                current.append(name)
+                ws.set_config("plugins.blocked", current)
+            action = "blocked"
+        else:
+            if name in current:
+                current = [item for item in current if item != name]
+                ws.set_config("plugins.blocked", current)
+            action = "unblocked"
+        return {"name": name, "action": action, "blocked": current, "workspace": str(ws_path)}
+    except RuntimeError as exc:
+        return {"name": str(getattr(args, "name", "")), "error": str(exc), "workspace": None}
 
 
 def _declared_secret_keys(client: _Client) -> set[str]:

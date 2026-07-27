@@ -384,7 +384,12 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
             parts = [unquote(part) for part in parsed.path.split("/") if part]
             query = parse_qs(parsed.query)
             try:
-                if method == "GET" and parts == ["v1", "system", "status"]:
+                if method == "GET" and parts == ["v1", "system", "health"]:
+                    self._send(
+                        HTTPStatus.OK,
+                        _system_health(app),
+                    )
+                elif method == "GET" and parts == ["v1", "system", "status"]:
                     runtime = app.taskrunner.runtime_status()
                     self._send(
                         HTTPStatus.OK,
@@ -883,6 +888,28 @@ def _task_payload(record: Any) -> dict[str, Any]:
     if isinstance(counts, dict) and not any(counts.values()):
         value.pop("diagnostic_counts", None)
     return value
+
+
+def _system_health(app: FindataServer) -> dict[str, Any]:
+    """Aggregate health summary for ``/v1/system/health``."""
+    load_errors = plugin_load_errors()
+    total_errors = sum(len(errs) for errs in load_errors.values())
+    dataset_list = [
+        {
+            "name": name,
+            "provider": plugin.provider,
+            "state": app._dataset_status(name).get("state", "unknown"),
+        }
+        for name, plugin in sorted(app.plugins.items())
+    ]
+    return {
+        "status": "running",
+        "version": _server_version(),
+        "workspace": str(app.root),
+        "providers": app.provider_summaries(),
+        "datasets": dataset_list,
+        "plugin_errors": total_errors,
+    }
 
 
 def _server_version() -> str:

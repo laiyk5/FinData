@@ -78,10 +78,13 @@ COMMAND_HELP = {
     ("events", "ls"): "List retained operational events.",
     ("events", "ack"): "Acknowledge one event or every matching event.",
     ("system", "status"): "Show server identity and runtime health.",
+    ("system", "health"): "Aggregate health check — plugins, providers, datasets.",
     ("plugin", "ls"): "List installed plugin distributions with entry points and versions.",
     ("plugin", "check"): "Check whether a specific plugin entry point loads correctly.",
     ("plugin", "blocked"): "Show the workspace plugin blocklist.",
     ("plugin", "scaffold"): "Generate a complete plugin distribution tree.",
+    ("plugin", "block"): "Add a plugin to the workspace blocklist.",
+    ("plugin", "unblock"): "Remove a plugin from the workspace blocklist.",
     ("completion", "completion"): "Generate a shell script that enables command completion.",
 }
 
@@ -438,6 +441,7 @@ def command_tree(*, version: str) -> click.Group:
     system = DocumentedGroup("system", help=GROUP_HELP["system"])
     root.add_command(system)
     attach(system, "system", "status", [])
+    attach(system, "system", "health", [])
 
     plugin = DocumentedGroup("plugin", help=GROUP_HELP["plugin"])
     root.add_command(plugin)
@@ -453,6 +457,18 @@ def command_tree(*, version: str) -> click.Group:
         "plugin",
         "blocked",
         [click.Option(["--all"], is_flag=True, help="Show all installed plugins and their block status.")],
+    )
+    attach(
+        plugin,
+        "plugin",
+        "block",
+        [click.Argument(["name"])],
+    )
+    attach(
+        plugin,
+        "plugin",
+        "unblock",
+        [click.Argument(["name"])],
     )
     attach(
         plugin,

@@ -468,6 +468,62 @@ print(DataLoader('~/my-workspace').dataset('mycompany/hello').query())
 The dataset is discovered, registered, and queryable through the same CLI and API as
 everything else — no changes to findata required.
 
+## Testing your plugin
+
+The ``findata.testing`` module provides helpers for writing plugin tests.
+
+### RecordingReporter
+
+Captures ``log()``, ``diagnostic()``, and ``progress()`` calls for assertions without
+running a real operation:
+
+```python
+from findata.testing import RecordingReporter
+
+reporter = RecordingReporter()
+reporter.log("hello")
+reporter.diagnostic("warning", "MY_CODE", "something happened")
+assert "hello" in reporter.logs
+assert reporter.diagnostics[0]["code"] == "MY_CODE"
+```
+
+### FakeDatasetRuntime
+
+A ``DatasetRuntimeBase`` subclass for testing registration and validation without a
+real operation engine:
+
+```python
+from findata.testing import FakeDatasetRuntime, make_dataset_plugin
+from findata.plugins import validate_plugins
+
+runtime = FakeDatasetRuntime(spec=MY_SPEC)
+plugin = make_dataset_plugin(spec=MY_SPEC, runtime=runtime)
+# validate_plugins accepts it just like a real runtime
+```
+
+### make_provider_plugin / make_dataset_plugin
+
+Quick factories that build minimal ``ProviderPlugin`` and ``DatasetPlugin`` instances
+for use in integration tests:
+
+```python
+from findata.testing import make_provider_plugin, make_dataset_plugin
+
+provider = make_provider_plugin("mycompany/myprovider")
+dataset = make_dataset_plugin(MY_SPEC, provider="mycompany/myprovider")
+```
+
+### create_test_workspace
+
+Context manager that creates a temporary workspace with registered plugins:
+
+```python
+from findata.testing import create_test_workspace
+
+with create_test_workspace(plugins=[my_plugin]) as ws:
+    assert ws.get_config("plugins.blocked") is None
+```
+
 ## Reference implementation
 
 The built-in Tushare plugins are the canonical example of every rule on this page and

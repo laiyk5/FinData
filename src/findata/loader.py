@@ -69,6 +69,23 @@ class DataLoader:
         dataset_root = dataset_root_path(self.workspace / "datasets", name)
         return DatasetReader(dataset_root, name=name)
 
+    def list_datasets(self) -> list[str]:
+        """Return all dataset names registered in this workspace, in alphabetical order.
+
+        Only datasets that have been physically created (i.e., have a database file) are
+        returned; a plugin that was discovered but never initialized is not included.
+        """
+        datasets_dir = self.workspace / "datasets"
+        if not datasets_dir.is_dir():
+            return []
+        names: list[str] = []
+        for db in datasets_dir.rglob(DATABASE_NAME):
+            if db.is_file():
+                rel = db.parent.relative_to(datasets_dir)
+                names.append(str(rel))
+        names.sort()
+        return names
+
 
 class DatasetReader:
     def __init__(self, dataset_root: Path, *, name: str) -> None:

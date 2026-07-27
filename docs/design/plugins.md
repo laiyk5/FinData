@@ -228,6 +228,10 @@ a declared data dependency or a mounted dataset's provider — and every repair 
 unknown entry) logs a warning. Registration, server discovery, and the task-process
 dispatcher apply the same filter.
 
+!!! note "Server restart required"
+    The blocklist is read at server startup only. Changing ``plugins.blocked`` while
+    the server is running has no effect until the next ``findata-server start``.
+
 ## Official plugins
 
 The official Tushare family is the reference implementation and lives in one family
