@@ -477,6 +477,7 @@ def command_tree(*, version: str) -> click.Group:
         [
             click.Argument(["namespace"]),
             click.Argument(["name"]),
+            click.Option(["--install"], is_flag=True, help="Install the generated plugins with pip install -e."),
         ],
     )
 

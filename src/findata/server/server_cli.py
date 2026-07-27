@@ -98,6 +98,7 @@ def main(
             "✓ FinData server ready\n",
             f"  Version    {__version__}\n",
             f"  Workspace  {workspace}\n",
+            f"  Token      {workspace / 'token'}\n",
             f"  API        {server.base_url}\n",
             f"  Providers  {', '.join(f'{name} ({label})' for name, label in labels.items())}\n",
         ]

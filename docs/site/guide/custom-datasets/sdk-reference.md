@@ -101,15 +101,18 @@ hello = "mycompany.plugins.datasets.hello:hello_plugin"
 Use `DatasetRuntimeBase` (as the scaffold does) to get sensible defaults for all but
 `operation_worker`:
 
-| Method | Called for |
-|---|---|
-| `operation_worker(...)` | **must override** — returns the pickle-safe callable executed in a task subprocess |
-| `normalize_operation(op, operands, *, today)` | canonicalize/validate operands (default: pass-through) |
-| `plan_operation(workspace, op, operands, *, today)` | `--dry-run` preview |
-| `dataset_description(workspace, *, provider_ready)` | `dataset describe/status` payload |
-| `operation_description(operation)` | operand JSON schema + help |
-| `resolve_dependency(target, requirement)` | map a dependency to a fulfilling operation |
-| `update_ready(workspace)` | whether parameterless `update` can proceed (default: `True`) |
+| Method | Default | When to override |
+|---|---|---|
+| `operation_worker(...)` | **None (must override)** | Always — returns the pickle-safe callable executed in a task subprocess |
+| `normalize_operation(op, operands, *, today)` | Pass-through (returns operands as-is) | When your operation accepts specific named operands |
+| `plan_operation(...)` | Generic dry-run with no estimates | When you want to show request counts or strategy |
+| `dataset_description(...)` | Reads storage state via DataLoader | Only if you need custom description fields |
+| `operation_description(operation)` | Returns {"name", "help", "required", "properties"} | Only if you want per-operation help text |
+| `resolve_dependency(target, requirement)` | Raises ValueError ("no dependencies") | Only if your dataset has data dependencies |
+| `update_ready(workspace)` | Returns `True` | Only if update requires configured settings |
+
+**In practice:** A simple dataset only overrides `operation_worker`. The scaffold does exactly
+that — the other six methods come from `DatasetRuntimeBase` with sensible defaults.
 
 ## Reference implementation
 

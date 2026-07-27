@@ -6,7 +6,9 @@ through the Web UI — no external credentials required.
 ## 1. Install
 
 ```bash
-pip install <path-to-findata>
+git clone <this-repository>
+cd findata
+pip install -e .
 ```
 
 See [Installation](installation.md) for system requirements and alternative methods.
@@ -42,7 +44,8 @@ Leave the server running; the Web UI polls for live updates.
 !!! tip
     The server also serves a [REST API](../reference/cli.md) that the CLI and Web UI
     share. The Web UI is the primary interface for exploration; the CLI is designed for
-    scripting and automation.
+    scripting and automation. Set `FINDATA_WORKSPACE=~/market-data` in your shell profile
+    to avoid typing `--workspace` on every CLI command.
 
 ## 4. Run a task
 

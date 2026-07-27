@@ -517,19 +517,42 @@ def _plugin_scaffold(args: Any) -> dict[str, object]:
         root = scaffold_plugin(namespace, name)
         ns_pkg = namespace.replace("-", "_")
         local_pkg = name.replace("-", "_")
+
+        # Build file tree
+        file_tree_lines: list[str] = []
+        prefix = str(root.parent) + "/"
+        for path in sorted(root.rglob("*")):
+            if path.is_file() and "__pycache__" not in str(path):
+                rel = str(path).replace(prefix, "")
+                file_tree_lines.append(f"  {rel}")
+        file_tree = "\n".join(file_tree_lines)
+
+        # --install flag
+        if getattr(args, "install", False):
+            import subprocess, sys
+            provider_path = str(root / "provider")
+            dataset_path = str(root / "datasets" / name)
+            subprocess.check_call(
+                [sys.executable, "-m", "pip", "install", "-e", provider_path, "-e", dataset_path],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+
         return {
             "namespace": namespace,
             "name": name,
             "path": str(root),
             "succeeded": True,
+            "files": file_tree,
+            "installed": bool(getattr(args, "install", False)),
             "next_steps": (
-                f"cd {namespace}/\n"
-                f"  pip install -e ./provider -e ./datasets/{name}\n"
-                f"  findata-server init ~/my-workspace\n"
-                f"  findata-server start ~/my-workspace\n"
-                f"  findata plugin check {name}\n"
-                f"\nEdit {namespace}/datasets/{name}/src/{ns_pkg}/plugins/datasets/{local_pkg}/operations.py"
-                f" to add your data logic."
+                f"# after scaffold, install and test:\n"
+                f"pip install -e ./{namespace}/provider ./{namespace}/datasets/{name}\n"
+                f"findata-server init ~/my-workspace\n"
+                f"findata-server start ~/my-workspace\n"
+                f"findata plugin check {name}\n"
+                f"\n# edit your data logic in:\n"
+                f"{namespace}/datasets/{name}/src/{ns_pkg}/plugins/datasets/{local_pkg}/operations.py\n"
+                f"\n# note: if the server was already running, restart it so new plugins are discovered."
             ),
         }
     except ScaffoldError as exc:

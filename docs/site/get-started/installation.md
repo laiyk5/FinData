@@ -12,12 +12,8 @@
 Install the framework from a source checkout:
 
 ```bash
-pip install <path-to-findata>
-```
-
-or, if you are working from this repository:
-
-```bash
+git clone <repository-url>
+cd findata
 pip install -e .
 ```
 
