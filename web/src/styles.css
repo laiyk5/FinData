@@ -1313,6 +1313,26 @@ label.field .field-label .req {
 }
 .attention-row .row-actions {
   margin-left: auto;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.attention-row .attention-message {
+  flex: 1;
+  min-width: 0;
+}
+.link-button {
+  background: none;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.link-button:hover {
+  color: var(--accent-hover);
 }
 
 .live-list {
