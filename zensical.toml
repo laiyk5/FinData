@@ -30,6 +30,7 @@ nav = [
   { "Official plugins" = [
     "plugins/index.md",
     "plugins/demo.md",
+    "plugins/tushare.md",
   ]},
   { "Reference" = [
     "reference/cli.md",

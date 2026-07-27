@@ -11,8 +11,9 @@ data safely from Python or the command line — while the server is running.
 - **Plugin-oriented.** Datasets and providers are ordinary Python packages discovered
   through entry points; the framework installs no datasets by itself. The
   [demo plugins](plugins/demo.md) let you evaluate the system without any API token.
-  The [official Tushare plugins](plugins/index.md) provide real Chinese A-share market
-  data. Build your own with the [Custom datasets](guide/custom-datasets.md) guide.
+  The [official plugins](plugins/index.md) include the Tushare family for real
+  Chinese A-share market data. Build your own with the
+  [Custom datasets](guide/custom-datasets.md) guide.
 - **Transactional.** Every update is one atomic commit with declared coverage; a failed
   run resumes exactly where the data leaves off, never halfway.
 - **Runs on your schedule.** Opt-in cron jobs keep datasets current in exchange timezones.
