@@ -12,6 +12,7 @@ import click
 
 from findata import __version__
 from findata.click_parser import DocumentedCommand, DocumentedGroup
+from findata.plugins import plugin_load_errors
 from findata.server import FindataServer, ServerAlreadyRunningError, initialize_workspace
 
 
@@ -90,19 +91,29 @@ def main(
         )
         for item in summaries
     }
+    load_errors = plugin_load_errors()
+    total_errors = sum(len(errors) for errors in load_errors.values())
     if bool(getattr(stdout, "isatty", lambda: False)()):
-        stdout.write(
-            "✓ FinData server ready\n"
-            f"  Version    {__version__}\n"
-            f"  Workspace  {workspace}\n"
-            f"  API        {server.base_url}\n"
-            f"  Providers  {', '.join(f'{name} ({label})' for name, label in labels.items())}\n"
-        )
+        lines = [
+            "✓ FinData server ready\n",
+            f"  Version    {__version__}\n",
+            f"  Workspace  {workspace}\n",
+            f"  API        {server.base_url}\n",
+            f"  Providers  {', '.join(f'{name} ({label})' for name, label in labels.items())}\n",
+        ]
+        if total_errors:
+            lines.append(
+                f"  Plugins    {total_errors} failed to load"
+                " (use `findata plugin check <name>` to inspect)\n"
+            )
+        stdout.write("".join(lines))
     else:
+        suffix = f" load_errors={total_errors}" if total_errors else ""
         stdout.write(
             f"FinData server ready version={__version__} workspace={workspace} "
             f"api={server.base_url} "
-            f"providers={','.join(f'{name}:{label}' for name, label in labels.items())}\n"
+            f"providers={','.join(f'{name}:{label}' for name, label in labels.items())}"
+            f"{suffix}\n"
         )
     stdout.flush()
     try:

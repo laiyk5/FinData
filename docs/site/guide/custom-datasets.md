@@ -215,6 +215,227 @@ Reads your plugin needs during planning or normalization go through the public
 [DataLoader](dataloader.md) on the committed state of a declared dependency — never by
 importing that dependency's plugin or opening its database.
 
+## Minimal walkthrough
+
+This section builds a working provider and dataset from scratch — about 90 lines of
+Python across two packages. The full source is in `plugins/demo/` in the repository,
+under the `findata-test` namespace.
+
+### 1. Directory layout
+
+```
+my_first_plugin/
+  provider/
+    pyproject.toml
+    src/
+      mycompany/                          # PEP 420 namespace — no __init__.py
+        plugins/providers/myprovider/
+          __init__.py
+          provider.py
+  datasets/
+    hello/
+      pyproject.toml
+      src/
+        mycompany/
+          plugins/datasets/hello/
+            __init__.py
+            operations.py
+```
+
+### 2. The provider plugin
+
+**`provider/pyproject.toml`**:
+```toml
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mycompany-provider-myprovider"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = ["findata"]
+
+[project.entry-points."findata.providers"]
+myprovider = "mycompany.plugins.providers.myprovider:provider_plugin"
+
+[tool.hatch.build.targets.wheel]
+only-include = ["src/mycompany/plugins/providers/myprovider"]
+sources = ["src"]
+```
+
+**`provider/src/mycompany/plugins/providers/myprovider/provider.py`**:
+```python
+from findata.plugins import ProviderPlugin, ProviderRuntime
+from findata.storage import Workspace
+from datetime import date
+
+class AlwaysReadyRuntime(ProviderRuntime):
+    def ready(self, workspace: Workspace, mode: str) -> bool:
+        return True
+    def is_mock(self, workspace: Workspace, mode: str) -> bool:
+        return True
+    def probe(self, workspace: Workspace, *, today: date) -> None:
+        pass
+
+def provider_plugin() -> ProviderPlugin:
+    return ProviderPlugin(
+        provider_id="mycompany/myprovider",
+        configuration_schema={"type": "object", "properties": {}},
+        secret_fields=(),
+        rate_limit=1000,
+        period=60,
+        runtime=AlwaysReadyRuntime(),
+    )
+```
+
+**`provider/src/mycompany/plugins/providers/myprovider/__init__.py`**:
+```python
+from mycompany.plugins.providers.myprovider.provider import (
+    AlwaysReadyRuntime, provider_plugin,
+)
+```
+
+### 3. The dataset plugin
+
+**`datasets/hello/pyproject.toml`**:
+```toml
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mycompany-datasets-hello"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "findata",
+    "mycompany-provider-myprovider==0.1.0",
+    "pyarrow>=15",
+]
+
+[project.entry-points."findata.datasets"]
+hello = "mycompany.plugins.datasets.hello:hello_plugin"
+
+[tool.hatch.build.targets.wheel]
+only-include = ["src/mycompany/plugins/datasets/hello"]
+sources = ["src"]
+```
+
+**`datasets/hello/src/mycompany/plugins/datasets/hello/__init__.py`** — the spec and
+factory:
+```python
+import pyarrow as pa
+from findata.contracts import DatasetSpec
+
+FIELDS = ("name", "greeting", "count")
+
+HELLO_SPEC = DatasetSpec(
+    name="mycompany/hello",
+    api_name="hello",
+    schema=pa.schema([
+        pa.field("name", pa.string(), nullable=False),
+        pa.field("greeting", pa.string(), nullable=False),
+        pa.field("count", pa.int64(), nullable=False),
+    ]),
+    provider_fields=FIELDS,
+    primary_key=("name",),
+    partition_key="name",
+)
+
+def hello_plugin():
+    from findata.plugins import DatasetPlugin
+    from mycompany.plugins.datasets.hello.operations import HelloRuntime
+    return DatasetPlugin(
+        name=HELLO_SPEC.name,
+        provider="myprovider",
+        spec=HELLO_SPEC,
+        runtime=HelloRuntime(),
+        operations=("update", "complete", "refresh"),
+    )
+```
+
+**`datasets/hello/src/mycompany/plugins/datasets/hello/operations.py`** — the runtime:
+```python
+from dataclasses import dataclass
+from datetime import date, datetime
+from pathlib import Path
+from typing import Any
+from findata.contracts import OperandError, OperationReporter, OperationRequest
+from findata.plugins import DatasetRuntime
+from findata.storage import Workspace
+from mycompany.plugins.datasets.hello import HELLO_SPEC, FIELDS
+
+@dataclass(frozen=True, slots=True)
+class Worker:
+    workspace: Path
+    def __call__(self, request: OperationRequest, context: OperationReporter) -> dict:
+        rows = int(request["operands"].get("rows", 5))
+        if rows < 1:
+            raise OperandError("rows must be positive")
+        table = HELLO_SPEC.table_from_response(
+            FIELDS,
+            [[f"user_{i:04d}", f"Hello, user {i}!", i * 100] for i in range(rows)],
+        )
+        from findata.storage import Workspace as WS
+        pub = WS(self.workspace).publisher(HELLO_SPEC.name)
+        return {"publication_id": pub.publish(table), "rows": rows}
+
+class HelloRuntime:
+    def operation_worker(self, workspace, *, mode, today, now):
+        return Worker(workspace=workspace)
+    def normalize_operation(self, op, operands, *, today):
+        if op not in ("update", "complete", "refresh"):
+            raise OperandError(f"unknown operation {op!r}")
+        v = dict(operands)
+        if "rows" in v:
+            v["rows"] = int(v["rows"])
+        return v
+    def plan_operation(self, ws, op, operands, *, today):
+        return {"dry_run": True, "dataset": HELLO_SPEC.name, "operation": op,
+                "operands": self.normalize_operation(op, operands, today=today),
+                "estimated_provider_requests": 0, "dependencies": [],
+                "side_effects": False}
+    def dataset_description(self, ws, *, provider_ready):
+        from findata.loader import DataLoader, DatasetNotReadyError
+        try:
+            r = DataLoader(ws.root).dataset(HELLO_SPEC.name)
+            return {"name": HELLO_SPEC.name, "provider": "mycompany/myprovider",
+                    "provider_ready": provider_ready, "state": "ready",
+                    "publication_id": r.publication_id, "operations": [
+                        self.operation_description(n) for n in ("update","complete","refresh")]}
+        except DatasetNotReadyError:
+            return {"name": HELLO_SPEC.name, "provider": "mycompany/myprovider",
+                    "provider_ready": provider_ready, "state": "uninitialized",
+                    "publication_id": None, "operations": [
+                        self.operation_description(n) for n in ("update","complete","refresh")]}
+    def operation_description(self, op):
+        return {"name": op, "help": "", "required": [], "properties": {
+            "rows": {"type": "integer", "minimum": 1, "default": 5}}}
+    def resolve_dependency(self, target, requirement):
+        raise ValueError(f"{HELLO_SPEC.name} has no dependencies")
+    def update_ready(self, ws):
+        return True
+```
+
+### 4. Try it
+
+```bash
+# Install both packages, then:
+findata-server init ~/my-workspace
+findata-server start ~/my-workspace
+
+findata task run mycompany/hello complete --param rows=3 --wait
+
+python -c "
+from findata import DataLoader
+print(DataLoader('~/my-workspace').dataset('mycompany/hello').query())
+"
+```
+
+The dataset is discovered, registered, and queryable through the same CLI and API as
+everything else — no changes to findata required.
+
 ## Reference implementation
 
 The built-in Tushare plugins are the canonical example of every rule on this page and

@@ -44,6 +44,11 @@ dev = [
   "findata-plugins-datasets-tushare-trade-cal==0.3.0",
   "findata-plugins-providers-tushare==0.3.0",
   "findata-plugins-shared==0.3.0",
+  # Demo/test plugins for the findata-test namespace
+  "findata-test-providers-demo==0.1.0",
+  "findata-test-datasets-demo-hello==0.1.0",
+  "findata-test-datasets-demo-random==0.1.0",
+  "findata-test-demo==0.1.0",
   "nox>=2025.5.1",
   "pytest>=8",
   "pytest-cov>=5",
@@ -52,7 +57,7 @@ dev = [
 
 [dependency-groups]
 docs = [
-  "mkdocs-material==9.7.7",
+  "zensical>=0.0.51",
 ]
 
 [tool.uv.workspace]
@@ -65,6 +70,10 @@ members = [
   "plugins/tushare/index-weight",
   "plugins/tushare/daily-basic",
   "plugins/tushare/umbrella",
+  "plugins/demo/provider",
+  "plugins/demo/datasets/demo-hello",
+  "plugins/demo/datasets/demo-random",
+  "plugins/demo/datasets/umbrella",
 ]
 
 [tool.uv.sources]
@@ -77,6 +86,10 @@ findata-plugins-datasets-tushare-index-basic = { workspace = true }
 findata-plugins-datasets-tushare-index-weight = { workspace = true }
 findata-plugins-datasets-tushare-daily-basic = { workspace = true }
 findata-plugins = { workspace = true }
+findata-test-providers-demo = { workspace = true }
+findata-test-datasets-demo-hello = { workspace = true }
+findata-test-datasets-demo-random = { workspace = true }
+findata-test-demo = { workspace = true }
 
 [tool.hatch.build]
 # The WebUI bundle is built from web/ (npm run build) and git-ignored; it must

@@ -71,5 +71,5 @@ def webui(session: nox.Session) -> None:
 @nox.session(python="3.11")
 def docs(session: nox.Session) -> None:
     """Build the documentation site; strict mode fails on broken links or nav."""
-    session.install("mkdocs-material==9.7.7")
-    session.run("mkdocs", "build", "--strict")
+    session.install("zensical>=0.0.51")
+    session.run("zensical", "build", "--strict")

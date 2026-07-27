@@ -37,6 +37,7 @@ GROUP_HELP = {
     "cron": "Manage dataset update schedules.",
     "events": "Inspect and acknowledge retained operational events.",
     "system": "Inspect the local findata service.",
+    "plugin": "List and diagnose installed plugin distributions.",
 }
 
 COMMAND_HELP = {
@@ -77,6 +78,9 @@ COMMAND_HELP = {
     ("events", "ls"): "List retained operational events.",
     ("events", "ack"): "Acknowledge one event or every matching event.",
     ("system", "status"): "Show server identity and runtime health.",
+    ("plugin", "ls"): "List installed plugin distributions with entry points and versions.",
+    ("plugin", "check"): "Check whether a specific plugin entry point loads correctly.",
+    ("plugin", "blocked"): "Show the workspace plugin blocklist.",
     ("completion", "completion"): "Generate a shell script that enables command completion.",
 }
 
@@ -88,6 +92,7 @@ ARGUMENT_HELP = {
     "name": "Registered provider identifier.",
     "dataset": "Registered dataset identifier.",
     "operation": "Dataset operation identifier.",
+    "name": "Entry-point name or plugin full name to inspect.",
     "handle": "Full task handle or an unambiguous lowercase-hex prefix of at least eight characters.",
     "event_id": "Full event identifier or an unambiguous lowercase-hex prefix of at least eight characters.",
     "shell": "Shell whose sourceable completion script should be generated.",
@@ -431,6 +436,22 @@ def command_tree(*, version: str) -> click.Group:
     system = DocumentedGroup("system", help=GROUP_HELP["system"])
     root.add_command(system)
     attach(system, "system", "status", [])
+
+    plugin = DocumentedGroup("plugin", help=GROUP_HELP["plugin"])
+    root.add_command(plugin)
+    attach(plugin, "plugin", "ls", [])
+    attach(
+        plugin,
+        "plugin",
+        "check",
+        [click.Argument(["name"])],
+    )
+    attach(
+        plugin,
+        "plugin",
+        "blocked",
+        [click.Option(["--all"], is_flag=True, help="Show all installed plugins and their block status.")],
+    )
 
     attach(
         root,

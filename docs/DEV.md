@@ -183,10 +183,10 @@ Detailed workspace, database metadata, plugin, task-message, and HTTP schemas be
 
 ### User documentation site
 
-User-facing documentation lives in `docs/site/` and is published with MkDocs Material to
+User-facing documentation lives in `docs/site/` and is published with Zensical to
 <https://laiyk5.github.io/FinData/> by the `docs` GitHub Actions workflow; `docs/USER.md`
 is only a redirect stub. Build it locally with `nox -s docs` (equivalently
-`uv run --group docs mkdocs build --strict`); the strict build is the gate for broken
+`uv run --group docs zensical build --strict`); the strict build is the gate for broken
 links and nav entries. The workflow deploys on pushes to `dev` until the first release,
 then only on pushes to `main` (flip the marked line in `.github/workflows/docs.yml`).
 

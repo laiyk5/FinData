@@ -26,18 +26,12 @@ dependencies, declared settings, storage, and status metadata. `dataset status` 
 runtime companion: initialization state, current publication, and a coverage summary
 (number of covered keys and the overall resolved range).
 
-### Built-in Tushare datasets
+### Available datasets
 
-| dataset | contents |
-| --- | --- |
-| `findata-plugins/tushare_trade_cal` | exchange trade calendars (SSE, SZSE) |
-| `findata-plugins/tushare_stock_basic` | listed-stock master data |
-| `findata-plugins/tushare_index_basic` | index metadata |
-| `findata-plugins/tushare_index_weight` | monthly index constituent weights |
-| `findata-plugins/tushare_daily_basic` | daily valuation metrics (PE, PB, turnover, …) |
+Run `findata dataset ls` after installing any plugin distribution to see what's
+registered. The [Official plugins](../plugins/index.md) page lists the built-in
+Tushare datasets.
 
-The canonical per-dataset contracts (schemas, publication windows, missing-data policy)
-live in the repository under `docs/design/dataset/`; this table is an orientation aid.
 To maintain datasets from your own provider, see
 [Custom datasets and providers](custom-datasets.md).
 

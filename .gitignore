@@ -16,5 +16,5 @@ workspaces/
 # WebUI build output (built from web/ via `npm run build`)
 src/findata/webui/
 
-# MkDocs build output (built from docs/site/ via `mkdocs build`)
+# Documentation build output
 /site/

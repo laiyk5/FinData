@@ -113,6 +113,10 @@ def main(
                 ) or _static_completion(list(args.words))
             stdout.write("".join(f"{item}\n" for item in items))
             return 0
+        if args.group == "plugin":
+            result = execute_plugin_command(args)
+            output.result(result, record_type=f"plugin.{args.action}.result")
+            return 0
         _validate_cli_args(args, output_format=output_format)
         workspace = resolve_workspace(args.workspace, environ=environment)
         if args.group == "data":
@@ -373,6 +377,87 @@ def _execute(
     if args.group == "system" and args.action == "status":
         return client.request("GET", "/v1/system/status")
     raise ValueError("unsupported command")
+
+
+def execute_plugin_command(args: Any) -> dict[str, object]:
+    """Handle ``plugin`` subcommands that work without a running server."""
+    if args.action == "ls":
+        return _plugin_ls()
+    if args.action == "check":
+        return _plugin_check(str(args.name))
+    if args.action == "blocked":
+        return _plugin_blocked(args)
+    raise ValueError(f"unsupported plugin action: {args.action}")
+
+
+def _plugin_ls() -> dict[str, object]:
+    """List installed plugin distributions that expose findata entry points."""
+    from importlib.metadata import distributions
+
+    groups = ("findata.providers", "findata.datasets")
+    items: list[dict[str, object]] = []
+    for dist in distributions():
+        eps = dist.entry_points
+        found = {group for group in groups if any(ep.group == group for ep in eps)}
+        if not found:
+            continue
+        ep_names = {
+            ep.name for group in found for ep in eps if ep.group == group
+        }
+        items.append(
+            {
+                "name": dist.metadata["Name"],
+                "version": dist.version,
+                "entry_points": sorted(ep_names),
+                "groups": sorted(found),
+            }
+        )
+    items.sort(key=lambda item: str(item["name"]))
+    return {"items": items, "total": len(items)}
+
+
+def _plugin_check(name: str) -> dict[str, object]:
+    """Try to load an entry point and report success or failure."""
+    from importlib.metadata import entry_points
+
+    groups = {"findata.providers": "findata.providers", "findata.datasets": "findata.datasets"}
+    for group_key, group_name in groups.items():
+        for ep in entry_points(group=group_key):
+            if ep.name == name or ep.value.endswith(f":{name}"):
+                try:
+                    loaded = ep.load()
+                    value = loaded() if callable(loaded) else loaded
+                    return {
+                        "name": ep.name,
+                        "group": group_name,
+                        "module": ep.module,
+                        "loaded": True,
+                        "type": type(value).__name__,
+                    }
+                except Exception as exc:
+                    return {
+                        "name": ep.name,
+                        "group": group_name,
+                        "module": ep.module,
+                        "loaded": False,
+                        "error_type": type(exc).__name__,
+                        "error_message": str(exc),
+                    }
+    return {"name": name, "loaded": False, "error_type": "NotFound", "error_message": f"No entry point named {name!r} found in installed packages"}
+
+
+def _plugin_blocked(args: Any) -> dict[str, object]:
+    """Show the workspace plugin blocklist."""
+    from findata.plugins import plugin_blocklist as read_blocklist
+    from findata.storage import Workspace
+
+    try:
+        environ = os.environ if not hasattr(args, "_environ") else args._environ
+        ws_path = resolve_workspace(getattr(args, "workspace", None), environ=environ)
+        blocked = read_blocklist(Workspace(ws_path))
+        return {"blocked": blocked, "workspace": str(ws_path)}
+    except RuntimeError as exc:
+        return {"blocked": [], "error": str(exc), "workspace": None}
 
 
 def _declared_secret_keys(client: _Client) -> set[str]:

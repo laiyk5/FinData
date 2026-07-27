@@ -22,17 +22,22 @@ from findata.storage import Workspace
 __all__ = [
     "DatasetPlugin",
     "DatasetRuntime",
+    "DatasetRuntimeBase",
     "DatasetSpec",
     "OperationReporter",
     "OperationRequest",
     "OperationWorker",
+    "PluginLoadError",
     "PluginRegistrationError",
     "PluginWorkerDispatcher",
     "ProviderPlugin",
     "ProviderRuntime",
     "SettingSpec",
     "discover_dataset_plugins",
+    "discover_dataset_plugins_safe",
     "discover_provider_plugins",
+    "discover_provider_plugins_safe",
+    "plugin_load_errors",
     "register_plugins",
     "validate_plugins",
     "validate_provider_plugins",
@@ -41,6 +46,64 @@ __all__ = [
 
 class PluginRegistrationError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True, slots=True)
+class PluginLoadError:
+    """A single entry point that failed to load during discovery."""
+
+    entry_point_name: str
+    entry_point_group: str
+    error_type: str
+    error_message: str
+    module: str | None = None
+
+
+# Mutable store for failed-entry-point diagnostics populated by the safe
+# discovery wrappers.  Keyed by entry-point group ("findata.providers"
+# or "findata.datasets").
+_load_errors: dict[str, list[PluginLoadError]] = {}
+
+
+def plugin_load_errors(group: str | None = None) -> dict[str, list[PluginLoadError]]:
+    """Return recorded entry-point load errors, filtered by group when given."""
+    if group is not None:
+        return {group: list(_load_errors.get(group, []))}
+    return {g: list(errors) for g, errors in _load_errors.items()}
+
+
+def _discover_safe(
+    group: str,
+    *,
+    exc_types: type[BaseException] | tuple[type[BaseException], ...] = Exception,
+) -> list[tuple[Any, object]]:
+    """Iterate *group* entry points and load each one, catching *exc_types*.
+
+    Returns ``[(entry_point, loaded_value), ...]`` so callers have access
+    to entry-point metadata (``.name``, ``.module``) for validation.
+
+    Failed entry points are recorded in ``_load_errors`` and silently
+    skipped so a single broken distribution never blocks the rest.
+    """
+    results: list[tuple[Any, object]] = []
+    group_errors: list[PluginLoadError] = []
+    for point in entry_points(group=group):
+        try:
+            loaded = point.load()
+        except exc_types as exc:
+            group_errors.append(
+                PluginLoadError(
+                    entry_point_name=point.name,
+                    entry_point_group=group,
+                    error_type=type(exc).__name__,
+                    error_message=str(exc),
+                    module=point.module,
+                )
+            )
+            continue
+        results.append((point, loaded))
+    _load_errors[group] = group_errors
+    return results
 
 
 logger = logging.getLogger(__name__)
@@ -151,6 +214,121 @@ class DatasetRuntime(Protocol):
         ...
 
 
+class DatasetRuntimeBase:
+    """Base implementation of ``DatasetRuntime`` with sensible defaults.
+
+    Subclass and set ``spec`` to your ``DatasetSpec`` and ``operations`` to
+    your operation tuple, then override at minimum ``operation_worker``::
+
+        class MyRuntime(DatasetRuntimeBase):
+            spec = MY_SPEC
+            operations = ("update", "complete")
+
+            def operation_worker(self, workspace, *, mode, today, now):
+                return MyWorker(workspace=workspace)
+    """
+
+    spec: DatasetSpec | None = None
+    operations: tuple[str, ...] = ("update",)
+
+    def operation_worker(
+        self,
+        workspace: Path,
+        *,
+        mode: str,
+        today: date,
+        now: datetime | None,
+    ) -> OperationWorker:
+        raise NotImplementedError(
+            f"{type(self).__name__} must override operation_worker"
+        )
+
+    def normalize_operation(
+        self,
+        operation: str,
+        operands: dict[str, Any],
+        *,
+        today: date,
+    ) -> dict[str, Any]:
+        if operation not in self.operations:
+            raise OperandError(
+                f"unsupported operation {operation!r} for "
+                f"{self.spec.name if self.spec else 'dataset'}"
+            )
+        return dict(operands)
+
+    def plan_operation(
+        self,
+        workspace: Workspace,
+        operation: str,
+        operands: dict[str, Any],
+        *,
+        today: date,
+    ) -> dict[str, Any]:
+        normalized = self.normalize_operation(operation, operands, today=today)
+        spec_name = self.spec.name if self.spec else "dataset"
+        return {
+            "dry_run": True,
+            "dataset": spec_name,
+            "operation": operation,
+            "operands": normalized,
+            "strategy": "plugin operation",
+            "estimated_provider_requests": None,
+            "dependencies": [],
+            "side_effects": False,
+        }
+
+    def dataset_description(
+        self,
+        workspace: Workspace,
+        *,
+        provider_ready: bool,
+    ) -> dict[str, Any]:
+        from findata.loader import DataLoader, DatasetNotReadyError
+
+        spec_name = self.spec.name if self.spec else ""
+        state = "uninitialized"
+        publication_id: str | None = None
+        try:
+            reader = DataLoader(workspace.root).dataset(spec_name)
+            publication_id = reader.publication_id
+            state = "ready"
+        except (DatasetNotReadyError, RuntimeError):
+            pass
+        return {
+            "name": spec_name,
+            "provider": "",
+            "provider_ready": provider_ready,
+            "capabilities": dict(self.spec.capabilities) if self.spec else {},
+            "dependencies": [],
+            "settings": [],
+            "storage": "duckdb",
+            "state": state,
+            "publication_id": publication_id,
+            "operations": [self.operation_description(op) for op in self.operations],
+        }
+
+    def operation_description(self, operation: str) -> dict[str, Any]:
+        if operation not in self.operations:
+            raise OperandError(
+                f"unsupported operation {operation!r} for "
+                f"{self.spec.name if self.spec else 'dataset'}"
+            )
+        return {"name": operation, "help": "", "required": [], "properties": {}}
+
+    def resolve_dependency(
+        self,
+        target: str,
+        requirement: dict[str, object],
+    ) -> tuple[str, dict[str, object]]:
+        raise ValueError(
+            f"dataset {self.spec.name if self.spec else ''!r} has no declared dependencies"
+        )
+
+    def update_ready(self, workspace: Workspace) -> bool:
+        return True
+
+
 SettingNormalizer = Callable[[Any, Workspace], Any]
 
 
@@ -250,6 +428,75 @@ def discover_dataset_plugins(
         discovered.append(value)
     # Entry points from several distributions arrive in installation order;
     # sort by dataset name so listing and registration order stay deterministic.
+    discovered.sort(key=lambda plugin: plugin.name)
+    provider_ids = {provider.provider_id for provider in providers or ()}
+    resolved = _resolve_dependencies(discovered, provider_ids)
+    validate_plugins(resolved, providers=providers)
+    return resolved
+
+
+def discover_provider_plugins_safe() -> list[ProviderPlugin]:
+    """Like ``discover_provider_plugins``, but skips entry points that fail to load.
+
+    Failed imports are recorded in ``plugin_load_errors()`` instead of
+    raising an exception, so a single broken distribution never blocks
+    the server from starting.
+    """
+    discovered: list[ProviderPlugin] = []
+    for point, loaded in _discover_safe("findata.providers"):
+        try:
+            value = loaded() if callable(loaded) and not isinstance(loaded, ProviderPlugin) else loaded
+            if not isinstance(value, ProviderPlugin):
+                raise PluginRegistrationError(
+                    f"entry point {point.name!r} did not return ProviderPlugin, "
+                    f"got {type(value).__name__}"
+                )
+            _validate_entry_name(point, value.provider_id, kind="provider")
+            discovered.append(value)
+        except (PluginRegistrationError, TypeError, ValueError) as exc:
+            _load_errors.setdefault("findata.providers", []).append(
+                PluginLoadError(
+                    entry_point_name=point.name,
+                    entry_point_group="findata.providers",
+                    error_type=type(exc).__name__,
+                    error_message=str(exc),
+                    module=point.module,
+                )
+            )
+    validate_provider_plugins(discovered)
+    return discovered
+
+
+def discover_dataset_plugins_safe(
+    *, providers: Iterable[ProviderPlugin] | None = None
+) -> list[DatasetPlugin]:
+    """Like ``discover_dataset_plugins``, but skips entry points that fail to load.
+
+    Failed imports are recorded in ``plugin_load_errors()`` instead of
+    raising an exception, so a single broken distribution never blocks
+    the server from starting.
+    """
+    discovered: list[DatasetPlugin] = []
+    for point, loaded in _discover_safe("findata.datasets"):
+        try:
+            value = loaded() if callable(loaded) and not isinstance(loaded, DatasetPlugin) else loaded
+            if not isinstance(value, DatasetPlugin):
+                raise PluginRegistrationError(
+                    f"entry point {point.name!r} did not return DatasetPlugin, "
+                    f"got {type(value).__name__}"
+                )
+            _validate_entry_name(point, value.name, kind="dataset")
+            discovered.append(value)
+        except (PluginRegistrationError, TypeError, ValueError) as exc:
+            _load_errors.setdefault("findata.datasets", []).append(
+                PluginLoadError(
+                    entry_point_name=point.name,
+                    entry_point_group="findata.datasets",
+                    error_type=type(exc).__name__,
+                    error_message=str(exc),
+                    module=point.module,
+                )
+            )
     discovered.sort(key=lambda plugin: plugin.name)
     provider_ids = {provider.provider_id for provider in providers or ()}
     resolved = _resolve_dependencies(discovered, provider_ids)
@@ -415,8 +662,8 @@ class PluginWorkerDispatcher:
 
     def __call__(self, request: OperationRequest, context: OperationReporter) -> Mapping[str, Any]:
         dataset = str(request["dataset"])
-        providers = discover_provider_plugins()
-        discovered = discover_dataset_plugins(providers=providers)
+        providers = discover_provider_plugins_safe()
+        discovered = discover_dataset_plugins_safe(providers=providers)
         discovered, providers = apply_plugin_blocklist(
             discovered,
             providers,

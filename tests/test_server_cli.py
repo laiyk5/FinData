@@ -284,7 +284,7 @@ class ServerCLITests(unittest.TestCase):
 
     def test_dataset_and_provider_discovery_commands_report_registered_contracts(self) -> None:
         datasets = json.loads(self.run_cli("--format", "json", "dataset", "ls")[1])
-        self.assertEqual(len(datasets["items"]), 5)
+        self.assertEqual(len(datasets["items"]), 7)
         described = json.loads(
             self.run_cli(
                 "--format", "json", "dataset", "describe", "findata-plugins/tushare_daily_basic"
@@ -315,7 +315,7 @@ class ServerCLITests(unittest.TestCase):
         providers = json.loads(self.run_cli("--format", "json", "provider", "ls")[1])
         self.assertEqual(providers["items"][0]["name"], "findata-plugins/tushare")
         statuses = json.loads(self.run_cli("--format", "json", "dataset", "status", "--all")[1])
-        self.assertEqual(len(statuses["items"]), 5)
+        self.assertEqual(len(statuses["items"]), 7)
 
     def test_config_ls_is_a_table_and_internal_keys_stay_internal(self) -> None:
         self.run_cli("config", "set", "display.timezone", "UTC")

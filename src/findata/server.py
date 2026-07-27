@@ -27,11 +27,13 @@ from findata.storage import DATABASE_NAME, Workspace
 from findata.plugins import (
     DatasetPlugin,
     PluginWorkerDispatcher,
+    PluginLoadError,
     ProviderPlugin,
     apply_plugin_blocklist,
-    discover_dataset_plugins,
-    discover_provider_plugins,
+    discover_dataset_plugins_safe,
+    discover_provider_plugins_safe,
     plugin_blocklist,
+    plugin_load_errors,
     register_plugins,
 )
 from findata.taskrunner import DatasetBusyError, QueueFullError, TaskNotFoundError, TaskRunner
@@ -63,8 +65,9 @@ _WEBUI_CONTENT_TYPES = {
 
 def initialize_workspace(root: Path) -> Workspace:
     workspace = Workspace.init(root)
-    providers = discover_provider_plugins()
-    plugins = discover_dataset_plugins(providers=providers)
+    providers = discover_provider_plugins_safe()
+    plugins = discover_dataset_plugins_safe(providers=providers)
+    _log_plugin_load_errors()
     plugins, providers = apply_plugin_blocklist(
         plugins,
         providers,
@@ -86,6 +89,18 @@ def initialize_workspace(root: Path) -> Workspace:
     return workspace
 
 
+def _log_plugin_load_errors() -> None:
+    for group, errors in plugin_load_errors().items():
+        for error in errors:
+            logger.warning(
+                "Plugin load error [%s] %s: %s — %s",
+                error.entry_point_group,
+                error.entry_point_name,
+                error.error_type,
+                error.error_message,
+            )
+
+
 class FindataServer:
     def __init__(
         self,
@@ -100,8 +115,9 @@ class FindataServer:
         self.root = Path(workspace)
         self.workspace = initialize_workspace(self.root)
         self.started_at = datetime.now(UTC).timestamp()
-        discovered_providers = discover_provider_plugins()
-        discovered_datasets = discover_dataset_plugins(providers=discovered_providers)
+        discovered_providers = discover_provider_plugins_safe()
+        discovered_datasets = discover_dataset_plugins_safe(providers=discovered_providers)
+        _log_plugin_load_errors()
         discovered_datasets, discovered_providers = apply_plugin_blocklist(
             discovered_datasets,
             discovered_providers,

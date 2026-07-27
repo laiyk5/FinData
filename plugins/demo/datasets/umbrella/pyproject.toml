@@ -1,0 +1,22 @@
+[build-system]
+requires = ["hatchling==1.31.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "findata-test-demo"
+version = "0.1.0"
+description = "Metapackage installing every demo plugin for findata"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+dependencies = [
+  "findata-test-providers-demo==0.1.0",
+  "findata-test-datasets-demo-hello==0.1.0",
+  "findata-test-datasets-demo-random==0.1.0",
+]
+
+# Metadata-only distribution: no import package, no entry points.
+[tool.hatch.build.targets.wheel]
+bypass-selection = true
+
+[tool.hatch.build.targets.sdist]
+bypass-selection = true

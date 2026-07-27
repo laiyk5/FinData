@@ -1,0 +1,24 @@
+[build-system]
+requires = ["hatchling==1.31.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "findata-test-providers-demo"
+version = "0.1.0"
+description = "Mock/example provider plugin for findata — always ready, generates fake data"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+dependencies = [
+  "findata==0.3.0",
+]
+
+[project.entry-points."findata.providers"]
+demo = "findata_test.plugins.providers.demo:demo_provider_plugin"
+
+[tool.hatch.build.targets.wheel]
+only-include = ["src/findata_test/plugins/providers/demo"]
+sources = ["src"]
+
+[tool.hatch.build.targets.sdist]
+only-include = ["src/findata_test/plugins/providers/demo"]
+sources = ["src"]

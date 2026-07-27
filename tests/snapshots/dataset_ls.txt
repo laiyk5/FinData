@@ -4,3 +4,5 @@ findata-plugins/tushare_index_basic   findata-plugins/tushare  yes             u
 findata-plugins/tushare_index_weight  findata-plugins/tushare  yes             uninitialized
 findata-plugins/tushare_stock_basic   findata-plugins/tushare  yes             uninitialized
 findata-plugins/tushare_trade_cal     findata-plugins/tushare  yes             uninitialized
+findata-test/demo_hello               findata-test/demo        yes             uninitialized
+findata-test/demo_random              findata-test/demo        yes             uninitialized

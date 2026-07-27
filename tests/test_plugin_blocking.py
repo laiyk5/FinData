@@ -100,8 +100,12 @@ class PluginBlocklistTests(unittest.TestCase):
             str(path.parent.relative_to(self.workspace.datasets_root))
             for path in self.workspace.datasets_root.rglob("dataset.duckdb")
         }
-        self.assertEqual(len(registered), 4)
         self.assertNotIn("findata-plugins/tushare_stock_basic", registered)
+        # All unblocked datasets are still registered.
+        for name in {"findata-plugins/tushare_trade_cal", "findata-plugins/tushare_index_basic",
+                     "findata-plugins/tushare_index_weight", "findata-plugins/tushare_daily_basic",
+                     "findata-test/demo_hello", "findata-test/demo_random"}:
+            self.assertIn(name, registered, f"{name} should still be registered")
 
     def test_discovery_path_applies_the_same_filter_as_registration(self) -> None:
         self.workspace.set_config("plugins.blocked", ["findata-plugins/tushare_stock_basic"])

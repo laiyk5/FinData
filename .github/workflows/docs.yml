@@ -28,7 +28,7 @@ jobs:
         with:
           enable-cache: true
       - run: uv sync --group docs
-      - run: uv run mkdocs build --strict
+      - run: uv run zensical build --strict
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site/
