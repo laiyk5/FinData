@@ -28,7 +28,7 @@ dependencies = [
 {ep_name} = "{pkg_path}:provider_plugin"
 
 [tool.hatch.build.targets.wheel]
-only-include = ["src/{pkg_path}"]
+only-include = ["src/{pkg_path_dir}"]
 sources = ["src"]
 '''
 
@@ -53,7 +53,7 @@ dependencies = [
 {ep_name} = "{pkg_path}:{plugin_fn}"
 
 [tool.hatch.build.targets.wheel]
-only-include = ["src/{pkg_path}"]
+only-include = ["src/{pkg_path_dir}"]
 sources = ["src"]
 '''
 
@@ -148,7 +148,7 @@ def {plugin_fn}():
     from {pkg_path}.operations import {runtime_cls}
     return DatasetPlugin(
         name=SPEC.name,
-        provider="{name}",
+        provider="{namespace}/{name}",
         spec=SPEC,
         runtime={runtime_cls}(),
         operations=("update", "complete", "refresh"),
@@ -292,67 +292,46 @@ def scaffold_plugin(namespace: str, name: str, *, output_dir: str | Path = Path(
     dataset_dist = f"{namespace}-datasets-{name}"
     umbrella_dist = f"{namespace}-plugins-{name}"
 
-    # PEP 420 namespace root — no __init__.py
+    # PEP 420 namespace root — no __init__.py.
+    # Files under src/ so hatchling's src layout works with pip install -e.
     ns_dir = root / "src" / ns_pkg
 
     files: list[tuple[str, str, bool]] = [
-        # (relative path, content, is_template)
-        (
-            "provider/pyproject.toml",
-            _PROVIDER_PYPROJECT.format(
-                dist_name=provider_dist,
-                title=f"Provider plugin for {namespace}/{name}",
-                ep_name=ep_name,
-                pkg_path=f"{ns_pkg}.plugins.providers.{local_pkg}",
-            ),
-            False,
-        ),
-        (
-            f"provider/src/{ns_pkg}/plugins/providers/{local_pkg}/__init__.py",
-            _PROVIDER_INIT.format(
-                namespace=namespace,
-                name=name,
-                pkg_path=f"{ns_pkg}.plugins.providers.{local_pkg}",
-                runtime_cls=runtime_cls,
-            ),
-            False,
-        ),
-        (
-            f"provider/src/{ns_pkg}/plugins/providers/{local_pkg}/provider.py",
-            _PROVIDER_MODULE.format(
-                namespace=namespace,
-                name=name,
-                runtime_cls=runtime_cls,
-            ),
-            False,
-        ),
-        (
-            f"datasets/{name}/pyproject.toml",
-            _DATASET_PYPROJECT.format(
-                dist_name=dataset_dist,
-                title=f"Dataset plugin for {namespace}/{name}",
-                ep_name=ep_name,
-                pkg_path=f"{ns_pkg}.plugins.datasets.{local_pkg}",
-                plugin_fn=plugin_fn,
-                provider_dist=provider_dist,
-            ),
-            False,
-        ),
-        (
-            f"datasets/{name}/src/{ns_pkg}/plugins/datasets/{local_pkg}/__init__.py",
-            _DATASET_INIT.format(
-                namespace=namespace,
-                name=name,
-                fields=("key", "value"),
-                plugin_fn=plugin_fn,
-                pkg_path=f"{ns_pkg}.plugins.datasets.{local_pkg}",
-                runtime_cls=runtime_cls,
-            ),
-            False,
-        ),
-        (
-            f"datasets/{name}/src/{ns_pkg}/plugins/datasets/{local_pkg}/operations.py",
-            _DATASET_OPERATIONS.format(
+        ("provider/pyproject.toml", _PROVIDER_PYPROJECT.format(
+            dist_name=provider_dist,
+            title=f"Provider plugin for {namespace}/{name}",
+            ep_name=ep_name,
+            pkg_path=f"{ns_pkg}.plugins.providers.{local_pkg}",
+            pkg_path_dir=f"{ns_pkg}/plugins/providers/{local_pkg}",
+        ), False),
+        (f"provider/src/{ns_pkg}/plugins/providers/{local_pkg}/__init__.py",
+         _PROVIDER_INIT.format(
+            namespace=namespace, name=name,
+            pkg_path=f"{ns_pkg}.plugins.providers.{local_pkg}",
+            runtime_cls=runtime_cls,
+        ), False),
+        (f"provider/src/{ns_pkg}/plugins/providers/{local_pkg}/provider.py",
+         _PROVIDER_MODULE.format(
+            namespace=namespace, name=name, runtime_cls=runtime_cls,
+        ), False),
+        (f"datasets/{name}/pyproject.toml", _DATASET_PYPROJECT.format(
+            dist_name=dataset_dist,
+            title=f"Dataset plugin for {namespace}/{name}",
+            ep_name=ep_name,
+            pkg_path=f"{ns_pkg}.plugins.datasets.{local_pkg}",
+            pkg_path_dir=f"{ns_pkg}/plugins/datasets/{local_pkg}",
+            plugin_fn=plugin_fn, provider_dist=provider_dist,
+        ), False),
+        (f"datasets/{name}/src/{ns_pkg}/plugins/datasets/{local_pkg}/__init__.py",
+         _DATASET_INIT.format(
+            namespace=namespace, name=name,
+            fields=("key", "value"),
+            plugin_fn=plugin_fn,
+            pkg_path=f"{ns_pkg}.plugins.datasets.{local_pkg}",
+            runtime_cls=runtime_cls,
+        ), False),
+        (f"datasets/{name}/src/{ns_pkg}/plugins/datasets/{local_pkg}/operations.py",
+         _DATASET_OPERATIONS.format(
                 namespace=namespace,
                 name=name,
                 pkg_path=f"{ns_pkg}.plugins.datasets.{local_pkg}",

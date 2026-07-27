@@ -1,0 +1,20 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mycompany-plugins-hello"
+version = "0.1.0"
+description = "Metapackage installing every mycompany plugin for findata"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+dependencies = [
+  "mycompany-provider-hello==0.1.0",
+  "mycompany-datasets-hello==0.1.0",
+]
+
+[tool.hatch.build.targets.wheel]
+bypass-selection = true
+
+[tool.hatch.build.targets.sdist]
+bypass-selection = true
