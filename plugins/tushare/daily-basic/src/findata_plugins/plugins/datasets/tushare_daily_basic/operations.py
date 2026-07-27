@@ -1,4 +1,4 @@
-"""Operation engine and runtime for the findata/tushare/daily_basic dataset."""
+"""Operation engine and runtime for the findata-plugins/tushare_daily_basic dataset."""
 
 from __future__ import annotations
 
@@ -14,15 +14,7 @@ from findata.contracts import DateRange, DatasetSpec, OperandError, OperationRep
 from findata.loader import DataLoaderError
 from findata.storage import DataMutation, Workspace
 from findata.toolkit import ConstituentRequest, resolve_constituents
-from findata_tushare_index_basic.operations import (
-    IndexBasicDatasetService,
-    dataset_description as index_basic_dataset_description,
-)
-from findata_tushare_index_weight.operations import (
-    IndexWeightDatasetService,
-    dataset_description as index_weight_dataset_description,
-)
-from findata_tushare_provider.engine import (
+from findata_plugins.shared.engine import (
     _OPERAND_HELP,
     _batch_due,
     _canonical_index,
@@ -37,20 +29,17 @@ from findata_tushare_provider.engine import (
     _string_array,
     _timerange,
     OperationWorker,
+    TushareClient,
     TushareDatasetService,
     dataset_storage_state,
+    dependency_states,
 )
-from findata_tushare_provider.provider import TushareClient
-from findata_tushare_provider.publication import PublicationWindow, daily_window
-from findata_tushare_trade_cal.operations import (
-    TradeCalDatasetService,
-    dataset_description as trade_cal_dataset_description,
-)
-from findata_tushare_daily_basic import DAILY_BASIC_SPEC
+from findata_plugins.shared.publication import PublicationWindow, daily_window
+from findata_plugins.plugins.datasets.tushare_daily_basic import DAILY_BASIC_SPEC
 
 
 class DailyBasicDatasetService(TushareDatasetService):
-    """Synchronous operation engine for the findata/tushare/daily_basic dataset."""
+    """Synchronous operation engine for the findata-plugins/tushare_daily_basic dataset."""
 
     spec = DAILY_BASIC_SPEC
 
@@ -60,25 +49,14 @@ class DailyBasicDatasetService(TushareDatasetService):
     def _dispatch(self, operation: str, values: dict[str, Any]) -> str:
         return self._daily_basic(operation, values)
 
-    def _dependency_service(self, dataset: str) -> TushareDatasetService:
-        return {
-            "findata/tushare/trade_cal": TradeCalDatasetService,
-            "findata/tushare/index_basic": IndexBasicDatasetService,
-            "findata/tushare/index_weight": IndexWeightDatasetService,
-        }[dataset](
-            self.workspace,
-            self.client,
-            today=self.today,
-            now=self.now,
-            settings=self._settings,
-        )
-
     def _daily_basic(self, operation: str, operands: dict[str, Any]) -> str:
         if operation == "update":
             _require_no_operands(operands)
             selectors = self._update_setting(self.spec.name)
             if not selectors:
-                raise OperandError("findata/tushare/daily_basic update requires update_symbols")
+                raise OperandError(
+                    "findata-plugins/tushare_daily_basic update requires update_symbols"
+                )
             requested = DateRange(self.today, self.today + timedelta(days=1))
         elif operation in {"complete", "refresh"}:
             selectors = _string_array(operands, "symbols")
@@ -97,7 +75,7 @@ class DailyBasicDatasetService(TushareDatasetService):
         if due_end <= requested.start:
             if operation != "update":
                 raise OperandError(
-                    f"findata/tushare/daily_basic {operation} range is entirely before the "
+                    f"findata-plugins/tushare_daily_basic {operation} range is entirely before the "
                     "publication window; nothing is due yet"
                 )
             if self._reporter is not None:
@@ -106,7 +84,7 @@ class DailyBasicDatasetService(TushareDatasetService):
                 return self.loader.dataset(self.spec.name).publication_id
             except DataLoaderError as exc:
                 raise OperandError(
-                    "findata/tushare/daily_basic update has no due work and the dataset is "
+                    "findata-plugins/tushare_daily_basic update has no due work and the dataset is "
                     "uninitialized; run complete with a historical range first"
                 ) from exc
         requested = DateRange(requested.start, due_end)
@@ -115,7 +93,7 @@ class DailyBasicDatasetService(TushareDatasetService):
             "exchanges": ["SSE", "SZSE"],
             "timerange": _format_range(requested),
         }
-        self._fulfill("findata/tushare/trade_cal", trade_requirement)
+        self._fulfill("findata-plugins/tushare_trade_cal", trade_requirement)
         symbols = self._resolve_symbols(selectors, requested)
         spec = self.spec
         existing_coverage = self._coverage_map(spec.name)
@@ -165,7 +143,7 @@ class DailyBasicDatasetService(TushareDatasetService):
         start = min(interval.start for _, interval in jobs)
         end = max(interval.end for _, interval in jobs)
         try:
-            table = self.loader.dataset("findata/tushare/trade_cal").query(
+            table = self.loader.dataset("findata-plugins/tushare_trade_cal").query(
                 keys=["SSE", "SZSE"],
                 time_range=(start, end),
                 columns=["cal_date"],
@@ -344,13 +322,13 @@ class DailyBasicDatasetService(TushareDatasetService):
                     "indexes": [reference],
                     "timerange": f"{fetch_start.isoformat()}:{fetch_end.isoformat()}",
                 }
-                self._fulfill("findata/tushare/index_weight", requirement)
+                self._fulfill("findata-plugins/tushare_index_weight", requirement)
 
             direct.extend(
                 resolve_constituents(
                     self.loader,
                     ConstituentRequest(
-                        "findata/tushare/index_weight",
+                        "findata-plugins/tushare_index_weight",
                         index,
                         "con_code",
                         interval.start,
@@ -408,6 +386,23 @@ class DailyBasicDatasetRuntime:
             now=now.isoformat() if now is not None else None,
         )
 
+    def operation_service(
+        self,
+        workspace: Workspace,
+        client: TushareClient,
+        *,
+        today: date,
+        now: datetime,
+        settings: dict[str, Any] | None,
+    ) -> DailyBasicDatasetService:
+        return DailyBasicDatasetService(
+            workspace,
+            client,
+            today=today,
+            now=now,
+            settings=settings,
+        )
+
     def normalize_operation(
         self,
         operation: str,
@@ -444,9 +439,9 @@ class DailyBasicDatasetRuntime:
         requirement: dict[str, object],
     ) -> tuple[str, dict[str, object]]:
         if target not in {
-            "findata/tushare/trade_cal",
-            "findata/tushare/index_basic",
-            "findata/tushare/index_weight",
+            "findata-plugins/tushare_trade_cal",
+            "findata-plugins/tushare_index_basic",
+            "findata-plugins/tushare_index_weight",
         }:
             raise ValueError(
                 f"dataset {DAILY_BASIC_SPEC.name!r} has no declared dependency on {target!r}"
@@ -454,14 +449,16 @@ class DailyBasicDatasetRuntime:
         return "complete", dict(requirement)
 
     def update_ready(self, workspace: Workspace) -> bool:
-        return bool(workspace.get_config("dataset.findata/tushare/daily_basic.update_symbols"))
+        return bool(
+            workspace.get_config("dataset.findata-plugins/tushare_daily_basic.update_symbols")
+        )
 
 
 _OPERATION_NAMES = ["update", "complete", "refresh"]
 
 _OPERATION_HELP: dict[str, str] = {
     "update": "Resolve the configured symbols for the latest due trading date; requires "
-    "dataset.findata/tushare/daily_basic.update_symbols.",
+    "dataset.findata-plugins/tushare_daily_basic.update_symbols.",
     "complete": "Backfill or extend the requested symbols over the range; a disjoint range is "
     "extended toward existing coverage until the intervals abut.",
     "refresh": "Re-fetch the requested symbols strictly inside their existing resolved coverage.",
@@ -490,13 +487,13 @@ def dataset_description(workspace: Workspace, *, provider_ready: bool) -> dict[s
     state, publication_id = dataset_storage_state(workspace, DAILY_BASIC_SPEC.name)
     return {
         "name": DAILY_BASIC_SPEC.name,
-        "provider": "tushare",
+        "provider": "findata-plugins/tushare",
         "provider_ready": provider_ready,
         "capabilities": dict(DAILY_BASIC_SPEC.capabilities),
         "dependencies": [
-            "findata/tushare/trade_cal",
-            "findata/tushare/index_basic",
-            "findata/tushare/index_weight",
+            "findata-plugins/tushare_trade_cal",
+            "findata-plugins/tushare_index_basic",
+            "findata-plugins/tushare_index_weight",
         ],
         "settings": _dataset_settings(workspace),
         "storage": "duckdb",
@@ -542,18 +539,7 @@ def plan_operation(
     """Build a read-only preview from normalized operands and committed local state."""
     normalized = normalize_operation(operation, operands, today=today)
     description = dataset_description(workspace, provider_ready=True)
-    describers = {
-        "findata/tushare/trade_cal": trade_cal_dataset_description,
-        "findata/tushare/index_basic": index_basic_dataset_description,
-        "findata/tushare/index_weight": index_weight_dataset_description,
-    }
-    dependencies = [
-        {
-            "dataset": name,
-            "state": describers[name](workspace, provider_ready=True)["state"],
-        }
-        for name in description["dependencies"]
-    ]
+    dependencies = dependency_states(workspace, description["dependencies"])
     strategy = "plugin operation"
     estimated_requests: int | None = None
     if operation == "update":
@@ -582,7 +568,7 @@ def plan_operation(
 
 
 def _dataset_settings(workspace: Workspace) -> list[dict[str, Any]]:
-    from findata_tushare_daily_basic import daily_basic_plugin
+    from findata_plugins.plugins.datasets.tushare_daily_basic import daily_basic_plugin
 
     return [
         {

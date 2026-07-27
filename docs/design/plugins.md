@@ -178,10 +178,11 @@ repository (`plugins/` in this workspace **only while the contracts stabilize**,
 its own repository), all contributing to the `findata_plugins` namespace package:
 
 - `findata-plugins-providers-tushare` → `findata_plugins.plugins.providers.tushare`:
-  the provider plugin (`findata-plugins/tushare`) with its adapter (client, transport,
-  selector syntax);
-- `findata-plugins-shared` → `findata_plugins.shared`: publication timing, mock
-  transport, shared operation engine;
+  the provider plugin (`findata-plugins/tushare`) with its configuration schema and
+  readiness probe; the client and transport adapter it uses live in shared so dataset
+  engines never import the provider leaf;
+- `findata-plugins-shared` → `findata_plugins.shared`: the client/transport adapter,
+  publication timing, mock transport, shared operation engine;
 - `findata-plugins-datasets-tushare-*` → `findata_plugins.plugins.datasets.tushare_*`:
   five dataset plugins (`findata-plugins/tushare_<name>`), each an independent
   distribution pulling exactly its own data-dependency chain;

@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 import pyarrow as pa
 
 from findata.contracts import DatasetSpec, provider_date
-from findata_tushare_provider.engine import _index_code, _materialized, _setting_array
+from findata_plugins.shared.engine import _index_code, _materialized, _setting_array
 
 if TYPE_CHECKING:
     from findata.plugins import DatasetPlugin
@@ -41,7 +41,7 @@ def _normalize_index_weight(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 INDEX_WEIGHT_FIELDS = ("index_code", "con_code", "trade_date", "weight")
 
 INDEX_WEIGHT_SPEC = DatasetSpec(
-    name="findata/tushare/index_weight",
+    name="findata-plugins/tushare_index_weight",
     api_name="index_weight",
     schema=pa.schema(
         [
@@ -69,7 +69,7 @@ def _normalize_update_indexes(value: Any, workspace: Any) -> list[str]:
         code = _index_code(item, allow_suffix=False)
         if not _materialized(workspace, code):
             raise ValueError(
-                f"unknown index {item!r}; run findata/tushare/index_basic complete for it first"
+                f"unknown index {item!r}; run findata-plugins/tushare_index_basic complete for it first"
             )
     return sorted(values)
 
@@ -77,7 +77,9 @@ def _normalize_update_indexes(value: Any, workspace: Any) -> list[str]:
 def index_weight_plugin() -> "DatasetPlugin":
     from findata.plugins import DatasetPlugin, SettingSpec
 
-    from findata_tushare_index_weight.operations import IndexWeightDatasetRuntime
+    from findata_plugins.plugins.datasets.tushare_index_weight.operations import (
+        IndexWeightDatasetRuntime,
+    )
 
     return DatasetPlugin(
         name=INDEX_WEIGHT_SPEC.name,
@@ -85,9 +87,9 @@ def index_weight_plugin() -> "DatasetPlugin":
         spec=INDEX_WEIGHT_SPEC,
         runtime=IndexWeightDatasetRuntime(),
         operations=("update", "complete"),
-        dependencies=("tushare/index_basic",),
+        dependencies=("tushare_index_basic",),
         settings={
-            "dataset.findata/tushare/index_weight.update_indexes": SettingSpec(
+            "dataset.findata-plugins/tushare_index_weight.update_indexes": SettingSpec(
                 schema={"type": "array", "minItems": 1, "items": {"type": "string"}},
                 normalize=_normalize_update_indexes,
                 help="Exact Tushare index references maintained by update.",

@@ -24,7 +24,7 @@ from pathlib import Path
 from findata import DataLoader
 
 loader = DataLoader(Path("~/market-data").expanduser())
-dataset = loader.dataset("findata/tushare/daily_basic")
+dataset = loader.dataset("findata-plugins/tushare_daily_basic")
 
 table = dataset.query(
     keys=["000001.SZ", "600000.SH"],
@@ -84,8 +84,8 @@ Readers that cannot use DataLoader — non-Python, third-party, or offline consu
 receive a snapshot copy instead of touching live files:
 
 ```bash
-findata data snapshot findata/tushare/daily_basic            # writes <workspace>/snapshots/findata/tushare/daily_basic.duckdb
-findata data snapshot findata/tushare/daily_basic --output /path/to/copy.duckdb
+findata data snapshot findata-plugins/tushare_daily_basic            # writes <workspace>/snapshots/findata-plugins/tushare_daily_basic.duckdb
+findata data snapshot findata-plugins/tushare_daily_basic --output /path/to/copy.duckdb
 ```
 
 The snapshot is checkpointed and copied while holding the dataset's exclusive gate, so it

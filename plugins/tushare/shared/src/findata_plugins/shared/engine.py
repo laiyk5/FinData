@@ -2,17 +2,23 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, time, timedelta
+from importlib.metadata import entry_points
+import json
 from pathlib import Path
 import re
-from time import monotonic
+from time import monotonic, sleep
 from typing import Any
+from urllib.error import URLError
+from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
 import pyarrow as pa
 
 from findata.contracts import (
+    DatasetDataError,
     DateRange,
     DatasetSpec,
     OperandError,
@@ -24,7 +30,7 @@ from findata.loader import (
     DatasetNotReadyError,
     UnsupportedCoverageError,
 )
-from findata_tushare_provider.provider import TushareClient, TushareHTTPTransport
+from findata.plugins import DatasetPlugin
 from findata.toolkit import FileRateLimiter
 from findata.storage import (
     DATABASE_NAME,
@@ -34,12 +40,112 @@ from findata.storage import (
     Workspace,
     load_metadata,
 )
-from findata_tushare_provider.testing import (
+from findata_plugins.shared.testing import (
     MOCK_TOKEN,
     MockTushareTransport,
     is_mock_token,
     transport_from_mock_token,
 )
+
+
+class TushareAPIError(RuntimeError):
+    def __init__(self, code: int, message: str) -> None:
+        self.code = code
+        super().__init__(f"Tushare API error {code}: {message}")
+
+
+class ProviderProtocolError(RuntimeError):
+    """A provider response does not match its registered contract."""
+
+
+Transport = Callable[[Mapping[str, Any]], Mapping[str, Any]]
+
+
+class TushareHTTPTransport:
+    """Credentialed transport. Tests must inject a mock unless humans opt in."""
+
+    def __init__(self, endpoint: str = "https://api.tushare.pro", timeout: float = 30.0) -> None:
+        self.endpoint = endpoint
+        self.timeout = timeout
+
+    def __call__(self, payload: Mapping[str, Any]) -> Mapping[str, Any]:
+        request = Request(
+            self.endpoint,
+            data=json.dumps(payload, separators=(",", ":")).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urlopen(request, timeout=self.timeout) as response:  # noqa: S310
+            result = json.loads(response.read().decode("utf-8"))
+        if not isinstance(result, Mapping):
+            raise ProviderProtocolError("Tushare response root is not an object")
+        return result
+
+
+class TushareClient:
+    def __init__(
+        self,
+        *,
+        token: str,
+        transport: Transport,
+        permit: Callable[[], None] | None = None,
+        max_attempts: int = 3,
+        retry_delay: float = 0.25,
+    ) -> None:
+        if not token:
+            raise ValueError("Tushare token is required")
+        self._token = token
+        self._transport = transport
+        self._permit = permit
+        if max_attempts <= 0 or retry_delay < 0:
+            raise ValueError("retry settings are invalid")
+        self._max_attempts = max_attempts
+        self._retry_delay = retry_delay
+
+    def __repr__(self) -> str:
+        return f"{type(self).__name__}(token=<redacted>, transport={self._transport!r})"
+
+    @property
+    def checkpoint_request_limit(self) -> int | None:
+        value = getattr(self._transport, "checkpoint_request_limit", None)
+        return value if isinstance(value, int) and value > 0 else None
+
+    def query(self, spec: DatasetSpec, **params: Any) -> pa.Table:
+        payload = {
+            "api_name": spec.api_name,
+            "token": self._token,
+            "params": dict(params),
+            "fields": ",".join(spec.provider_fields),
+        }
+        for attempt in range(1, self._max_attempts + 1):
+            if self._permit is not None:
+                self._permit()
+            try:
+                response = self._transport(payload)
+                break
+            except (URLError, TimeoutError):
+                if attempt == self._max_attempts:
+                    raise
+                sleep(self._retry_delay * (2 ** (attempt - 1)))
+        if not isinstance(response, Mapping):
+            raise ProviderProtocolError("Tushare response root is not an object")
+        code = response.get("code")
+        if not isinstance(code, int):
+            raise ProviderProtocolError("Tushare response code is missing or invalid")
+        if code != 0:
+            message = str(response.get("msg") or "unknown error").replace(self._token, "<redacted>")
+            raise TushareAPIError(code, message)
+        data = response.get("data")
+        if not isinstance(data, Mapping):
+            raise ProviderProtocolError("Tushare response data is missing or invalid")
+        fields = data.get("fields")
+        items = data.get("items")
+        if not isinstance(fields, list) or not isinstance(items, list):
+            raise ProviderProtocolError("Tushare response fields/items are missing or invalid")
+        try:
+            return spec.table_from_response(fields, items)
+        except DatasetDataError as exc:
+            raise ProviderProtocolError(str(exc)) from exc
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,7 +191,7 @@ class OperationWorker:
             transport = MockTushareTransport(today=current_date)
             token = self.token or MOCK_TOKEN
         elif self.provider == "real":
-            configured = workspace.get_config("provider.tushare.token")
+            configured = workspace.get_config("provider.findata-plugins/tushare.token")
             if isinstance(configured, dict) and isinstance(configured.get("env"), str):
                 import os
 
@@ -99,7 +205,7 @@ class OperationWorker:
             )
         else:
             raise ValueError(f"unsupported provider mode {self.provider!r}")
-        rate_limit = int(workspace.get_config("provider.tushare.rate_limit", 500))
+        rate_limit = int(workspace.get_config("provider.findata-plugins/tushare.rate_limit", 500))
         limiter = FileRateLimiter(
             workspace.root / "providers" / "tushare-rate.json",
             limit=rate_limit,
@@ -161,7 +267,11 @@ class TushareDatasetService:
         self._settings = dict(settings) if settings is not None else None
 
     def _update_setting(self, dataset: str) -> list[str]:
-        suffix = "update_indexes" if dataset == "findata/tushare/index_weight" else "update_symbols"
+        suffix = (
+            "update_indexes"
+            if dataset == "findata-plugins/tushare_index_weight"
+            else "update_symbols"
+        )
         key = f"dataset.{dataset}.{suffix}"
         value = (
             self._settings.get(key, [])
@@ -179,8 +289,20 @@ class TushareDatasetService:
         raise NotImplementedError
 
     def _dependency_service(self, dataset: str) -> "TushareDatasetService":
-        """Sibling engine fulfilling a declared dependency; overridden per dataset."""
-        raise KeyError(dataset)
+        """Sibling engine fulfilling a declared dependency, found via entry points.
+
+        Dataset packages never import each other; the sibling runtime is
+        discovered through its installed entry point and builds its own
+        service around this service's workspace and client.
+        """
+        runtime = _load_dataset_plugin(dataset).runtime
+        return runtime.operation_service(
+            self.workspace,
+            self.client,
+            today=self.today,
+            now=self.now,
+            settings=self._settings,
+        )
 
     def _fulfill(self, dataset: str, requirement: dict[str, Any]) -> None:
         if self._reporter is not None and hasattr(self._reporter, "fulfill"):
@@ -257,7 +379,7 @@ class TushareDatasetService:
             code = _canonical_index(reference)
             try:
                 found = (
-                    self.loader.dataset("findata/tushare/index_basic")
+                    self.loader.dataset("findata-plugins/tushare_index_basic")
                     .query(filters=[("ts_code", "=", code)])
                     .num_rows
                 )
@@ -267,7 +389,7 @@ class TushareDatasetService:
                 missing.append(reference)
         if not missing:
             return
-        self._fulfill("findata/tushare/index_basic", {"indexes": missing})
+        self._fulfill("findata-plugins/tushare_index_basic", {"indexes": missing})
 
     def _coverage_map(self, dataset: str) -> dict[str, DateRange]:
         try:
@@ -334,6 +456,29 @@ def dataset_storage_state(workspace: Workspace, dataset: str) -> tuple[str, Any]
         state = str(metadata.get("state"))
         publication_id = metadata.get("publication_id")
     return state, publication_id
+
+
+def _load_dataset_plugin(dataset: str) -> DatasetPlugin:
+    """Load the installed dataset plugin with the given full name via entry points."""
+    for point in entry_points(group="findata.datasets"):
+        loaded = point.load()
+        plugin = loaded() if callable(loaded) and not isinstance(loaded, DatasetPlugin) else loaded
+        if plugin.name == dataset:
+            return plugin
+    raise KeyError(dataset)
+
+
+def dependency_states(workspace: Workspace, datasets: list[str]) -> list[dict[str, Any]]:
+    """Read-only registered state of each declared dependency, via entry points."""
+    return [
+        {
+            "dataset": name,
+            "state": _load_dataset_plugin(name).runtime.dataset_description(
+                workspace, provider_ready=True
+            )["state"],
+        }
+        for name in datasets
+    ]
 
 
 _OPERAND_HELP: dict[str, str] = {
@@ -483,7 +628,7 @@ def _materialized(workspace: Any, code: str) -> bool:
     try:
         return (
             DataLoader(workspace.root)
-            .dataset("findata/tushare/index_basic")
+            .dataset("findata-plugins/tushare_index_basic")
             .query(filters=[("ts_code", "=", code)])
             .num_rows
             > 0

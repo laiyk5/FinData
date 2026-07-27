@@ -19,17 +19,22 @@ from findata.plugins import (
 )
 from findata.storage import Workspace
 from findata.taskrunner import TaskContext
-from findata_tushare_daily_basic import daily_basic_plugin
-from findata_tushare_daily_basic.operations import DailyBasicDatasetRuntime
-from findata_tushare_index_basic import index_basic_plugin
-from findata_tushare_index_basic.operations import IndexBasicDatasetRuntime
-from findata_tushare_index_weight import index_weight_plugin
-from findata_tushare_index_weight.operations import IndexWeightDatasetRuntime
-from findata_tushare_provider.provider import TushareProviderRuntime, tushare_provider_plugin
-from findata_tushare_stock_basic import stock_basic_plugin
-from findata_tushare_stock_basic.operations import StockBasicDatasetRuntime
-from findata_tushare_trade_cal import trade_cal_plugin
-from findata_tushare_trade_cal.operations import TradeCalDatasetRuntime
+from findata_plugins.plugins.datasets.tushare_daily_basic import daily_basic_plugin
+from findata_plugins.plugins.datasets.tushare_daily_basic.operations import DailyBasicDatasetRuntime
+from findata_plugins.plugins.datasets.tushare_index_basic import index_basic_plugin
+from findata_plugins.plugins.datasets.tushare_index_basic.operations import IndexBasicDatasetRuntime
+from findata_plugins.plugins.datasets.tushare_index_weight import index_weight_plugin
+from findata_plugins.plugins.datasets.tushare_index_weight.operations import (
+    IndexWeightDatasetRuntime,
+)
+from findata_plugins.plugins.providers.tushare.provider import (
+    TushareProviderRuntime,
+    tushare_provider_plugin,
+)
+from findata_plugins.plugins.datasets.tushare_stock_basic import stock_basic_plugin
+from findata_plugins.plugins.datasets.tushare_stock_basic.operations import StockBasicDatasetRuntime
+from findata_plugins.plugins.datasets.tushare_trade_cal import trade_cal_plugin
+from findata_plugins.plugins.datasets.tushare_trade_cal.operations import TradeCalDatasetRuntime
 
 
 def tushare_dataset_plugins():
@@ -75,7 +80,7 @@ class PluginRegistryTests(unittest.TestCase):
         with self.assertRaisesRegex(PluginRegistrationError, "duplicate provider"):
             validate_provider_plugins([provider, provider])
         malformed = ProviderPlugin(
-            provider_id="broken",
+            provider_id="broken/provider",
             configuration_schema={},
             secret_fields=(),
             rate_limit=0,
@@ -90,8 +95,8 @@ class PluginRegistryTests(unittest.TestCase):
         root = Path(__file__).parents[1]
         package = root / "src" / "findata"
         forbidden = (
-            "from findata_tushare",
-            "import findata_tushare",
+            "from findata_plugins",
+            "import findata_plugins",
             "from findata.toolkit",
         )
         for path in package.glob("*.py"):
@@ -102,28 +107,23 @@ class PluginRegistryTests(unittest.TestCase):
             )
         for path in (package / "toolkit").glob("*.py"):
             content = path.read_text(encoding="utf-8")
-            self.assertNotIn("findata_tushare", content)
+            self.assertNotIn("findata_plugins", content)
 
     def test_plugin_distributions_never_import_another_plugin(self) -> None:
-        # Every Tushare family package may import findata.*, third-party
-        # libraries, and findata_tushare_provider; dataset packages may
-        # additionally import the sibling dataset packages they declare a
-        # distribution dependency on — nothing else in the family.
-        family = {
-            "findata_tushare_provider": set(),
-            "findata_tushare_trade_cal": {"findata_tushare_provider"},
-            "findata_tushare_stock_basic": {"findata_tushare_provider"},
-            "findata_tushare_index_basic": {"findata_tushare_provider"},
-            "findata_tushare_index_weight": {
-                "findata_tushare_provider",
-                "findata_tushare_index_basic",
-            },
-            "findata_tushare_daily_basic": {
-                "findata_tushare_provider",
-                "findata_tushare_trade_cal",
-                "findata_tushare_index_basic",
-                "findata_tushare_index_weight",
-            },
+        # Shared may import only findata.* and third-party libraries; the
+        # provider and dataset leaves may additionally import
+        # findata_plugins.shared. No leaf may import another leaf.
+        shared = "findata_plugins.shared"
+        provider_leaf = "findata_plugins.plugins.providers.tushare"
+        dataset_leaves = {
+            f"findata_plugins.plugins.datasets.tushare_{name}"
+            for name in (
+                "trade_cal",
+                "stock_basic",
+                "index_basic",
+                "index_weight",
+                "daily_basic",
+            )
         }
         retired_core_paths = (
             "from findata.datasets.",
@@ -131,12 +131,21 @@ class PluginRegistryTests(unittest.TestCase):
             "from findata.testing.",
         )
         plugin_root = Path(__file__).parents[1] / "plugins" / "tushare"
-        sources = {
-            package.name: package for package in plugin_root.glob("*/src/*") if package.is_dir()
-        }
-        self.assertEqual(set(sources), set(family))
-        for name, package in sources.items():
-            forbidden = set(family) - family[name] - {name}
+        leaves: dict[str, Path] = {}
+        for init in plugin_root.glob("*/src/findata_plugins/**/__init__.py"):
+            package = init.parent
+            src = next(parent for parent in package.parents if parent.name == "src")
+            leaves[str(package.relative_to(src)).replace("/", ".")] = package
+        self.assertEqual(set(leaves), {shared, provider_leaf} | dataset_leaves)
+        for name, package in leaves.items():
+            if name == shared:
+                forbidden = ("findata_plugins.plugins",)
+            elif name == provider_leaf:
+                forbidden = ("findata_plugins.plugins.datasets",)
+            else:
+                forbidden = ("findata_plugins.plugins.providers",) + tuple(
+                    sorted(dataset_leaves - {name})
+                )
             for path in package.rglob("*.py"):
                 content = path.read_text(encoding="utf-8")
                 self.assertFalse(

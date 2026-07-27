@@ -4,7 +4,7 @@ import unittest
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
-from findata_tushare_provider.publication import (
+from findata_plugins.shared.publication import (
     PublicationWindow,
     daily_window,
     monthly_window,

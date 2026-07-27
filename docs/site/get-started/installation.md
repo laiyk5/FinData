@@ -27,10 +27,10 @@ server start:
 
 ```bash
 # the whole official Tushare family via its umbrella package
-python -m pip install findata-plugins-tushare
+python -m pip install findata-plugins
 
 # or just one dataset (its dependencies resolve automatically)
-python -m pip install findata-dataset-tushare-daily-basic
+python -m pip install findata-plugins-datasets-tushare-daily-basic
 ```
 
 Third-party plugins install the same way (`pip install <their-package>`); a workspace

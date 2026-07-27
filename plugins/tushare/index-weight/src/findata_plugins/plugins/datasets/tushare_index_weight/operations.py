@@ -1,4 +1,4 @@
-"""Operation engine and runtime for the findata/tushare/index_weight dataset."""
+"""Operation engine and runtime for the findata-plugins/tushare_index_weight dataset."""
 
 from __future__ import annotations
 
@@ -10,11 +10,7 @@ from typing import Any
 
 from findata.contracts import OperandError, OperationReporter
 from findata.storage import DataMutation, Workspace
-from findata_tushare_index_basic.operations import (
-    IndexBasicDatasetService,
-    dataset_description as index_basic_dataset_description,
-)
-from findata_tushare_provider.engine import (
+from findata_plugins.shared.engine import (
     _OPERAND_HELP,
     _batch_due,
     _canonical_index,
@@ -30,16 +26,17 @@ from findata_tushare_provider.engine import (
     _string_array,
     _timerange,
     OperationWorker,
+    TushareClient,
     TushareDatasetService,
     dataset_storage_state,
+    dependency_states,
 )
-from findata_tushare_provider.provider import TushareClient
-from findata_tushare_provider.publication import PublicationWindow, monthly_window
-from findata_tushare_index_weight import INDEX_WEIGHT_SPEC
+from findata_plugins.shared.publication import PublicationWindow, monthly_window
+from findata_plugins.plugins.datasets.tushare_index_weight import INDEX_WEIGHT_SPEC
 
 
 class IndexWeightDatasetService(TushareDatasetService):
-    """Synchronous operation engine for the findata/tushare/index_weight dataset."""
+    """Synchronous operation engine for the findata-plugins/tushare_index_weight dataset."""
 
     spec = INDEX_WEIGHT_SPEC
 
@@ -49,23 +46,14 @@ class IndexWeightDatasetService(TushareDatasetService):
     def _dispatch(self, operation: str, values: dict[str, Any]) -> str:
         return self._index_weight(operation, values)
 
-    def _dependency_service(self, dataset: str) -> TushareDatasetService:
-        return {
-            "findata/tushare/index_basic": IndexBasicDatasetService,
-        }[dataset](
-            self.workspace,
-            self.client,
-            today=self.today,
-            now=self.now,
-            settings=self._settings,
-        )
-
     def _index_weight(self, operation: str, operands: dict[str, Any]) -> str:
         if operation == "update":
             _require_no_operands(operands)
             references = self._update_setting(self.spec.name)
             if not references:
-                raise OperandError("findata/tushare/index_weight update requires update_indexes")
+                raise OperandError(
+                    "findata-plugins/tushare_index_weight update requires update_indexes"
+                )
             self._ensure_index_metadata(references)
             indexes = [_canonical_index(value) for value in references]
             requested = _month_range(self.today, self.today)
@@ -175,6 +163,23 @@ class IndexWeightDatasetRuntime:
             now=now.isoformat() if now is not None else None,
         )
 
+    def operation_service(
+        self,
+        workspace: Workspace,
+        client: TushareClient,
+        *,
+        today: date,
+        now: datetime,
+        settings: dict[str, Any] | None,
+    ) -> IndexWeightDatasetService:
+        return IndexWeightDatasetService(
+            workspace,
+            client,
+            today=today,
+            now=now,
+            settings=settings,
+        )
+
     def normalize_operation(
         self,
         operation: str,
@@ -210,21 +215,23 @@ class IndexWeightDatasetRuntime:
         target: str,
         requirement: dict[str, object],
     ) -> tuple[str, dict[str, object]]:
-        if target != "findata/tushare/index_basic":
+        if target != "findata-plugins/tushare_index_basic":
             raise ValueError(
                 f"dataset {INDEX_WEIGHT_SPEC.name!r} has no declared dependency on {target!r}"
             )
         return "complete", dict(requirement)
 
     def update_ready(self, workspace: Workspace) -> bool:
-        return bool(workspace.get_config("dataset.findata/tushare/index_weight.update_indexes"))
+        return bool(
+            workspace.get_config("dataset.findata-plugins/tushare_index_weight.update_indexes")
+        )
 
 
 _OPERATION_NAMES = ["update", "complete"]
 
 _OPERATION_HELP: dict[str, str] = {
     "update": "Extend the configured indexes through the current month; requires "
-    "dataset.findata/tushare/index_weight.update_indexes.",
+    "dataset.findata-plugins/tushare_index_weight.update_indexes.",
     "complete": "Fetch every intersecting calendar month for the requested index references, "
     "extending continuous monthly coverage.",
 }
@@ -254,10 +261,10 @@ def dataset_description(workspace: Workspace, *, provider_ready: bool) -> dict[s
     state, publication_id = dataset_storage_state(workspace, INDEX_WEIGHT_SPEC.name)
     return {
         "name": INDEX_WEIGHT_SPEC.name,
-        "provider": "tushare",
+        "provider": "findata-plugins/tushare",
         "provider_ready": provider_ready,
         "capabilities": dict(INDEX_WEIGHT_SPEC.capabilities),
-        "dependencies": ["findata/tushare/index_basic"],
+        "dependencies": ["findata-plugins/tushare_index_basic"],
         "settings": _dataset_settings(workspace),
         "storage": "duckdb",
         "state": state,
@@ -302,13 +309,7 @@ def plan_operation(
     """Build a read-only preview from normalized operands and committed local state."""
     normalized = normalize_operation(operation, operands, today=today)
     description = dataset_description(workspace, provider_ready=True)
-    dependencies = [
-        {
-            "dataset": name,
-            "state": index_basic_dataset_description(workspace, provider_ready=True)["state"],
-        }
-        for name in description["dependencies"]
-    ]
+    dependencies = dependency_states(workspace, description["dependencies"])
     strategy = "plugin operation"
     estimated_requests: int | None = None
     if operation == "update":
@@ -329,7 +330,7 @@ def plan_operation(
 
 
 def _dataset_settings(workspace: Workspace) -> list[dict[str, Any]]:
-    from findata_tushare_index_weight import index_weight_plugin
+    from findata_plugins.plugins.datasets.tushare_index_weight import index_weight_plugin
 
     return [
         {

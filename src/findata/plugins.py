@@ -14,7 +14,7 @@ from findata.contracts import (
     OperationReporter,
     OperationRequest,
     OperationWorker,
-    dataset_author,
+    plugin_namespace,
     validate_dataset_name,
 )
 from findata.storage import Workspace
@@ -184,6 +184,21 @@ class DatasetPlugin:
         return setting.normalize(value, workspace)
 
 
+def _entry_namespace(point: Any) -> str:
+    """The plugin namespace implied by an entry point's module (top-level package)."""
+    return str(point.module).split(".", 1)[0].replace("_", "-")
+
+
+def _validate_entry_name(point: Any, full_name: str, *, kind: str) -> None:
+    """A plugin's full name must be `<module namespace>/<entry-point name>`."""
+    expected = f"{_entry_namespace(point)}/{point.name}"
+    if full_name != expected:
+        raise PluginRegistrationError(
+            f"{kind} full name {full_name!r} must be {expected!r} to match the "
+            "namespace of the package it lives in"
+        )
+
+
 def discover_provider_plugins() -> list[ProviderPlugin]:
     discovered: list[ProviderPlugin] = []
     for point in entry_points(group="findata.providers"):
@@ -193,6 +208,7 @@ def discover_provider_plugins() -> list[ProviderPlugin]:
             raise PluginRegistrationError(
                 f"entry point {point.name!r} did not return ProviderPlugin"
             )
+        _validate_entry_name(point, value.provider_id, kind="provider")
         discovered.append(value)
     validate_provider_plugins(discovered)
     return discovered
@@ -204,6 +220,7 @@ def validate_provider_plugins(providers: Iterable[ProviderPlugin]) -> None:
         if not provider.provider_id or provider.provider_id in seen:
             raise PluginRegistrationError(f"duplicate provider {provider.provider_id!r}")
         seen.add(provider.provider_id)
+        validate_dataset_name(provider.provider_id)
         if not isinstance(provider.configuration_schema, Mapping):
             raise PluginRegistrationError(
                 f"provider {provider.provider_id!r} has malformed configuration schema"
@@ -222,7 +239,6 @@ def discover_dataset_plugins(
     *, providers: Iterable[ProviderPlugin] | None = None
 ) -> list[DatasetPlugin]:
     discovered: list[DatasetPlugin] = []
-    authors_by_dist: dict[str, str] = {}
     for point in entry_points(group="findata.datasets"):
         loaded = point.load()
         value = loaded() if callable(loaded) and not isinstance(loaded, DatasetPlugin) else loaded
@@ -230,42 +246,43 @@ def discover_dataset_plugins(
             raise PluginRegistrationError(
                 f"entry point {point.name!r} did not return DatasetPlugin"
             )
-        author = dataset_author(value.name)
-        dist_name = point.dist.name if point.dist is not None else "<unknown>"
-        if authors_by_dist.setdefault(dist_name, author) != author:
-            raise PluginRegistrationError(
-                f"distribution {dist_name!r} registers datasets under multiple "
-                f"author namespaces including {author!r}"
-            )
+        _validate_entry_name(point, value.name, kind="dataset")
         discovered.append(value)
     # Entry points from several distributions arrive in installation order;
     # sort by dataset name so listing and registration order stay deterministic.
     discovered.sort(key=lambda plugin: plugin.name)
-    resolved = _resolve_dependencies(discovered)
+    provider_ids = {provider.provider_id for provider in providers or ()}
+    resolved = _resolve_dependencies(discovered, provider_ids)
     validate_plugins(resolved, providers=providers)
     return resolved
 
 
-def _resolve_dependencies(plugins: Iterable[DatasetPlugin]) -> list[DatasetPlugin]:
-    """Resolve author-relative dependency names to full names (idempotent)."""
+def _resolve_dependencies(
+    plugins: Iterable[DatasetPlugin], provider_ids: set[str] | None = None
+) -> list[DatasetPlugin]:
+    """Resolve namespace-relative dependency and provider names (idempotent)."""
     values = list(plugins)
     known = {plugin.name for plugin in values}
+    provider_ids = provider_ids or set()
     resolved: list[DatasetPlugin] = []
     for plugin in values:
-        author = dataset_author(plugin.name)
+        namespace = plugin_namespace(plugin.name)
         full = tuple(
-            dependency if dependency in known else f"{author}/{dependency}"
+            dependency if dependency in known else f"{namespace}/{dependency}"
             for dependency in plugin.dependencies
         )
-        resolved.append(replace(plugin, dependencies=full))
+        provider = plugin.provider
+        if provider not in provider_ids and f"{namespace}/{provider}" in provider_ids:
+            provider = f"{namespace}/{provider}"
+        resolved.append(replace(plugin, dependencies=full, provider=provider))
     return resolved
 
 
 def validate_plugins(
     plugins: Iterable[DatasetPlugin], *, providers: Iterable[ProviderPlugin] | None = None
 ) -> None:
-    values = _resolve_dependencies(list(plugins))
     provider_ids = {provider.provider_id for provider in providers or ()}
+    values = _resolve_dependencies(list(plugins), provider_ids)
     by_name: dict[str, DatasetPlugin] = {}
     for plugin in values:
         if plugin.name in by_name:
@@ -318,8 +335,10 @@ def apply_plugin_blocklist(
     such repair and each unknown blocklist entry produces a warning.
     """
     entries = set(blocked)
-    all_plugins = _resolve_dependencies(list(plugins))
     all_providers = list(providers)
+    all_plugins = _resolve_dependencies(
+        list(plugins), {provider.provider_id for provider in all_providers}
+    )
 
     def note(message: str) -> None:
         if warn is not None:
@@ -370,7 +389,9 @@ def register_plugins(
     *,
     providers: Iterable[ProviderPlugin],
 ) -> None:
-    values = _resolve_dependencies(list(plugins))
+    values = _resolve_dependencies(
+        list(plugins), {provider.provider_id for provider in providers}
+    )
     validate_plugins(values, providers=providers)
     for plugin in values:
         workspace.register_dataset(

@@ -6,11 +6,11 @@ from datetime import date
 import pyarrow as pa
 
 from findata.contracts import DateRange, OperandError
-from findata_tushare_daily_basic import DAILY_BASIC_SPEC
-from findata_tushare_index_basic import INDEX_BASIC_SPEC
-from findata_tushare_index_weight import INDEX_WEIGHT_SPEC
-from findata_tushare_stock_basic import STOCK_BASIC_SPEC
-from findata_tushare_trade_cal import TRADE_CAL_SPEC
+from findata_plugins.plugins.datasets.tushare_daily_basic import DAILY_BASIC_SPEC
+from findata_plugins.plugins.datasets.tushare_index_basic import INDEX_BASIC_SPEC
+from findata_plugins.plugins.datasets.tushare_index_weight import INDEX_WEIGHT_SPEC
+from findata_plugins.plugins.datasets.tushare_stock_basic import STOCK_BASIC_SPEC
+from findata_plugins.plugins.datasets.tushare_trade_cal import TRADE_CAL_SPEC
 
 TUSHARE_DATASETS = {
     spec.name: spec
@@ -48,16 +48,16 @@ class DatasetContractTests(unittest.TestCase):
         self.assertEqual(
             set(TUSHARE_DATASETS),
             {
-                "findata/tushare/trade_cal",
-                "findata/tushare/stock_basic",
-                "findata/tushare/index_basic",
-                "findata/tushare/index_weight",
-                "findata/tushare/daily_basic",
+                "findata-plugins/tushare_trade_cal",
+                "findata-plugins/tushare_stock_basic",
+                "findata-plugins/tushare_index_basic",
+                "findata-plugins/tushare_index_weight",
+                "findata-plugins/tushare_daily_basic",
             },
         )
 
     def test_trade_calendar_schema_normalizes_provider_values(self) -> None:
-        spec = TUSHARE_DATASETS["findata/tushare/trade_cal"]
+        spec = TUSHARE_DATASETS["findata-plugins/tushare_trade_cal"]
 
         self.assertEqual(spec.api_name, "trade_cal")
         self.assertEqual(spec.primary_key, ("exchange", "cal_date"))
@@ -76,7 +76,7 @@ class DatasetContractTests(unittest.TestCase):
         )
 
     def test_index_weight_adds_effective_month_to_provider_fields(self) -> None:
-        spec = TUSHARE_DATASETS["findata/tushare/index_weight"]
+        spec = TUSHARE_DATASETS["findata-plugins/tushare_index_weight"]
 
         self.assertEqual(spec.api_name, "index_weight")
         self.assertEqual(
@@ -89,7 +89,7 @@ class DatasetContractTests(unittest.TestCase):
         self.assertEqual(spec.aliases, {})
 
     def test_index_basic_accepts_the_documented_output_without_symbol(self) -> None:
-        spec = TUSHARE_DATASETS["findata/tushare/index_basic"]
+        spec = TUSHARE_DATASETS["findata-plugins/tushare_index_basic"]
         fields = [
             "ts_code",
             "name",
@@ -132,7 +132,7 @@ class DatasetContractTests(unittest.TestCase):
         self.assertEqual(table.column("base_date").to_pylist(), [date(2004, 12, 31)])
 
     def test_daily_basic_schema_matches_declared_logical_contract(self) -> None:
-        spec = TUSHARE_DATASETS["findata/tushare/daily_basic"]
+        spec = TUSHARE_DATASETS["findata-plugins/tushare_daily_basic"]
 
         self.assertEqual(len(spec.schema), 19)
         self.assertEqual(spec.schema.field("trade_date").type, pa.date32())

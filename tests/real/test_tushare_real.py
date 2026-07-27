@@ -10,19 +10,30 @@ from datetime import date
 from findata import DataLoader
 from findata.plugins import register_plugins
 from findata.storage import Workspace
-from findata_tushare_daily_basic import DAILY_BASIC_SPEC, daily_basic_plugin
-from findata_tushare_index_basic import INDEX_BASIC_SPEC, index_basic_plugin
-from findata_tushare_index_basic.operations import IndexBasicDatasetService
-from findata_tushare_index_weight import INDEX_WEIGHT_SPEC, index_weight_plugin
-from findata_tushare_index_weight.operations import IndexWeightDatasetService
-from findata_tushare_provider.provider import (
-    TushareClient,
-    TushareHTTPTransport,
-    tushare_provider_plugin,
+from findata_plugins.plugins.datasets.tushare_daily_basic import (
+    DAILY_BASIC_SPEC,
+    daily_basic_plugin,
 )
-from findata_tushare_stock_basic import STOCK_BASIC_SPEC, stock_basic_plugin
-from findata_tushare_trade_cal import TRADE_CAL_SPEC, trade_cal_plugin
-from findata_tushare_trade_cal.operations import TradeCalDatasetService
+from findata_plugins.plugins.datasets.tushare_index_basic import (
+    INDEX_BASIC_SPEC,
+    index_basic_plugin,
+)
+from findata_plugins.plugins.datasets.tushare_index_basic.operations import IndexBasicDatasetService
+from findata_plugins.plugins.datasets.tushare_index_weight import (
+    INDEX_WEIGHT_SPEC,
+    index_weight_plugin,
+)
+from findata_plugins.plugins.datasets.tushare_index_weight.operations import (
+    IndexWeightDatasetService,
+)
+from findata_plugins.plugins.providers.tushare.provider import tushare_provider_plugin
+from findata_plugins.shared.engine import TushareClient, TushareHTTPTransport
+from findata_plugins.plugins.datasets.tushare_stock_basic import (
+    STOCK_BASIC_SPEC,
+    stock_basic_plugin,
+)
+from findata_plugins.plugins.datasets.tushare_trade_cal import TRADE_CAL_SPEC, trade_cal_plugin
+from findata_plugins.plugins.datasets.tushare_trade_cal.operations import TradeCalDatasetService
 
 TUSHARE_DATASETS = {
     spec.name: spec
@@ -72,7 +83,7 @@ class RealTushareContractTests(unittest.TestCase):
         client = self.client()
 
         table = client.query(
-            TUSHARE_DATASETS["findata/tushare/trade_cal"],
+            TUSHARE_DATASETS["findata-plugins/tushare_trade_cal"],
             exchange="SSE",
             start_date="20260720",
             end_date="20260720",
@@ -83,7 +94,7 @@ class RealTushareContractTests(unittest.TestCase):
 
     def test_10_stock_basic_exact_code_contract(self) -> None:
         table = self.client().query(
-            TUSHARE_DATASETS["findata/tushare/stock_basic"], ts_code="600000.SH"
+            TUSHARE_DATASETS["findata-plugins/tushare_stock_basic"], ts_code="600000.SH"
         )
 
         self.assertEqual(table.num_rows, 1)
@@ -91,7 +102,7 @@ class RealTushareContractTests(unittest.TestCase):
 
     def test_20_index_basic_exact_code_contract(self) -> None:
         table = self.client().query(
-            TUSHARE_DATASETS["findata/tushare/index_basic"], ts_code="000300.SH"
+            TUSHARE_DATASETS["findata-plugins/tushare_index_basic"], ts_code="000300.SH"
         )
 
         self.assertEqual(table.num_rows, 1)
@@ -100,7 +111,7 @@ class RealTushareContractTests(unittest.TestCase):
 
     def test_30_index_weight_month_contract(self) -> None:
         table = self.client().query(
-            TUSHARE_DATASETS["findata/tushare/index_weight"],
+            TUSHARE_DATASETS["findata-plugins/tushare_index_weight"],
             index_code="000300.SH",
             start_date="20260601",
             end_date="20260630",
@@ -112,7 +123,7 @@ class RealTushareContractTests(unittest.TestCase):
 
     def test_40_daily_basic_exact_symbol_contract(self) -> None:
         table = self.client().query(
-            TUSHARE_DATASETS["findata/tushare/daily_basic"],
+            TUSHARE_DATASETS["findata-plugins/tushare_daily_basic"],
             ts_code="600000.SH",
             start_date="20260630",
             end_date="20260630",
@@ -151,7 +162,7 @@ class RealTushareContractTests(unittest.TestCase):
             self.assertEqual(weights.fetched_requests, 1)
             stored = (
                 DataLoader(root)
-                .dataset("findata/tushare/index_weight")
+                .dataset("findata-plugins/tushare_index_weight")
                 .query(
                     keys=["000300.SH"],
                     time_range=("2026-06-01", "2026-07-01"),

@@ -12,12 +12,12 @@ from findata.plugins import (
 )
 from findata.server import initialize_workspace
 from findata.storage import Workspace
-from findata_tushare_daily_basic import daily_basic_plugin
-from findata_tushare_index_basic import index_basic_plugin
-from findata_tushare_index_weight import index_weight_plugin
-from findata_tushare_provider.provider import tushare_provider_plugin
-from findata_tushare_stock_basic import stock_basic_plugin
-from findata_tushare_trade_cal import trade_cal_plugin
+from findata_plugins.plugins.datasets.tushare_daily_basic import daily_basic_plugin
+from findata_plugins.plugins.datasets.tushare_index_basic import index_basic_plugin
+from findata_plugins.plugins.datasets.tushare_index_weight import index_weight_plugin
+from findata_plugins.plugins.providers.tushare.provider import tushare_provider_plugin
+from findata_plugins.plugins.datasets.tushare_stock_basic import stock_basic_plugin
+from findata_plugins.plugins.datasets.tushare_trade_cal import trade_cal_plugin
 
 
 def builtin_plugins():
@@ -45,14 +45,14 @@ class PluginBlocklistTests(unittest.TestCase):
         return active
 
     def test_unrequired_dataset_block_sticks(self) -> None:
-        plugins, providers = self.block("findata/tushare/stock_basic")
+        plugins, providers = self.block("findata-plugins/tushare_stock_basic")
         self.assertEqual(len(plugins), 4)
-        self.assertNotIn("findata/tushare/stock_basic", {plugin.name for plugin in plugins})
+        self.assertNotIn("findata-plugins/tushare_stock_basic", {plugin.name for plugin in plugins})
         self.assertEqual(providers, self.providers)
         self.assertEqual(self.warnings, [])
 
     def test_blocked_dependency_mounts_anyway_with_warning(self) -> None:
-        plugins, _ = self.block("findata/tushare/trade_cal")
+        plugins, _ = self.block("findata-plugins/tushare_trade_cal")
         self.assertEqual(len(plugins), 5)
         self.assertTrue(
             any("ineffective" in message for message in self.warnings),
@@ -60,7 +60,9 @@ class PluginBlocklistTests(unittest.TestCase):
         )
 
     def test_dependency_closure_repairs_transitively(self) -> None:
-        plugins, _ = self.block("findata/tushare/index_basic", "findata/tushare/index_weight")
+        plugins, _ = self.block(
+            "findata-plugins/tushare_index_basic", "findata-plugins/tushare_index_weight"
+        )
         self.assertEqual(len(plugins), 5)
         self.assertEqual(
             sum("ineffective" in message for message in self.warnings),
@@ -68,7 +70,7 @@ class PluginBlocklistTests(unittest.TestCase):
         )
 
     def test_blocked_provider_mounts_when_datasets_require_it(self) -> None:
-        plugins, providers = self.block("tushare")
+        plugins, providers = self.block("findata-plugins/tushare")
         # Datasets still mount, so the provider block is ineffective.
         self.assertEqual(len(plugins), 5)
         self.assertEqual(providers, self.providers)
@@ -76,7 +78,7 @@ class PluginBlocklistTests(unittest.TestCase):
 
     def test_provider_block_sticks_when_no_dataset_mounts(self) -> None:
         all_datasets = [plugin.name for plugin in self.plugins]
-        plugins, providers = self.block("tushare", *all_datasets)
+        plugins, providers = self.block("findata-plugins/tushare", *all_datasets)
         self.assertEqual(plugins, [])
         self.assertEqual(providers, [])
 
@@ -92,17 +94,17 @@ class PluginBlocklistTests(unittest.TestCase):
             self.assertEqual(plugin_blocklist(self.workspace), [])
 
     def test_workspace_initialization_honors_the_blocklist(self) -> None:
-        self.workspace.set_config("plugins.blocked", ["findata/tushare/stock_basic"])
+        self.workspace.set_config("plugins.blocked", ["findata-plugins/tushare_stock_basic"])
         initialize_workspace(self.workspace.root)
         registered = {
             str(path.parent.relative_to(self.workspace.datasets_root))
             for path in self.workspace.datasets_root.rglob("dataset.duckdb")
         }
         self.assertEqual(len(registered), 4)
-        self.assertNotIn("findata/tushare/stock_basic", registered)
+        self.assertNotIn("findata-plugins/tushare_stock_basic", registered)
 
     def test_discovery_path_applies_the_same_filter_as_registration(self) -> None:
-        self.workspace.set_config("plugins.blocked", ["findata/tushare/stock_basic"])
+        self.workspace.set_config("plugins.blocked", ["findata-plugins/tushare_stock_basic"])
         initialize_workspace(self.workspace.root)
         providers = discover_provider_plugins()
         plugins = discover_dataset_plugins(providers=providers)
@@ -112,7 +114,7 @@ class PluginBlocklistTests(unittest.TestCase):
             plugin_blocklist(self.workspace),
             warn=None,
         )
-        self.assertNotIn("findata/tushare/stock_basic", {plugin.name for plugin in active})
+        self.assertNotIn("findata-plugins/tushare_stock_basic", {plugin.name for plugin in active})
 
 
 if __name__ == "__main__":

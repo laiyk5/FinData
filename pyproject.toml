@@ -36,13 +36,14 @@ findata-server = "findata.server_cli:main"
 dev = [
   # Official plugins are development/test-only members of this workspace;
   # findata itself never depends on a plugin distribution.
-  "findata-dataset-tushare-daily-basic==0.3.0",
-  "findata-dataset-tushare-index-basic==0.3.0",
-  "findata-dataset-tushare-index-weight==0.3.0",
-  "findata-dataset-tushare-stock-basic==0.3.0",
-  "findata-dataset-tushare-trade-cal==0.3.0",
-  "findata-plugins-tushare==0.3.0",
-  "findata-provider-tushare==0.3.0",
+  "findata-plugins==0.3.0",
+  "findata-plugins-datasets-tushare-daily-basic==0.3.0",
+  "findata-plugins-datasets-tushare-index-basic==0.3.0",
+  "findata-plugins-datasets-tushare-index-weight==0.3.0",
+  "findata-plugins-datasets-tushare-stock-basic==0.3.0",
+  "findata-plugins-datasets-tushare-trade-cal==0.3.0",
+  "findata-plugins-providers-tushare==0.3.0",
+  "findata-plugins-shared==0.3.0",
   "nox>=2025.5.1",
   "pytest>=8",
   "pytest-cov>=5",
@@ -56,6 +57,7 @@ docs = [
 
 [tool.uv.workspace]
 members = [
+  "plugins/tushare/shared",
   "plugins/tushare/provider",
   "plugins/tushare/trade-cal",
   "plugins/tushare/stock-basic",
@@ -67,13 +69,14 @@ members = [
 
 [tool.uv.sources]
 findata = { workspace = true }
-findata-provider-tushare = { workspace = true }
-findata-dataset-tushare-trade-cal = { workspace = true }
-findata-dataset-tushare-stock-basic = { workspace = true }
-findata-dataset-tushare-index-basic = { workspace = true }
-findata-dataset-tushare-index-weight = { workspace = true }
-findata-dataset-tushare-daily-basic = { workspace = true }
-findata-plugins-tushare = { workspace = true }
+findata-plugins-shared = { workspace = true }
+findata-plugins-providers-tushare = { workspace = true }
+findata-plugins-datasets-tushare-trade-cal = { workspace = true }
+findata-plugins-datasets-tushare-stock-basic = { workspace = true }
+findata-plugins-datasets-tushare-index-basic = { workspace = true }
+findata-plugins-datasets-tushare-index-weight = { workspace = true }
+findata-plugins-datasets-tushare-daily-basic = { workspace = true }
+findata-plugins = { workspace = true }
 
 [tool.hatch.build]
 # The WebUI bundle is built from web/ (npm run build) and git-ignored; it must

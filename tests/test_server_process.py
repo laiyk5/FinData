@@ -106,7 +106,7 @@ class ServerProcessTests(unittest.TestCase):
                 output = process.stdout.read()
                 self.assertIn("FinData server ready", output)
                 self.assertIn(str(workspace), output)
-                self.assertIn("providers=tushare:mock", output)
+                self.assertIn("providers=findata-plugins/tushare:mock", output)
                 self.assertNotIn((workspace / "token").read_text().strip(), output)
             finally:
                 if process.poll() is None:

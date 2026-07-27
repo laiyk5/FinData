@@ -3,19 +3,22 @@ requires = ["hatchling==1.31.0"]
 build-backend = "hatchling.build"
 
 [project]
-name = "findata-dataset-tushare-index-weight"
+name = "findata-plugins-datasets-tushare-index-weight"
 version = "0.3.0"
 description = "Official Tushare index weight dataset plugin for findata"
 requires-python = ">=3.11"
+license = "Apache-2.0"
 dependencies = [
+  "findata-plugins-datasets-tushare-index-basic==0.3.0",
+  "findata-plugins-providers-tushare==0.3.0",
+  "findata-plugins-shared==0.3.0",
   "findata==0.3.0",
-  "findata-dataset-tushare-index-basic==0.3.0",
-  "findata-provider-tushare==0.3.0",
   "pyarrow>=15",
 ]
 
 [project.entry-points."findata.datasets"]
-tushare_index_weight = "findata_tushare_index_weight:index_weight_plugin"
+tushare_index_weight = "findata_plugins.plugins.datasets.tushare_index_weight:index_weight_plugin"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/findata_tushare_index_weight"]
+only-include = ["src/findata_plugins/plugins/datasets/tushare_index_weight"]
+sources = ["src"]

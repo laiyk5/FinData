@@ -1,4 +1,4 @@
-# `findata/tushare/stock_basic`
+# `findata-plugins/tushare_stock_basic`
 
 API: <https://tushare.pro/document/2?doc_id=25>
 

@@ -59,7 +59,7 @@ def _stock_basic_schema() -> pa.Schema:
 
 
 STOCK_BASIC_SPEC = DatasetSpec(
-    name="findata/tushare/stock_basic",
+    name="findata-plugins/tushare_stock_basic",
     api_name="stock_basic",
     schema=_stock_basic_schema(),
     provider_fields=STOCK_BASIC_FIELDS,
@@ -71,7 +71,9 @@ STOCK_BASIC_SPEC = DatasetSpec(
 def stock_basic_plugin() -> "DatasetPlugin":
     from findata.plugins import DatasetPlugin
 
-    from findata_tushare_stock_basic.operations import StockBasicDatasetRuntime
+    from findata_plugins.plugins.datasets.tushare_stock_basic.operations import (
+        StockBasicDatasetRuntime,
+    )
 
     return DatasetPlugin(
         name=STOCK_BASIC_SPEC.name,

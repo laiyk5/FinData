@@ -1,4 +1,4 @@
-"""Operation engine and runtime for the findata/tushare/index_basic dataset."""
+"""Operation engine and runtime for the findata-plugins/tushare_index_basic dataset."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from typing import Any
 from findata.contracts import OperandError, OperationReporter
 from findata.loader import DataLoader, DatasetNotReadyError
 from findata.storage import DataMutation, Workspace
-from findata_tushare_provider.engine import (
+from findata_plugins.shared.engine import (
     _OPERAND_HELP,
     _batch_due,
     _canonical_index,
@@ -20,15 +20,15 @@ from findata_tushare_provider.engine import (
     _require_no_operands,
     _string_array,
     OperationWorker,
+    TushareClient,
     TushareDatasetService,
     dataset_storage_state,
 )
-from findata_tushare_provider.provider import TushareClient
-from findata_tushare_index_basic import INDEX_BASIC_SPEC
+from findata_plugins.plugins.datasets.tushare_index_basic import INDEX_BASIC_SPEC
 
 
 class IndexBasicDatasetService(TushareDatasetService):
-    """Synchronous operation engine for the findata/tushare/index_basic dataset."""
+    """Synchronous operation engine for the findata-plugins/tushare_index_basic dataset."""
 
     spec = INDEX_BASIC_SPEC
 
@@ -45,7 +45,7 @@ class IndexBasicDatasetService(TushareDatasetService):
             existing = self._existing_table(spec)
             if existing is None or existing.num_rows == 0:
                 raise OperandError(
-                    "findata/tushare/index_basic update has no tracked indexes; run complete first"
+                    "findata-plugins/tushare_index_basic update has no tracked indexes; run complete first"
                 )
             indexes = [f"tushare:{code}" for code in existing.column("ts_code").to_pylist()]
         elif operation == "complete":
@@ -124,6 +124,23 @@ class IndexBasicDatasetRuntime:
             token="mock-token" if mode == "mock" else "",
             today=today.isoformat(),
             now=now.isoformat() if now is not None else None,
+        )
+
+    def operation_service(
+        self,
+        workspace: Workspace,
+        client: TushareClient,
+        *,
+        today: date,
+        now: datetime,
+        settings: dict[str, Any] | None,
+    ) -> IndexBasicDatasetService:
+        return IndexBasicDatasetService(
+            workspace,
+            client,
+            today=today,
+            now=now,
+            settings=settings,
         )
 
     def normalize_operation(
@@ -205,7 +222,7 @@ def dataset_description(workspace: Workspace, *, provider_ready: bool) -> dict[s
     state, publication_id = dataset_storage_state(workspace, INDEX_BASIC_SPEC.name)
     return {
         "name": INDEX_BASIC_SPEC.name,
-        "provider": "tushare",
+        "provider": "findata-plugins/tushare",
         "provider_ready": provider_ready,
         "capabilities": dict(INDEX_BASIC_SPEC.capabilities),
         "dependencies": [],

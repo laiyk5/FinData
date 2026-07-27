@@ -36,7 +36,7 @@ data safely from Python or the command line — while the server is running.
 findata-server init ~/market-data
 findata-server start ~/market-data
 
-findata task run findata/tushare/daily_basic complete \
+findata task run findata-plugins/tushare_daily_basic complete \
   --param symbols=tushare:000300.SH \
   --param timerange=2026-06-29:2026-07-04 \
   --follow
@@ -49,7 +49,7 @@ from findata import DataLoader
 
 table = (
     DataLoader(Path("~/market-data").expanduser())
-    .dataset("findata/tushare/daily_basic")
+    .dataset("findata-plugins/tushare_daily_basic")
     .query(keys=["600000.SH"], time_range=("2026-06-29", "2026-07-04"))
 )
 ```

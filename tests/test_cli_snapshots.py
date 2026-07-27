@@ -86,11 +86,11 @@ class HumanRenderingSnapshotTests(unittest.TestCase):
         # contain the registered datasets and a table header.
         self.assertIn("NAME", output)
         for dataset in (
-            "findata/tushare/trade_cal",
-            "findata/tushare/stock_basic",
-            "findata/tushare/index_basic",
-            "findata/tushare/index_weight",
-            "findata/tushare/daily_basic",
+            "findata-plugins/tushare_trade_cal",
+            "findata-plugins/tushare_stock_basic",
+            "findata-plugins/tushare_index_basic",
+            "findata-plugins/tushare_index_weight",
+            "findata-plugins/tushare_daily_basic",
         ):
             self.assertIn(dataset, output)
         self.assert_snapshot("dataset_ls.txt", output)
@@ -100,7 +100,7 @@ class HumanRenderingSnapshotTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(errors, "")
 
-        self.assertIn("tushare", output)
+        self.assertIn("findata-plugins/tushare", output)
         self.assertIn("mock", output)
         self.assert_snapshot("provider_ls.txt", output)
 
@@ -108,7 +108,7 @@ class HumanRenderingSnapshotTests(unittest.TestCase):
         code, output, errors = self.run_cli(
             "task",
             "run",
-            "findata/tushare/trade_cal",
+            "findata-plugins/tushare_trade_cal",
             "complete",
             "--params",
             '{"exchanges":["SSE"],"timerange":"2026-07-17:2026-07-20"}',
@@ -118,7 +118,7 @@ class HumanRenderingSnapshotTests(unittest.TestCase):
         self.assertNotIn("Traceback", errors)
 
         self.assertIn("Task succeeded", output)
-        self.assertIn("findata/tushare/trade_cal", output)
+        self.assertIn("findata-plugins/tushare_trade_cal", output)
         self.assertIn("complete", output)
         self.assert_snapshot("task_terminal_summary.txt", output)
 

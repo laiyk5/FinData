@@ -27,7 +27,7 @@ def _normalize_trade_cal(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 TRADE_CAL_FIELDS = ("exchange", "cal_date", "is_open", "pretrade_date")
 
 TRADE_CAL_SPEC = DatasetSpec(
-    name="findata/tushare/trade_cal",
+    name="findata-plugins/tushare_trade_cal",
     api_name="trade_cal",
     schema=pa.schema(
         [
@@ -49,7 +49,7 @@ TRADE_CAL_SPEC = DatasetSpec(
 def trade_cal_plugin() -> "DatasetPlugin":
     from findata.plugins import DatasetPlugin
 
-    from findata_tushare_trade_cal.operations import TradeCalDatasetRuntime
+    from findata_plugins.plugins.datasets.tushare_trade_cal.operations import TradeCalDatasetRuntime
 
     return DatasetPlugin(
         name=TRADE_CAL_SPEC.name,

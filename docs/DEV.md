@@ -86,19 +86,24 @@ The repository is a uv workspace:
 
 - core services, public contracts, the DataLoader, server, CLI, transactional storage adapter, tasks,
   configuration, cron, and events live in the `findata` distribution under `src/findata`;
-- each official provider family lives under `plugins/<family>/`, split into a shared provider
-  distribution and one plugin distribution per dataset (for example `plugins/tushare/` ships
-  `findata-provider-tushare` with the import package `findata_tushare_provider` — provider
-  adapter, shared operation engine, and mock/test helpers — plus one
-  `findata-dataset-tushare-*` distribution per dataset and the metadata-only
-  `findata-plugins-tushare` umbrella);
+- each official provider family lives under `plugins/<family>/`, contributing to the
+  `findata_plugins` PEP 420 namespace: a shared distribution (`findata-plugins-shared`,
+  import package `findata_plugins.shared` — client/transport adapter, shared operation
+  engine, publication timing, and mock/test helpers), one provider distribution
+  (`findata-plugins-providers-tushare`, import package
+  `findata_plugins.plugins.providers.tushare`), one
+  `findata-plugins-datasets-tushare-*` distribution per dataset (import packages
+  `findata_plugins.plugins.datasets.tushare_*`), and the metadata-only
+  `findata-plugins` umbrella;
 - reusable opt-in plugin helpers live under `findata.toolkit` in the core distribution.
 
 Core modules must not import `findata.toolkit` or any plugin distribution. Discovery crosses that
 boundary through entry points and declared contracts. A dataset plugin may import public core
-contracts, its provider adapter, and selected toolkit components; within one provider family, a
-dataset distribution imports only its provider distribution and the sibling dataset distributions
-it declares dependencies on, and never another family's distribution. A toolkit component may
+contracts, its namespace's shared subpackage, and selected toolkit components; a dataset plugin
+subpackage never imports another plugin subpackage — not a sibling dataset leaf and not the
+provider leaf. The provider leaf may import shared; shared imports only public core contracts
+and third-party libraries. Cross-dataset fulfillment flows through core dependency resolution
+or entry-point discovery, never through direct imports. A toolkit component may
 import public core contracts but never a concrete plugin. Keep dataset-specific setting schemas, parsers, selector syntax, and
 orchestration inside its plugin package even when they use a toolkit resolver after parsing.
 Plugin mocks and test-only helpers live in the plugin's own testing module and are loaded only

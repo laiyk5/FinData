@@ -8,14 +8,15 @@ from pathlib import Path
 
 from findata.plugins import register_plugins
 from findata.storage import Workspace
-from findata_tushare_daily_basic import daily_basic_plugin
-from findata_tushare_index_basic import index_basic_plugin
-from findata_tushare_index_basic.operations import IndexBasicDatasetService
-from findata_tushare_index_weight import index_weight_plugin
-from findata_tushare_provider.provider import TushareClient, tushare_provider_plugin
-from findata_tushare_provider.testing import MockTushareTransport
-from findata_tushare_stock_basic import stock_basic_plugin
-from findata_tushare_trade_cal import trade_cal_plugin
+from findata_plugins.plugins.datasets.tushare_daily_basic import daily_basic_plugin
+from findata_plugins.plugins.datasets.tushare_index_basic import index_basic_plugin
+from findata_plugins.plugins.datasets.tushare_index_basic.operations import IndexBasicDatasetService
+from findata_plugins.plugins.datasets.tushare_index_weight import index_weight_plugin
+from findata_plugins.plugins.providers.tushare.provider import tushare_provider_plugin
+from findata_plugins.shared.engine import TushareClient
+from findata_plugins.shared.testing import MockTushareTransport
+from findata_plugins.plugins.datasets.tushare_stock_basic import stock_basic_plugin
+from findata_plugins.plugins.datasets.tushare_trade_cal import trade_cal_plugin
 
 
 def register_v1_datasets(workspace: Workspace) -> None:
@@ -56,8 +57,8 @@ class PluginSettingsTests(unittest.TestCase):
 
     def test_dataset_setting_is_plugin_normalized_and_requires_local_metadata(self) -> None:
         plugin = daily_basic_plugin()
-        key = "dataset.findata/tushare/daily_basic.update_symbols"
-        with self.assertRaisesRegex(ValueError, "findata/tushare/index_basic complete"):
+        key = "dataset.findata-plugins/tushare_daily_basic.update_symbols"
+        with self.assertRaisesRegex(ValueError, "findata-plugins/tushare_index_basic complete"):
             plugin.normalize_setting(key, ["tushare:000300.SH@latest"], workspace=self.workspace)
 
         self.service.run("complete", {"indexes": ["tushare:000300.SH"]})
@@ -73,11 +74,11 @@ class PluginSettingsTests(unittest.TestCase):
         self.assertEqual(first.fetched_requests, 1)
         request = self.transport.requests[-1]["params"]
         self.assertEqual(request, {"ts_code": "000300.SH"})
-        table = self.service.loader.dataset("findata/tushare/index_basic").query()
+        table = self.service.loader.dataset("findata-plugins/tushare_index_basic").query()
         self.assertEqual(table.column("ts_code").to_pylist(), ["000300.SH"])
 
         self.service.run("complete", {"indexes": ["tushare:000905.SH"]})
-        table = self.service.loader.dataset("findata/tushare/index_basic").query()
+        table = self.service.loader.dataset("findata-plugins/tushare_index_basic").query()
         self.assertEqual(set(table.column("ts_code").to_pylist()), {"000300.SH", "000905.SH"})
         self.assertTrue(all("market" not in item["params"] for item in self.transport.requests))
 

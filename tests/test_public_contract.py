@@ -17,9 +17,9 @@ from findata.contracts import OperandError
 from findata.server_cli import _command_tree as server_command_tree
 from findata.server_cli import main as server_cli_main
 from findata.storage import Workspace
-from findata_tushare_daily_basic.operations import DailyBasicDatasetRuntime
-from findata_tushare_stock_basic.operations import StockBasicDatasetRuntime
-from findata_tushare_trade_cal.operations import TradeCalDatasetRuntime
+from findata_plugins.plugins.datasets.tushare_daily_basic.operations import DailyBasicDatasetRuntime
+from findata_plugins.plugins.datasets.tushare_stock_basic.operations import StockBasicDatasetRuntime
+from findata_plugins.plugins.datasets.tushare_trade_cal.operations import TradeCalDatasetRuntime
 
 
 class ReadProtocolImportTests(unittest.TestCase):

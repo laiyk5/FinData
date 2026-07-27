@@ -42,7 +42,7 @@ INDEX_BASIC_FIELDS = (
 )
 
 INDEX_BASIC_SPEC = DatasetSpec(
-    name="findata/tushare/index_basic",
+    name="findata-plugins/tushare_index_basic",
     api_name="index_basic",
     schema=pa.schema(
         [
@@ -70,7 +70,9 @@ INDEX_BASIC_SPEC = DatasetSpec(
 def index_basic_plugin() -> "DatasetPlugin":
     from findata.plugins import DatasetPlugin
 
-    from findata_tushare_index_basic.operations import IndexBasicDatasetRuntime
+    from findata_plugins.plugins.datasets.tushare_index_basic.operations import (
+        IndexBasicDatasetRuntime,
+    )
 
     return DatasetPlugin(
         name=INDEX_BASIC_SPEC.name,

@@ -1,4 +1,4 @@
-# `findata/tushare/trade_cal`
+# `findata-plugins/tushare_trade_cal`
 
 API: <https://tushare.pro/document/2?doc_id=26>
 

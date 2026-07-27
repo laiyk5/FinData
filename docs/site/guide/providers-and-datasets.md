@@ -5,7 +5,7 @@
 ```bash
 findata provider ls                 # list providers and local readiness
 findata provider status tushare     # validate configuration without a network call
-findata provider check tushare      # authenticated readiness probe through the rate limiter
+findata provider check findata-plugins/tushare      # authenticated readiness probe through the rate limiter
 ```
 
 Provider commands never display credentials. Configuration lives in
@@ -15,10 +15,10 @@ Provider commands never display credentials. Configuration lives in
 
 ```bash
 findata dataset ls
-findata dataset describe findata/tushare/daily_basic   # schema, capabilities, settings, storage
-findata dataset operations findata/tushare/daily_basic
-findata dataset operation findata/tushare/daily_basic complete   # operand schema and per-operand help
-findata dataset status findata/tushare/daily_basic     # or: dataset status --all
+findata dataset describe findata-plugins/tushare_daily_basic   # schema, capabilities, settings, storage
+findata dataset operations findata-plugins/tushare_daily_basic
+findata dataset operation findata-plugins/tushare_daily_basic complete   # operand schema and per-operand help
+findata dataset status findata-plugins/tushare_daily_basic     # or: dataset status --all
 ```
 
 `dataset describe` shows the static contract: provider readiness, capabilities,
@@ -30,11 +30,11 @@ runtime companion: initialization state, current publication, and a coverage sum
 
 | dataset | contents |
 | --- | --- |
-| `findata/tushare/trade_cal` | exchange trade calendars (SSE, SZSE) |
-| `findata/tushare/stock_basic` | listed-stock master data |
-| `findata/tushare/index_basic` | index metadata |
-| `findata/tushare/index_weight` | monthly index constituent weights |
-| `findata/tushare/daily_basic` | daily valuation metrics (PE, PB, turnover, …) |
+| `findata-plugins/tushare_trade_cal` | exchange trade calendars (SSE, SZSE) |
+| `findata-plugins/tushare_stock_basic` | listed-stock master data |
+| `findata-plugins/tushare_index_basic` | index metadata |
+| `findata-plugins/tushare_index_weight` | monthly index constituent weights |
+| `findata-plugins/tushare_daily_basic` | daily valuation metrics (PE, PB, turnover, …) |
 
 The canonical per-dataset contracts (schemas, publication windows, missing-data policy)
 live in the repository under `docs/design/dataset/`; this table is an orientation aid.
@@ -44,12 +44,12 @@ To maintain datasets from your own provider, see
 ## Maintaining data
 
 ```bash
-findata dataset update   findata/tushare/daily_basic                      # parameterless, uses settings
-findata dataset complete findata/tushare/daily_basic --symbols 600000.SH \
+findata dataset update   findata-plugins/tushare_daily_basic                      # parameterless, uses settings
+findata dataset complete findata-plugins/tushare_daily_basic --symbols 600000.SH \
     --from 2026-01-01 --to 2026-07-01                             # explicit backfill
-findata dataset refresh  findata/tushare/daily_basic --symbols 600000.SH \
+findata dataset refresh  findata-plugins/tushare_daily_basic --symbols 600000.SH \
     --from 2026-06-01 --to 2026-07-01                             # refetch inside coverage
-findata dataset reset    findata/tushare/daily_basic --yes                # start over, keep settings
+findata dataset reset    findata-plugins/tushare_daily_basic --yes                # start over, keep settings
 ```
 
 - `update` is parameterless: the plugin derives its work from the dataset's configured
@@ -89,6 +89,6 @@ deduplicated after validation. Empty or reversed ranges and empty required array
 rejected.
 
 `tushare:000300.SH` preserves an exact provider index reference materialized in
-`findata/tushare/index_basic`. The bare reference in `complete` means the historical constituent
+`findata-plugins/tushare_index_basic`. The bare reference in `complete` means the historical constituent
 union over that backfill range; `@latest` is a plugin-defined suffix for future updates.
 Core findata configuration and CLI code treat both values as opaque strings.

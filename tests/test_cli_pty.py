@@ -110,7 +110,7 @@ class PtyTaskFollowTests(unittest.TestCase):
         master, process = self.spawn_on_pty(
             "task",
             "run",
-            "findata/tushare/trade_cal",
+            "findata-plugins/tushare_trade_cal",
             "complete",
             "--params",
             '{"exchanges":["SSE","SZSE"],"timerange":"2015-01-01:2026-07-20"}',
@@ -130,13 +130,13 @@ class PtyTaskFollowTests(unittest.TestCase):
         # removed before the persistent terminal summary.
         self.assertIn("\x1b[", transcript)
         self.assertIn("Task succeeded", transcript)
-        self.assertIn("findata/tushare/trade_cal", transcript)
+        self.assertIn("findata-plugins/tushare_trade_cal", transcript)
 
     def test_sigint_detaches_from_a_real_terminal(self) -> None:
         master, process = self.spawn_on_pty(
             "task",
             "run",
-            "findata/tushare/trade_cal",
+            "findata-plugins/tushare_trade_cal",
             "complete",
             "--params",
             '{"exchanges":["SSE","SZSE"],"timerange":"2015-01-01:2026-07-20"}',

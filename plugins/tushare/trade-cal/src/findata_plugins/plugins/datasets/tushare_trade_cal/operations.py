@@ -1,4 +1,4 @@
-"""Operation engine and runtime for the findata/tushare/trade_cal dataset."""
+"""Operation engine and runtime for the findata-plugins/tushare_trade_cal dataset."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from typing import Any
 
 from findata.contracts import DateRange, OperandError, OperationReporter
 from findata.storage import DataMutation, Workspace
-from findata_tushare_provider.engine import (
+from findata_plugins.shared.engine import (
     _OPERAND_HELP,
     _batch_due,
     _format_range,
@@ -21,15 +21,15 @@ from findata_tushare_provider.engine import (
     _string_array,
     _timerange,
     OperationWorker,
+    TushareClient,
     TushareDatasetService,
     dataset_storage_state,
 )
-from findata_tushare_provider.provider import TushareClient
-from findata_tushare_trade_cal import TRADE_CAL_SPEC
+from findata_plugins.plugins.datasets.tushare_trade_cal import TRADE_CAL_SPEC
 
 
 class TradeCalDatasetService(TushareDatasetService):
-    """Synchronous operation engine for the findata/tushare/trade_cal dataset."""
+    """Synchronous operation engine for the findata-plugins/tushare_trade_cal dataset."""
 
     spec = TRADE_CAL_SPEC
 
@@ -146,6 +146,23 @@ class TradeCalDatasetRuntime:
             now=now.isoformat() if now is not None else None,
         )
 
+    def operation_service(
+        self,
+        workspace: Workspace,
+        client: TushareClient,
+        *,
+        today: date,
+        now: datetime,
+        settings: dict[str, Any] | None,
+    ) -> TradeCalDatasetService:
+        return TradeCalDatasetService(
+            workspace,
+            client,
+            today=today,
+            now=now,
+            settings=settings,
+        )
+
     def normalize_operation(
         self,
         operation: str,
@@ -223,7 +240,7 @@ def dataset_description(workspace: Workspace, *, provider_ready: bool) -> dict[s
     state, publication_id = dataset_storage_state(workspace, TRADE_CAL_SPEC.name)
     return {
         "name": TRADE_CAL_SPEC.name,
-        "provider": "tushare",
+        "provider": "findata-plugins/tushare",
         "provider_ready": provider_ready,
         "capabilities": dict(TRADE_CAL_SPEC.capabilities),
         "dependencies": [],

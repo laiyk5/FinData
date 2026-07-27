@@ -7,6 +7,7 @@ import nox
 
 SUPPORTED_PYTHONS = ("3.11", "3.12", "3.13", "3.14")
 PLUGIN_DISTRIBUTIONS = (
+    "plugins/tushare/shared",
     "plugins/tushare/provider",
     "plugins/tushare/trade-cal",
     "plugins/tushare/stock-basic",

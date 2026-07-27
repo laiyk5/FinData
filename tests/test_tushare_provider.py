@@ -8,17 +8,17 @@ from typing import Any
 import pyarrow as pa
 from urllib.error import URLError
 
-from findata_tushare_daily_basic import DAILY_BASIC_SPEC
-from findata_tushare_index_basic import INDEX_BASIC_SPEC
-from findata_tushare_index_weight import INDEX_WEIGHT_SPEC
-from findata_tushare_provider.provider import (
+from findata_plugins.plugins.datasets.tushare_daily_basic import DAILY_BASIC_SPEC
+from findata_plugins.plugins.datasets.tushare_index_basic import INDEX_BASIC_SPEC
+from findata_plugins.plugins.datasets.tushare_index_weight import INDEX_WEIGHT_SPEC
+from findata_plugins.shared.engine import (
     ProviderProtocolError,
     TushareAPIError,
     TushareClient,
 )
-from findata_tushare_provider.testing import MockTushareTransport
-from findata_tushare_stock_basic import STOCK_BASIC_SPEC
-from findata_tushare_trade_cal import TRADE_CAL_SPEC
+from findata_plugins.shared.testing import MockTushareTransport
+from findata_plugins.plugins.datasets.tushare_stock_basic import STOCK_BASIC_SPEC
+from findata_plugins.plugins.datasets.tushare_trade_cal import TRADE_CAL_SPEC
 
 TUSHARE_DATASETS = {
     spec.name: spec
@@ -45,7 +45,7 @@ class TushareClientTests(unittest.TestCase):
 
         client = TushareClient(token="secret", transport=transport, permit=permit)
         client.query(
-            TUSHARE_DATASETS["findata/tushare/trade_cal"],
+            TUSHARE_DATASETS["findata-plugins/tushare_trade_cal"],
             exchange="SSE",
             start_date="20260720",
             end_date="20260720",
@@ -75,7 +75,7 @@ class TushareClientTests(unittest.TestCase):
             retry_delay=0,
         )
         table = client.query(
-            TUSHARE_DATASETS["findata/tushare/trade_cal"],
+            TUSHARE_DATASETS["findata-plugins/tushare_trade_cal"],
             exchange="SSE",
             start_date="20260720",
             end_date="20260720",
@@ -88,7 +88,7 @@ class TushareClientTests(unittest.TestCase):
         transport.empty_next("daily_basic")
         client = TushareClient(token="secret", transport=transport)
         table = client.query(
-            TUSHARE_DATASETS["findata/tushare/daily_basic"],
+            TUSHARE_DATASETS["findata-plugins/tushare_daily_basic"],
             ts_code="000001.SZ",
             start_date="20260717",
             end_date="20260717",
@@ -101,7 +101,7 @@ class TushareClientTests(unittest.TestCase):
 
     def test_builds_official_envelope_without_exposing_token(self) -> None:
         table = self.client.query(
-            TUSHARE_DATASETS["findata/tushare/trade_cal"],
+            TUSHARE_DATASETS["findata-plugins/tushare_trade_cal"],
             exchange="SSE",
             start_date="20260717",
             end_date="20260720",
@@ -121,7 +121,7 @@ class TushareClientTests(unittest.TestCase):
 
     def test_stock_basic_mock_filters_status_and_exchange(self) -> None:
         table = self.client.query(
-            TUSHARE_DATASETS["findata/tushare/stock_basic"],
+            TUSHARE_DATASETS["findata-plugins/tushare_stock_basic"],
             list_status="L",
             exchange="SSE",
         )
@@ -133,7 +133,7 @@ class TushareClientTests(unittest.TestCase):
 
     def test_index_weight_mock_is_monthly_and_adds_effective_month(self) -> None:
         table = self.client.query(
-            TUSHARE_DATASETS["findata/tushare/index_weight"],
+            TUSHARE_DATASETS["findata-plugins/tushare_index_weight"],
             index_code="000300.SH",
             start_date="20260601",
             end_date="20260630",
@@ -148,13 +148,13 @@ class TushareClientTests(unittest.TestCase):
 
     def test_daily_basic_mock_is_deterministic_and_nullable(self) -> None:
         first = self.client.query(
-            TUSHARE_DATASETS["findata/tushare/daily_basic"],
+            TUSHARE_DATASETS["findata-plugins/tushare_daily_basic"],
             ts_code="000001.SZ",
             start_date="20260717",
             end_date="20260720",
         )
         second = self.client.query(
-            TUSHARE_DATASETS["findata/tushare/daily_basic"],
+            TUSHARE_DATASETS["findata-plugins/tushare_daily_basic"],
             ts_code="000001.SZ",
             start_date="20260717",
             end_date="20260720",
@@ -169,7 +169,9 @@ class TushareClientTests(unittest.TestCase):
 
         with self.assertRaises(TushareAPIError) as caught:
             self.client.query(
-                TUSHARE_DATASETS["findata/tushare/stock_basic"], list_status="L", exchange="SSE"
+                TUSHARE_DATASETS["findata-plugins/tushare_stock_basic"],
+                list_status="L",
+                exchange="SSE",
             )
 
         self.assertEqual(caught.exception.code, 2002)
@@ -180,7 +182,7 @@ class TushareClientTests(unittest.TestCase):
 
         with self.assertRaises(ProviderProtocolError):
             self.client.query(
-                TUSHARE_DATASETS["findata/tushare/trade_cal"],
+                TUSHARE_DATASETS["findata-plugins/tushare_trade_cal"],
                 exchange="SSE",
                 start_date="20260720",
                 end_date="20260720",

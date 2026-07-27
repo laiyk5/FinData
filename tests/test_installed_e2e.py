@@ -61,18 +61,18 @@ class InstalledQuickStartTests(unittest.TestCase):
                 configured = cli(
                     "config",
                     "set",
-                    "provider.tushare.token",
+                    "provider.findata-plugins/tushare.token",
                     "--stdin",
                     input_text="findata-mock:fail=daily_basic@2\n",
                 )
                 self.assertEqual(configured.returncode, 0, configured.stderr)
-                provider = cli("--format", "json", "provider", "check", "tushare")
+                provider = cli("--format", "json", "provider", "check", "findata-plugins/tushare")
                 self.assertEqual(provider.returncode, 0, provider.stderr)
                 self.assertEqual(json.loads(provider.stdout)["mode"], "mock")
                 metadata = cli(
                     "task",
                     "run",
-                    "findata/tushare/index_basic",
+                    "findata-plugins/tushare_index_basic",
                     "complete",
                     "--param",
                     "indexes=tushare:000300.SH",
@@ -82,7 +82,7 @@ class InstalledQuickStartTests(unittest.TestCase):
                 setting = cli(
                     "config",
                     "set",
-                    "dataset.findata/tushare/daily_basic.update_symbols",
+                    "dataset.findata-plugins/tushare_daily_basic.update_symbols",
                     "--value-json",
                     '["tushare:000300.SH@latest"]',
                 )
@@ -93,7 +93,7 @@ class InstalledQuickStartTests(unittest.TestCase):
                     "json",
                     "task",
                     "run",
-                    "findata/tushare/daily_basic",
+                    "findata-plugins/tushare_daily_basic",
                     "complete",
                     "--param",
                     "symbols=tushare:000300.SH",
@@ -106,7 +106,7 @@ class InstalledQuickStartTests(unittest.TestCase):
                 self.assertEqual(json.loads(failed.stdout)["status"], "failed")
                 self.assertEqual(
                     DataLoader(workspace)
-                    .dataset("findata/tushare/daily_basic")
+                    .dataset("findata-plugins/tushare_daily_basic")
                     .coverage()
                     .column("key")
                     .to_pylist(),
@@ -116,7 +116,7 @@ class InstalledQuickStartTests(unittest.TestCase):
                 configured = cli(
                     "config",
                     "set",
-                    "provider.tushare.token",
+                    "provider.findata-plugins/tushare.token",
                     "--stdin",
                     input_text="findata-mock\n",
                 )
@@ -126,7 +126,7 @@ class InstalledQuickStartTests(unittest.TestCase):
                 self.assertEqual(json.loads(resumed.stdout)["result"]["fetched_requests"], 2)
                 table = (
                     DataLoader(workspace)
-                    .dataset("findata/tushare/daily_basic")
+                    .dataset("findata-plugins/tushare_daily_basic")
                     .query(
                         keys=["000001.SZ", "600000.SH", "600519.SH"],
                         time_range=("2026-06-29", "2026-07-04"),
@@ -134,7 +134,7 @@ class InstalledQuickStartTests(unittest.TestCase):
                     )
                 )
                 self.assertEqual(table.num_rows, 15)
-                cron = cli("cron", "enable", "findata/tushare/daily_basic")
+                cron = cli("cron", "enable", "findata-plugins/tushare_daily_basic")
                 self.assertEqual(cron.returncode, 0, cron.stderr)
                 self.assertIn("Enabled", cron.stdout)
             finally:

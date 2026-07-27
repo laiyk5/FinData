@@ -145,7 +145,7 @@ module directly — discovery crosses the boundary through entry points only.
 Behavior splits into two protocols, both in `findata.plugins`.
 
 **`ProviderRuntime`** — provider scope only (reference:
-`findata_tushare_provider.provider.TushareProviderRuntime`):
+`findata_plugins.plugins.providers.tushare.provider.TushareProviderRuntime`):
 
 | method | called for |
 | --- | --- |
@@ -218,8 +218,8 @@ importing that dependency's plugin or opening its database.
 ## Reference implementation
 
 The built-in Tushare plugins are the canonical example of every rule on this page and
-ship as separate distributions: `findata_tushare_provider` (provider contract, runtime,
-transport, limiter, shared operation engine) and one `findata_tushare_<dataset>` package
+ship as separate distributions: `findata_plugins.shared` (provider contract, runtime,
+transport, limiter, shared operation engine) and one `findata_plugins.plugins.datasets.tushare_<dataset>` package
 per dataset (spec, operations, settings, dependencies). The contributor-facing rules —
 what a plugin must declare and what it must never do — are owned by `docs/DEV.md` and
 `docs/design/` in the repository.

@@ -303,6 +303,14 @@ class FindataServer:
                 return name, parts[len(name_parts) :]
         return None
 
+    def _match_provider(self, parts: list[str]) -> tuple[str, list[str]] | None:
+        """Greedy-match a registered provider name against path parts (longest first)."""
+        for name in sorted(self.providers, key=lambda item: item.count("/"), reverse=True):
+            name_parts = name.split("/")
+            if parts[: len(name_parts)] == name_parts:
+                return name, parts[len(name_parts) :]
+        return None
+
     def _resolve_dependency(
         self, parent: str, target: str, requirement: dict[str, object]
     ) -> tuple[str, dict[str, object]]:
@@ -591,33 +599,6 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                 if method == "GET" and parts == ["v1", "config", "keys"]:
                     self._send(HTTPStatus.OK, {"items": _declared_config_keys(app)})
                     return
-                if (
-                    method == "GET"
-                    and len(parts) == 4
-                    and parts[:2] == ["v1", "providers"]
-                    and parts[3] == "check"
-                ):
-                    provider_id = parts[2]
-                    try:
-                        provider = app.providers[provider_id]
-                    except KeyError as exc:
-                        raise ValueError(f"unknown provider {provider_id!r}") from exc
-                    runtime = provider.runtime
-                    assert runtime is not None
-                    ready = bool(runtime.ready(app.workspace, app.provider_mode))
-                    mock = bool(runtime.is_mock(app.workspace, app.provider_mode))
-                    if ready and not mock:
-                        runtime.probe(app.workspace, today=app.today)
-                    self._send(
-                        HTTPStatus.OK,
-                        {
-                            "provider": provider_id,
-                            "ready": ready,
-                            "authenticated": (ready and not mock) if not mock else None,
-                            "mode": "mock" if mock else "real",
-                        },
-                    )
-                    return
                 if method == "GET" and parts == ["v1", "providers"]:
                     self._send(
                         HTTPStatus.OK,
@@ -642,32 +623,48 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                         },
                     )
                     return
-                if method == "GET" and len(parts) == 3 and parts[:2] == ["v1", "providers"]:
-                    provider_id = parts[2]
-                    try:
-                        provider = app.providers[provider_id]
-                    except KeyError as exc:
-                        raise ValueError(f"unknown provider {provider_id!r}") from exc
+                if method == "GET" and parts[:2] == ["v1", "providers"] and len(parts) > 2:
+                    provider_match = app._match_provider(parts[2:])
+                    if provider_match is None:
+                        raise ValueError(f"unknown provider {'/'.join(parts[2:])!r}")
+                    provider_id, provider_tail = provider_match
+                    provider = app.providers[provider_id]
                     runtime = provider.runtime
                     assert runtime is not None
-                    configured = app.provider_mode == "mock" or any(
-                        app.workspace.get_config(f"provider.{provider_id}.{field}") is not None
-                        for field in provider.secret_fields
-                    )
-                    self._send(
-                        HTTPStatus.OK,
-                        {
-                            "name": provider_id,
-                            "ready": bool(runtime.ready(app.workspace, app.provider_mode)),
-                            "configured": configured,
-                            "mode": (
-                                "mock"
-                                if runtime.is_mock(app.workspace, app.provider_mode)
-                                else "real"
-                            ),
-                        },
-                    )
-                    return
+                    if provider_tail == ["check"]:
+                        ready = bool(runtime.ready(app.workspace, app.provider_mode))
+                        mock = bool(runtime.is_mock(app.workspace, app.provider_mode))
+                        if ready and not mock:
+                            runtime.probe(app.workspace, today=app.today)
+                        self._send(
+                            HTTPStatus.OK,
+                            {
+                                "provider": provider_id,
+                                "ready": ready,
+                                "authenticated": (ready and not mock) if not mock else None,
+                                "mode": "mock" if mock else "real",
+                            },
+                        )
+                        return
+                    if not provider_tail:
+                        configured = app.provider_mode == "mock" or any(
+                            app.workspace.get_config(f"provider.{provider_id}.{field}") is not None
+                            for field in provider.secret_fields
+                        )
+                        self._send(
+                            HTTPStatus.OK,
+                            {
+                                "name": provider_id,
+                                "ready": bool(runtime.ready(app.workspace, app.provider_mode)),
+                                "configured": configured,
+                                "mode": (
+                                    "mock"
+                                    if runtime.is_mock(app.workspace, app.provider_mode)
+                                    else "real"
+                                ),
+                            },
+                        )
+                        return
                 if method == "GET" and parts == ["v1", "datasets"]:
                     self._send(
                         HTTPStatus.OK,

@@ -7,10 +7,10 @@ for `update`.
 
 ```bash
 findata cron ls                                  # schedules, enabled state, last/next run
-findata cron enable  findata/tushare/daily_basic
-findata cron disable findata/tushare/daily_basic
-findata cron set     findata/tushare/daily_basic --expression "30 18 * * 1-5" --timezone Asia/Shanghai
-findata cron reset   findata/tushare/daily_basic         # restore the plugin's suggested schedule
+findata cron enable  findata-plugins/tushare_daily_basic
+findata cron disable findata-plugins/tushare_daily_basic
+findata cron set     findata-plugins/tushare_daily_basic --expression "30 18 * * 1-5" --timezone Asia/Shanghai
+findata cron reset   findata-plugins/tushare_daily_basic         # restore the plugin's suggested schedule
 ```
 
 `cron ls` shows enabled state, schedule source (default or override), last run, and next

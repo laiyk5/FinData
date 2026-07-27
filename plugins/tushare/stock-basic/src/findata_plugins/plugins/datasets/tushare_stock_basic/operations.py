@@ -1,4 +1,4 @@
-"""Operation engine and runtime for the findata/tushare/stock_basic dataset."""
+"""Operation engine and runtime for the findata-plugins/tushare_stock_basic dataset."""
 
 from __future__ import annotations
 
@@ -11,19 +11,19 @@ import pyarrow as pa
 
 from findata.contracts import OperandError, OperationReporter
 from findata.storage import Workspace
-from findata_tushare_provider.engine import (
+from findata_plugins.shared.engine import (
     _merge_tables,
     _require_no_operands,
     OperationWorker,
+    TushareClient,
     TushareDatasetService,
     dataset_storage_state,
 )
-from findata_tushare_provider.provider import TushareClient
-from findata_tushare_stock_basic import STOCK_BASIC_SPEC
+from findata_plugins.plugins.datasets.tushare_stock_basic import STOCK_BASIC_SPEC
 
 
 class StockBasicDatasetService(TushareDatasetService):
-    """Synchronous operation engine for the findata/tushare/stock_basic dataset."""
+    """Synchronous operation engine for the findata-plugins/tushare_stock_basic dataset."""
 
     spec = STOCK_BASIC_SPEC
 
@@ -35,7 +35,7 @@ class StockBasicDatasetService(TushareDatasetService):
 
     def _stock_basic(self, operation: str, operands: dict[str, Any]) -> str:
         if operation != "update":
-            raise OperandError("findata/tushare/stock_basic supports only update")
+            raise OperandError("findata-plugins/tushare_stock_basic supports only update")
         _require_no_operands(operands)
         tables: list[pa.Table] = []
         jobs = [
@@ -108,6 +108,23 @@ class StockBasicDatasetRuntime:
             now=now.isoformat() if now is not None else None,
         )
 
+    def operation_service(
+        self,
+        workspace: Workspace,
+        client: TushareClient,
+        *,
+        today: date,
+        now: datetime,
+        settings: dict[str, Any] | None,
+    ) -> StockBasicDatasetService:
+        return StockBasicDatasetService(
+            workspace,
+            client,
+            today=today,
+            now=now,
+            settings=settings,
+        )
+
     def normalize_operation(
         self,
         operation: str,
@@ -176,7 +193,7 @@ def dataset_description(workspace: Workspace, *, provider_ready: bool) -> dict[s
     state, publication_id = dataset_storage_state(workspace, STOCK_BASIC_SPEC.name)
     return {
         "name": STOCK_BASIC_SPEC.name,
-        "provider": "tushare",
+        "provider": "findata-plugins/tushare",
         "provider_ready": provider_ready,
         "capabilities": dict(STOCK_BASIC_SPEC.capabilities),
         "dependencies": [],

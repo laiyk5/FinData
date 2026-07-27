@@ -24,23 +24,23 @@ _DATASET_COMPONENT = re.compile(r"[a-z][a-z0-9_-]*\Z")
 def validate_dataset_name(value: str) -> tuple[str, ...]:
     """Return the components of a full dataset name, or raise ValueError.
 
-    A dataset name is ``<author>/<free/path/...>``: the first component is the
-    publisher namespace; everything below it is author-chosen classification
-    that core treats as opaque.
+    A dataset name is ``<package-namespace>/<local-name>``: the first component
+    is the namespace of the Python package the plugin lives in; the rest is the
+    plugin's local name within that namespace.
     """
     components = tuple(str(value).split("/"))
-    if len(components) < 2 or any(
+    if len(components) != 2 or any(
         not _DATASET_COMPONENT.fullmatch(component) for component in components
     ):
         raise ValueError(
-            f"invalid dataset name {value!r}; expected <author>/<path> with "
+            f"invalid dataset name {value!r}; expected <namespace>/<name> with "
             "lowercase [a-z0-9_-] components"
         )
     return components
 
 
-def dataset_author(name: str) -> str:
-    """The publisher namespace (first component) of a full dataset name."""
+def plugin_namespace(name: str) -> str:
+    """The package namespace (first component) of a plugin full name."""
     return str(name).split("/", 1)[0]
 
 

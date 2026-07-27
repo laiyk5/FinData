@@ -17,8 +17,8 @@ no command for revealing a stored secret, and literal secrets are rejected on th
 line — use one of:
 
 ```bash
-findata config set provider.tushare.token --stdin          # paste; not in shell history
-findata config set provider.tushare.token --env TUSHARE_TOKEN   # environment reference
+findata config set provider.findata-plugins/tushare.token --stdin          # paste; not in shell history
+findata config set provider.findata-plugins/tushare.token --env TUSHARE_TOKEN   # environment reference
 ```
 
 `--env` stores a reference to an environment variable and is the recommended form for
@@ -38,7 +38,7 @@ update readiness: `update` is not ready while it is unconfigured, and clients wa
 about unconfigured required settings.
 
 ```bash
-findata config set dataset.findata/tushare/daily_basic.update_symbols \
+findata config set dataset.findata-plugins/tushare_daily_basic.update_symbols \
   --value-json '["tushare:000300.SH@latest"]'
 ```
 

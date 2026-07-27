@@ -46,8 +46,8 @@ Every dataset has a deterministic mock generator matching its schema and respons
 - per-index metadata materialization and refresh, exact provider-ID preservation, unknown
   references, rejection of empty or mismatched responses, no implicit market enumeration, and the
   distinction between metadata presence and confirmed `index_weight` availability;
-- `findata/tushare/index_basic.update` refreshing only materialized references and
-  `findata/tushare/index_weight.complete` never mutating `update_indexes`;
+- `findata-plugins/tushare_index_basic.update` refreshing only materialized references and
+  `findata-plugins/tushare_index_weight.complete` never mutating `update_indexes`;
 
 A provider-family harness may share envelope and failure simulation, but row generation remains dataset-specific.
 
@@ -78,7 +78,7 @@ After a change appears complete, run a minimal representative operation and quer
 E2E tests use real user surfaces. CLI tests execute commands and inspect stdout, stderr, exit codes, and structured output. The WebUI is verified at three levels: `tests/test_webui_static.py` covers token-free static-asset serving, path-traversal rejection, SPA fallback, and continued `/v1` authentication; `nox -s webui` runs the vitest unit suite (API client, schema-driven form mapping, polling) and the production build; and a browser-driven E2E opens the built UI against a mock-provider server and exercises login, operation submission, live task following, cron enabling, and event acknowledgement.
 
 The primary required E2E scenario is the workflow in [the quick start](site/get-started/quickstart.md): configure a
-mocked Tushare provider, materialize one exact index reference, backfill `findata/tushare/daily_basic`,
+mocked Tushare provider, materialize one exact index reference, backfill `findata-plugins/tushare_daily_basic`,
 configure the plugin's `update_symbols`, fulfill dependencies, query covered data, enable cron,
 inject a failure, and verify that rerunning resumes unresolved intervals.
 
@@ -303,11 +303,11 @@ gate regardless of elapsed time.
 ## Package-boundary checks
 
 Automated import checks reject dependencies from core modules to `findata.toolkit` or any plugin
-distribution (for example `findata_tushare_provider`). They also reject toolkit imports of concrete
-plugins and plugin-distribution imports of another plugin family's distributions or retired core
-plugin paths. Positive
+distribution (for example `findata_plugins.shared`). They also reject toolkit imports of concrete
+plugins and plugin-subpackage imports of another plugin subpackage or retired core plugin paths.
+Positive
 fixtures prove provider-then-dataset entry-point discovery and that a dataset plugin can use public
-core contracts, its provider adapter, and selected toolkit components. Explicit mock mode is the
+core contracts, its namespace's shared subpackage, and selected toolkit components. Explicit mock mode is the
 only runtime path allowed to load a plugin's testing module.
 
 Packaging tests assert the pinned Hatchling backend and explicit `src/findata` wheel selection. A

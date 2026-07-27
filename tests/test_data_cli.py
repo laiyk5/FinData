@@ -16,14 +16,15 @@ import pyarrow.parquet as pq
 from findata.cli import main as cli_main
 from findata.plugins import register_plugins
 from findata.storage import Workspace
-from findata_tushare_daily_basic import daily_basic_plugin
-from findata_tushare_daily_basic.operations import DailyBasicDatasetService
-from findata_tushare_index_basic import index_basic_plugin
-from findata_tushare_index_weight import index_weight_plugin
-from findata_tushare_provider.provider import TushareClient, tushare_provider_plugin
-from findata_tushare_provider.testing import MockTushareTransport
-from findata_tushare_stock_basic import stock_basic_plugin
-from findata_tushare_trade_cal import trade_cal_plugin
+from findata_plugins.plugins.datasets.tushare_daily_basic import daily_basic_plugin
+from findata_plugins.plugins.datasets.tushare_daily_basic.operations import DailyBasicDatasetService
+from findata_plugins.plugins.datasets.tushare_index_basic import index_basic_plugin
+from findata_plugins.plugins.datasets.tushare_index_weight import index_weight_plugin
+from findata_plugins.plugins.providers.tushare.provider import tushare_provider_plugin
+from findata_plugins.shared.engine import TushareClient
+from findata_plugins.shared.testing import MockTushareTransport
+from findata_plugins.plugins.datasets.tushare_stock_basic import stock_basic_plugin
+from findata_plugins.plugins.datasets.tushare_trade_cal import trade_cal_plugin
 
 
 def register_v1_datasets(workspace: Workspace) -> None:
@@ -71,7 +72,7 @@ class DataCLITests(unittest.TestCase):
                 str(self.root),
                 "data",
                 "preview",
-                "findata/tushare/daily_basic",
+                "findata-plugins/tushare_daily_basic",
                 "--keys",
                 "600000.SH",
                 "--limit",
@@ -92,7 +93,7 @@ class DataCLITests(unittest.TestCase):
                 str(self.root),
                 "data",
                 "preview",
-                "findata/tushare/daily_basic",
+                "findata-plugins/tushare_daily_basic",
                 "--keys",
                 "600000.SH",
                 "--columns",
@@ -116,7 +117,7 @@ class DataCLITests(unittest.TestCase):
                 str(self.root),
                 "data",
                 "preview",
-                "findata/tushare/daily_basic",
+                "findata-plugins/tushare_daily_basic",
                 "--require-coverage",
                 "--allow-partial",
             ],
@@ -134,7 +135,7 @@ class DataCLITests(unittest.TestCase):
                 str(self.root),
                 "data",
                 "coverage",
-                "findata/tushare/daily_basic",
+                "findata-plugins/tushare_daily_basic",
                 "--from",
                 "2026-07-01",
             ],
@@ -157,7 +158,7 @@ class DataCLITests(unittest.TestCase):
                 str(self.root),
                 "data",
                 "export",
-                "findata/tushare/daily_basic",
+                "findata-plugins/tushare_daily_basic",
                 "--output-format",
                 "parquet",
                 "--output",
@@ -179,7 +180,7 @@ class DataCLITests(unittest.TestCase):
                 str(self.root),
                 "data",
                 "export",
-                "findata/tushare/daily_basic",
+                "findata-plugins/tushare_daily_basic",
                 "--keys",
                 "600000.SH",
                 "--from",
@@ -200,8 +201,8 @@ class DataCLITests(unittest.TestCase):
         self.assertIn("partial coverage allowed", stderr.getvalue())
 
     def test_snapshot_writes_default_and_explicit_destinations(self) -> None:
-        default = self.run_json("data", "snapshot", "findata/tushare/daily_basic")
-        default_path = self.root / "snapshots" / "findata/tushare/daily_basic.duckdb"
+        default = self.run_json("data", "snapshot", "findata-plugins/tushare_daily_basic")
+        default_path = self.root / "snapshots" / "findata-plugins/tushare_daily_basic.duckdb"
         # The CLI resolves the workspace, so compare resolved paths.
         self.assertEqual(Path(default["path"]), default_path.resolve())
         self.assertTrue(default_path.is_file())
@@ -211,12 +212,12 @@ class DataCLITests(unittest.TestCase):
 
         explicit = self.root / "copies" / "daily.duckdb"
         result = self.run_json(
-            "data", "snapshot", "findata/tushare/daily_basic", "--output", str(explicit)
+            "data", "snapshot", "findata-plugins/tushare_daily_basic", "--output", str(explicit)
         )
         self.assertEqual(result["path"], str(explicit))
         self.assertTrue(explicit.is_file())
         # A repeated snapshot replaces the previous copy atomically.
-        second = self.run_json("data", "snapshot", "findata/tushare/daily_basic")
+        second = self.run_json("data", "snapshot", "findata-plugins/tushare_daily_basic")
         self.assertEqual(Path(second["path"]), default_path.resolve())
 
     def run_json(self, *arguments: str) -> dict[str, object]:
@@ -233,7 +234,7 @@ class DataCLITests(unittest.TestCase):
         return json.loads(stdout.getvalue())
 
     def test_schema_preview_and_coverage_need_no_running_server(self) -> None:
-        schema = self.run_json("data", "schema", "findata/tushare/daily_basic")
+        schema = self.run_json("data", "schema", "findata-plugins/tushare_daily_basic")
         self.assertEqual(schema["partition_key"], "ts_code")
         self.assertEqual(schema["time_field"], "trade_date")
         self.assertIn("trade_date", [field["name"] for field in schema["fields"]])
@@ -241,7 +242,7 @@ class DataCLITests(unittest.TestCase):
         preview = self.run_json(
             "data",
             "preview",
-            "findata/tushare/daily_basic",
+            "findata-plugins/tushare_daily_basic",
             "--keys",
             "600000.SH",
             "--from",
@@ -255,7 +256,7 @@ class DataCLITests(unittest.TestCase):
         self.assertEqual(set(preview["items"][0]), {"ts_code", "trade_date", "close"})
 
         coverage = self.run_json(
-            "data", "coverage", "findata/tushare/daily_basic", "--keys", "600000.SH"
+            "data", "coverage", "findata-plugins/tushare_daily_basic", "--keys", "600000.SH"
         )
         self.assertEqual(coverage["items"][0]["start"], "2026-07-13")
         self.assertEqual(coverage["items"][0]["end"], "2026-07-18")
@@ -263,7 +264,7 @@ class DataCLITests(unittest.TestCase):
         checked = self.run_json(
             "data",
             "coverage",
-            "findata/tushare/daily_basic",
+            "findata-plugins/tushare_daily_basic",
             "--keys",
             "600000.SH",
             "--from",
@@ -284,7 +285,7 @@ class DataCLITests(unittest.TestCase):
                 str(self.root),
                 "data",
                 "coverage",
-                "findata/tushare/daily_basic",
+                "findata-plugins/tushare_daily_basic",
                 "--keys",
                 "600000.SH",
                 "--from",
@@ -309,14 +310,14 @@ class DataCLITests(unittest.TestCase):
                 "_complete",
                 "data",
                 "preview",
-                "findata/tushare/daily_",
+                "findata-plugins/tushare_daily_",
             ],
             stdout=completion,
             stderr=io.StringIO(),
             environ={},
         )
         self.assertEqual(code, 0)
-        self.assertEqual(completion.getvalue(), "findata/tushare/daily_basic\n")
+        self.assertEqual(completion.getvalue(), "findata-plugins/tushare_daily_basic\n")
 
         completion = io.StringIO()
         code = cli_main(
@@ -332,7 +333,7 @@ class DataCLITests(unittest.TestCase):
             environ={},
         )
         self.assertEqual(code, 0)
-        self.assertIn("findata/tushare/daily_basic", completion.getvalue().splitlines())
+        self.assertIn("findata-plugins/tushare_daily_basic", completion.getvalue().splitlines())
         self.assertNotIn("STALE_DIRECTORY", completion.getvalue().splitlines())
 
         completion = io.StringIO()
@@ -343,14 +344,14 @@ class DataCLITests(unittest.TestCase):
                 "_complete",
                 "task",
                 "run",
-                "findata/tushare/daily_",
+                "findata-plugins/tushare_daily_",
             ],
             stdout=completion,
             stderr=io.StringIO(),
             environ={},
         )
         self.assertEqual(code, 0)
-        self.assertEqual(completion.getvalue(), "findata/tushare/daily_basic\n")
+        self.assertEqual(completion.getvalue(), "findata-plugins/tushare_daily_basic\n")
 
     def test_unknown_dataset_reads_never_create_directories(self) -> None:
         datasets = self.root / "datasets"
@@ -401,7 +402,7 @@ class DataCLITests(unittest.TestCase):
                         str(self.root),
                         "data",
                         "export",
-                        "findata/tushare/daily_basic",
+                        "findata-plugins/tushare_daily_basic",
                         "--keys",
                         "600000.SH",
                         "--from",
@@ -439,7 +440,7 @@ class DataCLITests(unittest.TestCase):
                 str(self.root),
                 "data",
                 "export",
-                "findata/tushare/daily_basic",
+                "findata-plugins/tushare_daily_basic",
                 "--output-format",
                 "csv",
                 "--output",
@@ -462,7 +463,7 @@ class DataCLITests(unittest.TestCase):
                 str(self.root),
                 "data",
                 "preview",
-                "findata/tushare/daily_basic",
+                "findata-plugins/tushare_daily_basic",
                 "--keys",
                 "600000.SH",
                 "--from",
@@ -476,12 +477,14 @@ class DataCLITests(unittest.TestCase):
         )
         self.assertEqual(code, 1)
         self.assertIn("2026-07-10", stderr.getvalue())
-        self.assertIn("findata dataset complete findata/tushare/daily_basic", stderr.getvalue())
+        self.assertIn(
+            "findata dataset complete findata-plugins/tushare_daily_basic", stderr.getvalue()
+        )
 
         partial = self.run_json(
             "data",
             "preview",
-            "findata/tushare/daily_basic",
+            "findata-plugins/tushare_daily_basic",
             "--keys",
             "600000.SH",
             "--from",
@@ -502,7 +505,7 @@ class DataCLITests(unittest.TestCase):
                 str(self.root),
                 "data",
                 "export",
-                "findata/tushare/daily_basic",
+                "findata-plugins/tushare_daily_basic",
                 "--keys",
                 "600000.SH",
                 "--from",
@@ -535,7 +538,7 @@ class DataCLITests(unittest.TestCase):
                 str(self.root),
                 "data",
                 "export",
-                "findata/tushare/daily_basic",
+                "findata-plugins/tushare_daily_basic",
                 "--columns",
                 "unknown",
                 "--output-format",

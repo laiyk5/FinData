@@ -108,7 +108,7 @@ Every plan is independently checked before any provider request: each rectangle 
 capacity constraint, and each unpruned demand segment is covered by at least one rectangle. A
 failed check is a planning error, never a partial fetch.
 
-## Worked example: `findata/tushare/daily_basic`
+## Worked example: `findata-plugins/tushare_daily_basic`
 
 Verified provider contract: `symbol_set_cap: 1` (multi-code queries return empty), `row_limit:
 6000`, and a full-market `trade_date` form returning ~5,500 rows (a safe declared bound under
@@ -131,6 +131,6 @@ adds a handful of requests on first run only.
 
 ## Example
 
-For `findata/tushare/daily_basic`, the symbol cap is one and the row limit is 6000; calendar pruning
+For `findata-plugins/tushare_daily_basic`, the symbol cap is one and the row limit is 6000; calendar pruning
 removes closed dates, and long per-symbol ranges split before their conservative row estimate
 reaches the limit.

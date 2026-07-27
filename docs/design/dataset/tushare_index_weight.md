@@ -1,4 +1,4 @@
-# `findata/tushare/index_weight`
+# `findata-plugins/tushare_index_weight`
 
 API: <https://tushare.pro/document/2?doc_id=96>
 
@@ -20,7 +20,7 @@ calendar month; a month with no row means that no new snapshot superseded the pr
 - **observation domain**: dated provider snapshots; monthly intervals are request and logical query
   buckets, not assertions that every month must contain a new snapshot
 - **settings**:
-  - `dataset.findata/tushare/index_weight.update_indexes`: required nonempty array for `update`; the plugin
+  - `dataset.findata-plugins/tushare_index_weight.update_indexes`: required nonempty array for `update`; the plugin
     accepts unsuffixed, metadata-validated `tushare:<ts_code>` references, preserves the exact
     Tushare code, and owns all parsing and validation
 - **publication timing**: future months are before-window; the current month is mutable and is
@@ -31,7 +31,7 @@ calendar month; a month with no row means that no new snapshot superseded the pr
 - **request plan**: one exact-code request per uncovered index/month using that month's inclusive
   provider endpoints; always re-fetch an intersecting current month; constituent fulfillment also
   fetches the preceding month needed to establish the initial as-of state
-- **dependencies**: `findata/tushare/index_basic` for provider-reference validation
+- **dependencies**: `findata-plugins/tushare_index_basic` for provider-reference validation
 - **dependency fulfillment**: `{indexes, timerange}` requires both fields, resolves each qualified
   reference to its exact materialized `ts_code`, expands the half-open range to intersecting calendar
   months plus one predecessor month, and maps missing query coverage to `complete`
@@ -49,7 +49,7 @@ calendar month; a month with no row means that no new snapshot superseded the pr
   deliberately refreshable
 - **status fields**: resolved month range and constituent count per index
 
-No operation infers an index from `findata/tushare/index_basic` metadata. `complete` and dependency
+No operation infers an index from `findata-plugins/tushare_index_basic` metadata. `complete` and dependency
 fulfillment process only their explicit references and never add them to `update_indexes`; only a
 user configuration mutation changes the maintained set.
 

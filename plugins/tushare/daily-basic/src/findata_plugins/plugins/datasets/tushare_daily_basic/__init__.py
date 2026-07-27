@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 import pyarrow as pa
 
 from findata.contracts import DatasetSpec, provider_date
-from findata_tushare_provider.engine import (
+from findata_plugins.shared.engine import (
     _SECURITY,
     _index_code,
     _materialized,
@@ -65,7 +65,7 @@ def _daily_basic_schema() -> pa.Schema:
 
 
 DAILY_BASIC_SPEC = DatasetSpec(
-    name="findata/tushare/daily_basic",
+    name="findata-plugins/tushare_daily_basic",
     api_name="daily_basic",
     schema=_daily_basic_schema(),
     provider_fields=DAILY_BASIC_FIELDS,
@@ -86,7 +86,7 @@ def _normalize_update_symbols(value: Any, workspace: Any) -> list[str]:
         code = _index_code(item, allow_suffix=True)
         if not _materialized(workspace, code):
             raise ValueError(
-                f"unknown index {item!r}; run findata/tushare/index_basic complete for it first"
+                f"unknown index {item!r}; run findata-plugins/tushare_index_basic complete for it first"
             )
     return sorted(values)
 
@@ -94,7 +94,9 @@ def _normalize_update_symbols(value: Any, workspace: Any) -> list[str]:
 def daily_basic_plugin() -> "DatasetPlugin":
     from findata.plugins import DatasetPlugin, SettingSpec
 
-    from findata_tushare_daily_basic.operations import DailyBasicDatasetRuntime
+    from findata_plugins.plugins.datasets.tushare_daily_basic.operations import (
+        DailyBasicDatasetRuntime,
+    )
 
     return DatasetPlugin(
         name=DAILY_BASIC_SPEC.name,
@@ -102,9 +104,9 @@ def daily_basic_plugin() -> "DatasetPlugin":
         spec=DAILY_BASIC_SPEC,
         runtime=DailyBasicDatasetRuntime(),
         operations=("update", "complete", "refresh"),
-        dependencies=("tushare/trade_cal", "tushare/index_basic", "tushare/index_weight"),
+        dependencies=("tushare_trade_cal", "tushare_index_basic", "tushare_index_weight"),
         settings={
-            "dataset.findata/tushare/daily_basic.update_symbols": SettingSpec(
+            "dataset.findata-plugins/tushare_daily_basic.update_symbols": SettingSpec(
                 schema={"type": "array", "minItems": 1, "items": {"type": "string"}},
                 normalize=_normalize_update_symbols,
                 help="Direct securities and Tushare constituent selectors maintained by update.",

@@ -12,9 +12,9 @@ import duckdb
 import pyarrow as pa
 
 from findata import DataLoader
-from findata_tushare_daily_basic import DAILY_BASIC_SPEC
-from findata_tushare_index_basic import INDEX_BASIC_SPEC
-from findata_tushare_index_weight import INDEX_WEIGHT_SPEC
+from findata_plugins.plugins.datasets.tushare_daily_basic import DAILY_BASIC_SPEC
+from findata_plugins.plugins.datasets.tushare_index_basic import INDEX_BASIC_SPEC
+from findata_plugins.plugins.datasets.tushare_index_weight import INDEX_WEIGHT_SPEC
 from findata.loader import (
     CoverageError,
     DatasetNotFoundError,
@@ -22,11 +22,11 @@ from findata.loader import (
     IncompatibleDatasetError,
     UnsupportedCoverageError,
 )
-from findata_tushare_provider.provider import TushareClient
+from findata_plugins.shared.engine import TushareClient
 from findata.storage import Coverage, DataMutation, DatasetGate, StorageError, Workspace
-from findata_tushare_provider.testing import MockTushareTransport
-from findata_tushare_stock_basic import STOCK_BASIC_SPEC
-from findata_tushare_trade_cal import TRADE_CAL_SPEC
+from findata_plugins.shared.testing import MockTushareTransport
+from findata_plugins.plugins.datasets.tushare_stock_basic import STOCK_BASIC_SPEC
+from findata_plugins.plugins.datasets.tushare_trade_cal import TRADE_CAL_SPEC
 
 TUSHARE_DATASETS = {
     spec.name: spec
@@ -58,7 +58,7 @@ class StorageLoaderTests(unittest.TestCase):
         return self.root / "datasets" / name / "dataset.duckdb"
 
     def test_registration_creates_one_uninitialized_database_for_every_shape(self) -> None:
-        for name in ("findata/tushare/stock_basic", "findata/tushare/daily_basic"):
+        for name in ("findata-plugins/tushare_stock_basic", "findata-plugins/tushare_daily_basic"):
             database = self.register(name)
             self.assertTrue(database.is_file())
             self.assertFalse((database.parent / "manifest.json").exists())
@@ -70,7 +70,9 @@ class StorageLoaderTests(unittest.TestCase):
                     "from _findata_metadata"
                 ).fetchone()
             self.assertEqual(tables, {"_findata_coverage", "_findata_metadata", "data"})
-            expected_policy = "accept-empty" if name == "findata/tushare/daily_basic" else "strict"
+            expected_policy = (
+                "accept-empty" if name == "findata-plugins/tushare_daily_basic" else "strict"
+            )
             self.assertEqual(metadata, ("uninitialized", 0, None, expected_policy))
             with self.assertRaises(DatasetNotReadyError):
                 DataLoader(self.root).dataset(name).query()
@@ -90,37 +92,39 @@ class StorageLoaderTests(unittest.TestCase):
                 pass
         self.assertFalse((self.root / "datasets" / "nobody").exists())
 
-        unsafe_spec = replace(TUSHARE_DATASETS["findata/tushare/stock_basic"], name="../outside")
+        unsafe_spec = replace(
+            TUSHARE_DATASETS["findata-plugins/tushare_stock_basic"], name="../outside"
+        )
         with self.assertRaises(ValueError):
             self.workspace.register_dataset("../outside", spec=unsafe_spec)
         self.assertFalse(outside.exists())
 
     def test_read_does_not_repair_a_missing_registered_gate(self) -> None:
-        database = self.register("findata/tushare/stock_basic")
+        database = self.register("findata-plugins/tushare_stock_basic")
         gate = database.parent / "gate.lock"
         gate.unlink()
 
         with self.assertRaisesRegex(RuntimeError, "missing its storage gate"):
-            DataLoader(self.root).dataset("findata/tushare/stock_basic").describe()
+            DataLoader(self.root).dataset("findata-plugins/tushare_stock_basic").describe()
 
         self.assertFalse(gate.exists())
 
     def test_complete_replacement_queries_with_uniform_sql_semantics(self) -> None:
-        database = self.register("findata/tushare/trade_cal")
+        database = self.register("findata-plugins/tushare_trade_cal")
         table = self.client.query(
-            TUSHARE_DATASETS["findata/tushare/trade_cal"],
+            TUSHARE_DATASETS["findata-plugins/tushare_trade_cal"],
             exchange="SSE",
             start_date="20260717",
             end_date="20260720",
         )
-        publication = self.workspace.publisher("findata/tushare/trade_cal").publish(
+        publication = self.workspace.publisher("findata-plugins/tushare_trade_cal").publish(
             table,
             coverage=[Coverage("SSE", date(2026, 7, 17), date(2026, 7, 21))],
         )
 
         result = (
             DataLoader(self.root)
-            .dataset("findata/tushare/trade_cal")
+            .dataset("findata-plugins/tushare_trade_cal")
             .query(
                 keys=["SSE"],
                 time_range=("2026-07-17", "2026-07-21"),
@@ -137,15 +141,15 @@ class StorageLoaderTests(unittest.TestCase):
             [{"exchange": "SSE", "cal_date": date(2026, 7, 20), "is_open": True}],
         )
         self.assertEqual(
-            DataLoader(self.root).dataset("findata/tushare/trade_cal").publication_id,
+            DataLoader(self.root).dataset("findata-plugins/tushare_trade_cal").publication_id,
             publication,
         )
         self.assertTrue(database.is_file())
 
     def test_key_and_range_mutations_preserve_unaffected_rows(self) -> None:
-        self.register("findata/tushare/daily_basic")
+        self.register("findata-plugins/tushare_daily_basic")
         first = self.client.query(
-            TUSHARE_DATASETS["findata/tushare/daily_basic"],
+            TUSHARE_DATASETS["findata-plugins/tushare_daily_basic"],
             ts_code="000001.SZ",
             start_date="20260701",
             end_date="20260703",
@@ -153,7 +157,7 @@ class StorageLoaderTests(unittest.TestCase):
         other = first.set_column(
             0, "ts_code", pa.array(["600000.SH"] * first.num_rows, type=pa.string())
         ).cast(first.schema)
-        publisher = self.workspace.publisher("findata/tushare/daily_basic")
+        publisher = self.workspace.publisher("findata-plugins/tushare_daily_basic")
         publisher.publish(
             pa.concat_tables([first, other]),
             coverage=[
@@ -178,13 +182,13 @@ class StorageLoaderTests(unittest.TestCase):
             ],
         )
 
-        reader = DataLoader(self.root).dataset("findata/tushare/daily_basic")
+        reader = DataLoader(self.root).dataset("findata-plugins/tushare_daily_basic")
         self.assertEqual(reader.query(keys=["000001.SZ"]).to_pylist(), replacement.to_pylist())
         self.assertEqual(reader.query(keys=["600000.SH"]).num_rows, other.num_rows)
 
     def test_primary_key_mutation_replaces_only_incoming_keys(self) -> None:
-        self.register("findata/tushare/index_basic")
-        spec = TUSHARE_DATASETS["findata/tushare/index_basic"]
+        self.register("findata-plugins/tushare_index_basic")
+        spec = TUSHARE_DATASETS["findata-plugins/tushare_index_basic"]
         rows = [
             {
                 "ts_code": "000300.SH",
@@ -227,20 +231,20 @@ class StorageLoaderTests(unittest.TestCase):
         self.assertEqual(result.column("name").to_pylist(), ["new", "keep"])
 
     def test_coverage_error_identifies_exact_left_and_right_gaps(self) -> None:
-        self.register("findata/tushare/trade_cal")
+        self.register("findata-plugins/tushare_trade_cal")
         table = self.client.query(
-            TUSHARE_DATASETS["findata/tushare/trade_cal"],
+            TUSHARE_DATASETS["findata-plugins/tushare_trade_cal"],
             exchange="SSE",
             start_date="20260718",
             end_date="20260719",
         )
-        self.workspace.publisher("findata/tushare/trade_cal").publish(
+        self.workspace.publisher("findata-plugins/tushare_trade_cal").publish(
             table,
             coverage=[Coverage("SSE", date(2026, 7, 18), date(2026, 7, 20))],
         )
 
         with self.assertRaises(CoverageError) as caught:
-            DataLoader(self.root).dataset("findata/tushare/trade_cal").query(
+            DataLoader(self.root).dataset("findata-plugins/tushare_trade_cal").query(
                 keys=["SSE"],
                 time_range=("2026-07-17", "2026-07-21"),
                 require_coverage=True,
@@ -256,49 +260,53 @@ class StorageLoaderTests(unittest.TestCase):
         )
 
     def test_non_coverage_dataset_rejects_coverage_enforcement(self) -> None:
-        self.register("findata/tushare/stock_basic")
+        self.register("findata-plugins/tushare_stock_basic")
         table = self.client.query(
-            TUSHARE_DATASETS["findata/tushare/stock_basic"], list_status="L", exchange="SSE"
+            TUSHARE_DATASETS["findata-plugins/tushare_stock_basic"], list_status="L", exchange="SSE"
         )
-        self.workspace.publisher("findata/tushare/stock_basic").publish(table)
+        self.workspace.publisher("findata-plugins/tushare_stock_basic").publish(table)
         with self.assertRaises(UnsupportedCoverageError):
-            DataLoader(self.root).dataset("findata/tushare/stock_basic").query(
+            DataLoader(self.root).dataset("findata-plugins/tushare_stock_basic").query(
                 keys=["600000.SH"],
                 time_range=("2026-01-01", "2026-02-01"),
                 require_coverage=True,
             )
 
     def test_fault_before_commit_rolls_back_data_coverage_and_revision(self) -> None:
-        self.register("findata/tushare/stock_basic")
+        self.register("findata-plugins/tushare_stock_basic")
         first = self.client.query(
-            TUSHARE_DATASETS["findata/tushare/stock_basic"], list_status="L", exchange="SSE"
+            TUSHARE_DATASETS["findata-plugins/tushare_stock_basic"], list_status="L", exchange="SSE"
         )
-        first_id = self.workspace.publisher("findata/tushare/stock_basic").publish(first)
+        first_id = self.workspace.publisher("findata-plugins/tushare_stock_basic").publish(first)
 
         def fail(point: str) -> None:
             if point == "before_commit":
                 raise RuntimeError("injected crash")
 
         second = self.client.query(
-            TUSHARE_DATASETS["findata/tushare/stock_basic"], list_status="L", exchange="SZSE"
+            TUSHARE_DATASETS["findata-plugins/tushare_stock_basic"],
+            list_status="L",
+            exchange="SZSE",
         )
         with self.assertRaisesRegex(RuntimeError, "injected crash"):
-            self.workspace.publisher("findata/tushare/stock_basic", fault_injector=fail).publish(
-                second
-            )
+            self.workspace.publisher(
+                "findata-plugins/tushare_stock_basic", fault_injector=fail
+            ).publish(second)
 
-        dataset = DataLoader(self.root).dataset("findata/tushare/stock_basic")
+        dataset = DataLoader(self.root).dataset("findata-plugins/tushare_stock_basic")
         self.assertEqual(dataset.publication_id, first_id)
         self.assertEqual(dataset.query().column("exchange").to_pylist(), ["SSE"])
 
     def test_fault_after_commit_leaves_complete_new_revision(self) -> None:
-        self.register("findata/tushare/stock_basic")
+        self.register("findata-plugins/tushare_stock_basic")
         first = self.client.query(
-            TUSHARE_DATASETS["findata/tushare/stock_basic"], list_status="L", exchange="SSE"
+            TUSHARE_DATASETS["findata-plugins/tushare_stock_basic"], list_status="L", exchange="SSE"
         )
-        old_id = self.workspace.publisher("findata/tushare/stock_basic").publish(first)
+        old_id = self.workspace.publisher("findata-plugins/tushare_stock_basic").publish(first)
         second = self.client.query(
-            TUSHARE_DATASETS["findata/tushare/stock_basic"], list_status="L", exchange="SZSE"
+            TUSHARE_DATASETS["findata-plugins/tushare_stock_basic"],
+            list_status="L",
+            exchange="SZSE",
         )
 
         def fail(point: str) -> None:
@@ -306,22 +314,24 @@ class StorageLoaderTests(unittest.TestCase):
                 raise RuntimeError(point)
 
         with self.assertRaisesRegex(RuntimeError, "after_commit"):
-            self.workspace.publisher("findata/tushare/stock_basic", fault_injector=fail).publish(
-                second
-            )
-        reader = DataLoader(self.root).dataset("findata/tushare/stock_basic")
+            self.workspace.publisher(
+                "findata-plugins/tushare_stock_basic", fault_injector=fail
+            ).publish(second)
+        reader = DataLoader(self.root).dataset("findata-plugins/tushare_stock_basic")
         self.assertNotEqual(reader.publication_id, old_id)
         self.assertEqual(reader.query().column("exchange").to_pylist(), ["SZSE"])
 
     def test_batch_reader_holds_database_gate_while_writer_waits(self) -> None:
-        self.register("findata/tushare/stock_basic")
+        self.register("findata-plugins/tushare_stock_basic")
         first = self.client.query(
-            TUSHARE_DATASETS["findata/tushare/stock_basic"], list_status="L", exchange="SSE"
+            TUSHARE_DATASETS["findata-plugins/tushare_stock_basic"], list_status="L", exchange="SSE"
         )
-        publisher = self.workspace.publisher("findata/tushare/stock_basic")
+        publisher = self.workspace.publisher("findata-plugins/tushare_stock_basic")
         first_id = publisher.publish(first)
         second = self.client.query(
-            TUSHARE_DATASETS["findata/tushare/stock_basic"], list_status="L", exchange="SZSE"
+            TUSHARE_DATASETS["findata-plugins/tushare_stock_basic"],
+            list_status="L",
+            exchange="SZSE",
         )
         committed = threading.Event()
 
@@ -331,7 +341,7 @@ class StorageLoaderTests(unittest.TestCase):
 
         with (
             DataLoader(self.root)
-            .dataset("findata/tushare/stock_basic")
+            .dataset("findata-plugins/tushare_stock_basic")
             .iter_batches(batch_size=1) as batches
         ):
             self.assertEqual(batches.publication_id, first_id)
@@ -344,18 +354,18 @@ class StorageLoaderTests(unittest.TestCase):
         self.assertTrue(committed.is_set())
 
     def test_batch_reader_streams_without_using_eager_query_path(self) -> None:
-        self.register("findata/tushare/daily_basic")
+        self.register("findata-plugins/tushare_daily_basic")
         table = self.client.query(
-            TUSHARE_DATASETS["findata/tushare/daily_basic"],
+            TUSHARE_DATASETS["findata-plugins/tushare_daily_basic"],
             ts_code="000001.SZ",
             start_date="20260701",
             end_date="20260710",
         )
-        self.workspace.publisher("findata/tushare/daily_basic").publish(
+        self.workspace.publisher("findata-plugins/tushare_daily_basic").publish(
             table,
             coverage=[Coverage("000001.SZ", date(2026, 7, 1), date(2026, 7, 11))],
         )
-        reader = DataLoader(self.root).dataset("findata/tushare/daily_basic")
+        reader = DataLoader(self.root).dataset("findata-plugins/tushare_daily_basic")
 
         def eager_must_not_run(*_args: object, **_kwargs: object) -> pa.Table:
             raise AssertionError("streaming used eager query")
@@ -375,7 +385,7 @@ class StorageLoaderTests(unittest.TestCase):
         self.assertEqual(sum(batch.num_rows for batch in materialized), 3)
 
     def test_recovery_removes_only_findata_temporary_inputs(self) -> None:
-        database = self.register("findata/tushare/stock_basic")
+        database = self.register("findata-plugins/tushare_stock_basic")
         temporary = database.parent / ".findata-input-abandoned.arrow"
         temporary.write_bytes(b"partial")
 
@@ -386,36 +396,38 @@ class StorageLoaderTests(unittest.TestCase):
         self.assertTrue(database.exists())
 
     def test_recovery_warns_and_times_out_naming_the_gate_holding_dataset(self) -> None:
-        database = self.register("findata/tushare/stock_basic")
+        database = self.register("findata-plugins/tushare_stock_basic")
 
         with DatasetGate(database.parent / "gate.lock", exclusive=False):
             with self.assertLogs("findata.storage", level="WARNING") as captured:
-                with self.assertRaisesRegex(StorageError, "findata/tushare/stock_basic"):
+                with self.assertRaisesRegex(StorageError, "findata-plugins/tushare_stock_basic"):
                     self.workspace.recover_storage(timeout=0.2)
 
         warnings = [line for line in captured.output if "WARNING" in line]
         self.assertEqual(len(warnings), 1)
-        self.assertIn("findata/tushare/stock_basic", warnings[0])
+        self.assertIn("findata-plugins/tushare_stock_basic", warnings[0])
         self.assertIn("waiting", warnings[0])
         self.assertTrue(database.exists())
 
     def test_export_snapshot_copies_consistent_wal_free_database(self) -> None:
-        self.register("findata/tushare/trade_cal")
+        self.register("findata-plugins/tushare_trade_cal")
         table = self.client.query(
-            TUSHARE_DATASETS["findata/tushare/trade_cal"],
+            TUSHARE_DATASETS["findata-plugins/tushare_trade_cal"],
             exchange="SSE",
             start_date="20260717",
             end_date="20260720",
         )
-        self.workspace.publisher("findata/tushare/trade_cal").publish(
+        self.workspace.publisher("findata-plugins/tushare_trade_cal").publish(
             table,
             coverage=[Coverage("SSE", date(2026, 7, 17), date(2026, 7, 21))],
         )
-        committed = DataLoader(self.root).dataset("findata/tushare/trade_cal").query()
+        committed = DataLoader(self.root).dataset("findata-plugins/tushare_trade_cal").query()
 
-        snapshot = self.workspace.export_snapshot("findata/tushare/trade_cal")
+        snapshot = self.workspace.export_snapshot("findata-plugins/tushare_trade_cal")
 
-        self.assertEqual(snapshot, self.root / "snapshots" / "findata/tushare/trade_cal.duckdb")
+        self.assertEqual(
+            snapshot, self.root / "snapshots" / "findata-plugins/tushare_trade_cal.duckdb"
+        )
         self.assertTrue(snapshot.is_file())
         self.assertFalse(Path(f"{snapshot}.wal").exists())
         self.assertNotIn(snapshot, list((self.root / "datasets").rglob("*")))
@@ -426,21 +438,21 @@ class StorageLoaderTests(unittest.TestCase):
         self.assertEqual(state, ("ready",))
 
     def test_export_snapshot_waits_for_batch_reader(self) -> None:
-        self.register("findata/tushare/stock_basic")
+        self.register("findata-plugins/tushare_stock_basic")
         table = self.client.query(
-            TUSHARE_DATASETS["findata/tushare/stock_basic"], list_status="L", exchange="SSE"
+            TUSHARE_DATASETS["findata-plugins/tushare_stock_basic"], list_status="L", exchange="SSE"
         )
-        self.workspace.publisher("findata/tushare/stock_basic").publish(table)
+        self.workspace.publisher("findata-plugins/tushare_stock_basic").publish(table)
         destination = self.root / "reader-snapshot.duckdb"
         done = threading.Event()
 
         def snapshot() -> None:
-            self.workspace.export_snapshot("findata/tushare/stock_basic", destination)
+            self.workspace.export_snapshot("findata-plugins/tushare_stock_basic", destination)
             done.set()
 
         with (
             DataLoader(self.root)
-            .dataset("findata/tushare/stock_basic")
+            .dataset("findata-plugins/tushare_stock_basic")
             .iter_batches(batch_size=1) as batches
         ):
             thread = threading.Thread(target=snapshot, daemon=True)
@@ -455,14 +467,16 @@ class StorageLoaderTests(unittest.TestCase):
         self.assertEqual(rows, (table.num_rows,))
 
     def test_export_snapshot_is_consistent_under_concurrent_writer(self) -> None:
-        self.register("findata/tushare/stock_basic")
+        self.register("findata-plugins/tushare_stock_basic")
         first = self.client.query(
-            TUSHARE_DATASETS["findata/tushare/stock_basic"], list_status="L", exchange="SSE"
+            TUSHARE_DATASETS["findata-plugins/tushare_stock_basic"], list_status="L", exchange="SSE"
         )
         second = self.client.query(
-            TUSHARE_DATASETS["findata/tushare/stock_basic"], list_status="L", exchange="SZSE"
+            TUSHARE_DATASETS["findata-plugins/tushare_stock_basic"],
+            list_status="L",
+            exchange="SZSE",
         )
-        publisher = self.workspace.publisher("findata/tushare/stock_basic")
+        publisher = self.workspace.publisher("findata-plugins/tushare_stock_basic")
         publisher.publish(first)
         stop = threading.Event()
 
@@ -476,7 +490,7 @@ class StorageLoaderTests(unittest.TestCase):
         try:
             for index in range(3):
                 snapshot = self.workspace.export_snapshot(
-                    "findata/tushare/stock_basic", self.root / f"snapshot-{index}.duckdb"
+                    "findata-plugins/tushare_stock_basic", self.root / f"snapshot-{index}.duckdb"
                 )
                 with duckdb.connect(str(snapshot), read_only=True) as connection:
                     exchanges = {
@@ -493,22 +507,24 @@ class StorageLoaderTests(unittest.TestCase):
             thread.join(timeout=5)
 
     def test_export_snapshot_rejects_unknown_dataset_and_live_destination(self) -> None:
-        database = self.register("findata/tushare/stock_basic")
+        database = self.register("findata-plugins/tushare_stock_basic")
         with self.assertRaisesRegex(StorageError, "unknown dataset"):
             self.workspace.export_snapshot("nobody/not_registered")
         self.assertFalse((self.root / "snapshots").exists())
         with self.assertRaises(ValueError):
-            self.workspace.export_snapshot("findata/tushare/stock_basic", database)
+            self.workspace.export_snapshot("findata-plugins/tushare_stock_basic", database)
 
     def test_write_gate_wait_is_cancelable_before_connection_opens(self) -> None:
-        self.register("findata/tushare/stock_basic")
+        self.register("findata-plugins/tushare_stock_basic")
         first = self.client.query(
-            TUSHARE_DATASETS["findata/tushare/stock_basic"], list_status="L", exchange="SSE"
+            TUSHARE_DATASETS["findata-plugins/tushare_stock_basic"], list_status="L", exchange="SSE"
         )
-        publisher = self.workspace.publisher("findata/tushare/stock_basic")
+        publisher = self.workspace.publisher("findata-plugins/tushare_stock_basic")
         publication = publisher.publish(first)
         second = self.client.query(
-            TUSHARE_DATASETS["findata/tushare/stock_basic"], list_status="L", exchange="SZSE"
+            TUSHARE_DATASETS["findata-plugins/tushare_stock_basic"],
+            list_status="L",
+            exchange="SZSE",
         )
         waiting: list[str] = []
 
@@ -516,10 +532,11 @@ class StorageLoaderTests(unittest.TestCase):
             pass
 
         with DatasetGate(
-            self.root / "datasets" / "findata/tushare/stock_basic" / "gate.lock", exclusive=False
+            self.root / "datasets" / "findata-plugins/tushare_stock_basic" / "gate.lock",
+            exclusive=False,
         ):
             cancelable = self.workspace.publisher(
-                "findata/tushare/stock_basic",
+                "findata-plugins/tushare_stock_basic",
                 checkpoint=lambda: (_ for _ in ()).throw(Canceled()),
                 waiting=waiting.append,
             )
@@ -527,37 +544,38 @@ class StorageLoaderTests(unittest.TestCase):
                 cancelable.publish(second)
         self.assertEqual(waiting, ["write_gate"])
         self.assertEqual(
-            DataLoader(self.root).dataset("findata/tushare/stock_basic").publication_id,
+            DataLoader(self.root).dataset("findata-plugins/tushare_stock_basic").publication_id,
             publication,
         )
 
     def test_incompatible_storage_metadata_is_read_only_failure(self) -> None:
-        database = self.register("findata/tushare/stock_basic")
+        database = self.register("findata-plugins/tushare_stock_basic")
         with duckdb.connect(str(database)) as connection:
             connection.execute("update _findata_metadata set storage_adapter_version = 999")
         before = database.read_bytes()
 
         with self.assertRaises(IncompatibleDatasetError):
-            DataLoader(self.root).dataset("findata/tushare/stock_basic").query()
+            DataLoader(self.root).dataset("findata-plugins/tushare_stock_basic").query()
 
         self.assertEqual(database.read_bytes(), before)
 
     def test_reset_replaces_only_the_selected_database(self) -> None:
-        first_db = self.register("findata/tushare/stock_basic")
-        second_db = self.register("findata/tushare/index_basic")
+        first_db = self.register("findata-plugins/tushare_stock_basic")
+        second_db = self.register("findata-plugins/tushare_index_basic")
         table = self.client.query(
-            TUSHARE_DATASETS["findata/tushare/stock_basic"], list_status="L", exchange="SSE"
+            TUSHARE_DATASETS["findata-plugins/tushare_stock_basic"], list_status="L", exchange="SSE"
         )
-        self.workspace.publisher("findata/tushare/stock_basic").publish(table)
+        self.workspace.publisher("findata-plugins/tushare_stock_basic").publish(table)
         second_before = second_db.read_bytes()
 
         self.workspace.reset_dataset(
-            "findata/tushare/stock_basic", spec=TUSHARE_DATASETS["findata/tushare/stock_basic"]
+            "findata-plugins/tushare_stock_basic",
+            spec=TUSHARE_DATASETS["findata-plugins/tushare_stock_basic"],
         )
 
         self.assertTrue(first_db.exists())
         with self.assertRaises(DatasetNotReadyError):
-            DataLoader(self.root).dataset("findata/tushare/stock_basic").query()
+            DataLoader(self.root).dataset("findata-plugins/tushare_stock_basic").query()
         self.assertEqual(second_db.read_bytes(), second_before)
 
 

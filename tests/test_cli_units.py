@@ -249,8 +249,10 @@ class DeclaredSecretKeyTests(unittest.TestCase):
             return self.response
 
     def test_declared_keys_are_built_from_provider_metadata(self) -> None:
-        client = self.StubClient({"items": [{"name": "tushare", "secret_fields": ["token"]}]})
-        self.assertEqual(_declared_secret_keys(client), {"provider.tushare.token"})
+        client = self.StubClient(
+            {"items": [{"name": "findata-plugins/tushare", "secret_fields": ["token"]}]}
+        )
+        self.assertEqual(_declared_secret_keys(client), {"provider.findata-plugins/tushare.token"})
 
     def test_declared_keys_degrade_to_empty_on_failure(self) -> None:
         self.assertEqual(_declared_secret_keys(self.StubClient(error=RuntimeError("down"))), set())
