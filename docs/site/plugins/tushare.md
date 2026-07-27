@@ -12,7 +12,8 @@ pip install -e ./plugins/tushare/provider \
              ./plugins/tushare/stock-basic \
              ./plugins/tushare/index-basic \
              ./plugins/tushare/index-weight \
-             ./plugins/tushare/daily-basic
+             ./plugins/tushare/daily-basic \
+             ./plugins/tushare/fund-daily
 ```
 
 See [Installation](../get-started/installation.md).
@@ -26,6 +27,7 @@ See [Installation](../get-started/installation.md).
 | `findata-plugins/tushare_index_basic` | Index metadata | `update`, `complete` | — |
 | `findata-plugins/tushare_index_weight` | Monthly index constituent weights | `update`, `complete` | `update_indexes` |
 | `findata-plugins/tushare_daily_basic` | Daily valuation metrics (PE, PB, turnover, …) | `update`, `complete`, `refresh` | `update_symbols` |
+| `findata-plugins/tushare_fund_daily` | ETF daily market data (open, close, high, low, volume, …) | `update`, `complete`, `refresh` | `update_symbols` |
 
 ## Provider
 

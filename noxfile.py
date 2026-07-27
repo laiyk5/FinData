@@ -14,6 +14,7 @@ PLUGIN_DISTRIBUTIONS = (
     "plugins/tushare/index-basic",
     "plugins/tushare/index-weight",
     "plugins/tushare/daily-basic",
+    "plugins/tushare/fund-daily",
     "plugins/tushare/umbrella",
     "plugins/demo/provider",
     "plugins/demo/datasets/demo-hello",

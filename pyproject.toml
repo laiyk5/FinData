@@ -38,6 +38,7 @@ dev = [
   # findata itself never depends on a plugin distribution.
   "findata-plugins==0.4.0",
   "findata-plugins-datasets-tushare-daily-basic==0.4.0",
+  "findata-plugins-datasets-tushare-fund-daily==0.4.0",
   "findata-plugins-datasets-tushare-index-basic==0.4.0",
   "findata-plugins-datasets-tushare-index-weight==0.4.0",
   "findata-plugins-datasets-tushare-stock-basic==0.4.0",
@@ -69,6 +70,7 @@ members = [
   "plugins/tushare/index-basic",
   "plugins/tushare/index-weight",
   "plugins/tushare/daily-basic",
+  "plugins/tushare/fund-daily",
   "plugins/tushare/umbrella",
   "plugins/demo/provider",
   "plugins/demo/datasets/demo-hello",
@@ -85,6 +87,7 @@ findata-plugins-datasets-tushare-stock-basic = { workspace = true }
 findata-plugins-datasets-tushare-index-basic = { workspace = true }
 findata-plugins-datasets-tushare-index-weight = { workspace = true }
 findata-plugins-datasets-tushare-daily-basic = { workspace = true }
+findata-plugins-datasets-tushare-fund-daily = { workspace = true }
 findata-plugins = { workspace = true }
 findata-test-providers-demo = { workspace = true }
 findata-test-datasets-demo-hello = { workspace = true }

@@ -123,6 +123,8 @@ class MockTushareTransport:
         items = [[row.get(field) for field in fields] for row in rows]
         return {"code": 0, "msg": None, "data": {"fields": fields, "items": items}}
 
+    _FUND_DAILY_FLOAT_FIELDS = ("open", "high", "low", "close", "pre_close", "change", "pct_chg", "vol", "amount")
+
     def _rows(self, api_name: str, params: Mapping[str, Any]) -> list[dict[str, Any]]:
         generators = {
             "trade_cal": self._trade_cal,
@@ -130,6 +132,7 @@ class MockTushareTransport:
             "index_basic": self._index_basic,
             "index_weight": self._index_weight,
             "daily_basic": self._daily_basic,
+            "fund_daily": self._fund_daily,
         }
         try:
             return generators[api_name](params)
@@ -240,6 +243,33 @@ class MockTushareTransport:
                         "limit_status": seed % 7,
                     }
                     for index, field in enumerate(_DAILY_BASIC_FLOAT_FIELDS):
+                        row[field] = round((seed % 1000 + index + 1) / 10.0, 4)
+                    result.append(row)
+            cursor += timedelta(days=1)
+        return result
+
+    def _fund_daily(self, params: Mapping[str, Any]) -> list[dict[str, Any]]:
+        symbols = (
+            [str(params["ts_code"])]
+            if params.get("ts_code")
+            else ["159919.SZ", "510050.SH"]
+        )
+        if params.get("trade_date"):
+            start = end = _provider_date(params["trade_date"], fallback=self.today)
+        else:
+            start = _provider_date(params.get("start_date"), fallback=self.today)
+            end = _provider_date(params.get("end_date"), fallback=start)
+        result: list[dict[str, Any]] = []
+        cursor = start
+        while cursor <= end:
+            if cursor.weekday() < 5:
+                for symbol in symbols:
+                    seed = sum(ord(char) for char in symbol) + cursor.toordinal()
+                    row: dict[str, Any] = {
+                        "ts_code": symbol,
+                        "trade_date": _format_date(cursor),
+                    }
+                    for index, field in enumerate(self._FUND_DAILY_FLOAT_FIELDS):
                         row[field] = round((seed % 1000 + index + 1) / 10.0, 4)
                     result.append(row)
             cursor += timedelta(days=1)

@@ -123,6 +123,7 @@ class PluginRegistryTests(unittest.TestCase):
                 "index_basic",
                 "index_weight",
                 "daily_basic",
+                "fund_daily",
             )
         }
         retired_core_paths = (

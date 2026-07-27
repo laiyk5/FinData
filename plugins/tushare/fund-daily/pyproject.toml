@@ -1,0 +1,27 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "findata-plugins-datasets-tushare-fund-daily"
+version = "0.4.0"
+description = "Official Tushare fund daily (ETF) dataset plugin for findata"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+dependencies = [
+  "findata==0.4.0",
+  "findata-plugins-providers-tushare==0.4.0",
+  "findata-plugins-shared==0.4.0",
+  "pyarrow>=15",
+]
+
+[project.entry-points."findata.datasets"]
+tushare_fund_daily = "findata_plugins.plugins.datasets.tushare_fund_daily:fund_daily_plugin"
+
+[tool.hatch.build.targets.wheel]
+only-include = ["src/findata_plugins/plugins/datasets/tushare_fund_daily"]
+sources = ["src"]
+
+[tool.hatch.build.targets.sdist]
+only-include = ["src/findata_plugins/plugins/datasets/tushare_fund_daily"]
+sources = ["src"]
