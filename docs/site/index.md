@@ -13,7 +13,7 @@ data safely from Python or the command line — while the server is running.
   [demo plugins](plugins/demo.md) let you evaluate the system without any API token.
   The [official plugins](plugins/index.md) include the Tushare family for real
   Chinese A-share market data. Build your own with the
-  [Custom datasets](guide/custom-datasets.md) guide.
+  [Custom datasets](guide/custom-datasets/) guide.
 - **Transactional.** Every update is one atomic commit with declared coverage; a failed
   run resumes exactly where the data leaves off, never halfway.
 - **Runs on your schedule.** Opt-in cron jobs keep datasets current in exchange timezones.
@@ -30,7 +30,7 @@ data safely from Python or the command line — while the server is running.
   through the Web UI with the demo plugins
 - :gear: **[Server](guide/workspace.md)** — workspaces, configuration, scheduling
 - :package: **[Data](guide/providers-and-datasets.md)** — datasets, tasks, reading data, DataLoader API
-- :wrench: **[Custom datasets](guide/custom-datasets.md)** — bring your own data with a plugin
+- :wrench: **[Custom datasets](guide/custom-datasets/)** — bring your own data with a plugin
 - :computer: **[CLI reference](reference/cli.md)** — every command, output format, and exit code
 
 </div>

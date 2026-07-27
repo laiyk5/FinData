@@ -92,5 +92,5 @@ through a cross-process read-write gate — no server round-trip needed.
 
 - [Server](../guide/workspace.md) — workspace management, configuration, scheduling
 - [Data](../guide/providers-and-datasets.md) — dataset operations, tasks, reading data
-- [Custom datasets](../guide/custom-datasets.md) — write your own plugin from scratch
+- [Custom datasets](../guide/custom-datasets/) — write your own plugin from scratch
 - [Official plugins](../plugins/index.md) — the Tushare plugin family reference

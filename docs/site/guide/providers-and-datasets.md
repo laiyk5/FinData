@@ -33,7 +33,7 @@ registered. The [Official plugins](../plugins/index.md) page lists available plu
 including the evaluation datasets that work without any API token.
 
 To maintain datasets from your own provider, see
-[Custom datasets and providers](custom-datasets.md).
+[Custom datasets and providers](custom-datasets/).
 
 ## Maintaining data
 

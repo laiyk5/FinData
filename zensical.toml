@@ -15,7 +15,7 @@ nav = [
     "get-started/installation.md",
     "get-started/quickstart.md",
   ]},
-  { "Server" = [
+  { "Core Concepts" = [
     "guide/workspace.md",
     "guide/configuration.md",
     "guide/scheduling.md",
@@ -26,7 +26,13 @@ nav = [
     "guide/reading-data.md",
     "guide/dataloader.md",
   ]},
-  { "Custom datasets" = "guide/custom-datasets.md" },
+  { "Custom datasets" = [
+    { "Quick start" = "guide/custom-datasets/index.md" },
+    { "SDK reference" = "guide/custom-datasets/sdk-reference.md" },
+    { "How-to guides" = [
+      "guide/custom-datasets/how-to/test.md",
+    ]},
+  ]},
   { "Official plugins" = [
     "plugins/index.md",
     "plugins/demo.md",

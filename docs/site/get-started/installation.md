@@ -49,7 +49,7 @@ pip install -e ./plugins/demo/provider \
 Other plugin families — including the [official Tushare plugins](../plugins/index.md) —
 install the same way (`pip install -e ./path/to/plugin`); a
 workspace can block individual plugins via the `plugins.blocked` configuration key.
-See [Custom datasets and providers](../guide/custom-datasets.md).
+See [Custom datasets and providers](../guide/custom-datasets/).
 
 !!! tip
     Use a virtual environment when isolation from other Python packages is desired.
