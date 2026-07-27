@@ -761,8 +761,24 @@ class TaskRunner:
             try:
                 connection = listener.accept()
             except (socket.timeout, TimeoutError) as exc:
+                # Before giving up, check if the child process crashed.
+                detail = ""
+                if process.exitcode is not None and process.exitcode != 0:
+                    signame = ""
+                    if process.exitcode < 0:
+                        import signal as _signal
+                        for _name, _num in vars(_signal).items():
+                            if _name.startswith("SIG") and not _name.startswith("SIG_"):
+                                if _num == -process.exitcode:
+                                    signame = f" ({_name})"
+                                    break
+                    detail = (
+                        f" [child process exited with code {process.exitcode}{signame} -- "
+                        "check that findata is installed and importable in the Python "
+                        "environment of the server]"
+                    )
                 raise TaskRunnerError(
-                    "task process did not establish its authenticated channel"
+                    f"task process did not establish its authenticated channel{detail}"
                 ) from exc
             runtime.connection = connection
             with self._condition:
