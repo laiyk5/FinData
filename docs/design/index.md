@@ -25,10 +25,39 @@ Every fact has one owning document. Other documents link to it rather than copyi
 
 findata serves two purposes:
 
-1. maintain datasets through plugins that are easy to install and run;
-2. provide one DataLoader interface so readers do not need to know physical storage layouts.
+1. manage the lifecycle of **plugin distributions** that bring data sources into the
+   system — develop, install, configure, diagnose, and block them through unified tooling;
+2. manage the lifecycle of **datasets** those plugins produce — load, configure, monitor,
+   maintain, and query committed data through a uniform CLI and DataLoader interface that
+   hides the physical storage layout.
 
-The primary v1 user is a quantitative researcher who backfills daily valuation data for an index universe, opts into recurring maintenance, and queries covered data safely from Python. The story is complete when provider readiness is diagnosable, dependency data is fulfilled deterministically, failed work is resumable, automatic maintenance is explicit, and DataLoader either returns covered data or identifies exact missing intervals. The executable workflow lives in the [quick start](../site/get-started/quickstart.md).
+### Three user stories
+
+**Plugin developer** — creates a new data source by running ``findata plugin scaffold``,
+filling in the data logic, and installing the package. The plugin is auto-discovered on
+the next server start — no framework changes, no core imports. A unified SDK import
+surface (``findata.sdk``), reusable test utilities (``findata.testing``), and a base
+class (``DatasetRuntimeBase``) reduce a new plugin to 1–2 method overrides.
+
+**Dataset operator** — installs third-party or in-house plugin distributions, inspects
+available providers and datasets through the CLI or Web UI, configures credentials and
+per-dataset settings, runs backfill and update tasks, monitors progress and events,
+enables recurring schedules, and manages the workspace plugin blocklist — all through
+user-facing commands that never require reading server logs.
+
+**Data consumer** — queries committed data from Python or the command line using the
+same ``DataLoader`` interface regardless of which plugin produced it. The reader never
+imports a plugin package, never opens DuckDB directly, and requires no server round-trip
+for reads.
+
+The full story is complete when:
+
+- A plugin developer can create, install, and verify a new dataset in under five minutes
+  with only ``pip install findata`` and the scaffold command.
+- A dataset operator can inspect every installed plugin's health, diagnose a load failure
+  with a single command, and control which datasets are active — all without server logs.
+- A data consumer can discover available datasets and query any of them by name, with
+  coverage enforcement, without knowing which plugin produced the data.
 
 Features that do not materially support this story may be deferred from v1.
 
@@ -63,12 +92,23 @@ Features that do not materially support this story may be deferred from v1.
 
 ## v1 commitments and non-goals
 
-The architecture contract is closed for v1 around atomic per-dataset database revisions,
-checkpoint-batched transactions, subscriber-aware task coalescing, centralized DataLoader query
-semantics, and the dataset contracts in [dataset/index.md](dataset/index.md).
+The architecture contract is closed for v1 around:
 
-Online data-layout migration, third-party reader engines, network filesystems, Windows, automatic
-execution of missed cron jobs, and features unrelated to the primary story are v1 non-goals.
+- atomic per-dataset database revisions, checkpoint-batched transactions, subscriber-aware task
+  coalescing, centralized DataLoader query semantics, and the dataset contracts in
+  [dataset/index.md](dataset/index.md);
+- a plugin SDK (``findata.sdk``, ``findata.testing``, ``DatasetRuntimeBase``)
+  and a scaffold generator (``findata plugin scaffold``) that together make plugin creation
+  a one-command task;
+- a plugin management CLI (``findata plugin ls``, ``check``, ``blocked``) that works without
+  a server and surfaces load errors without log spelunking;
+- resilient plugin discovery that tolerates individual broken entry points without crashing
+  the server.
+
 Concrete workspace, database-metadata, plugin, task-message, event, and HTTP schemas belong in
 implementation specifications; they may choose mechanisms and encodings but may not change the
 behavior or boundaries defined here.
+
+Online data-layout migration, third-party reader engines, network filesystems, Windows, automatic
+execution of missed cron jobs, a plugin registry or marketplace, and features unrelated to the
+primary story are v1 non-goals.
