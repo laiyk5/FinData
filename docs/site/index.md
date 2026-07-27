@@ -10,9 +10,9 @@ data safely from Python or the command line — while the server is running.
 
 - **Plugin-oriented.** Datasets and providers are ordinary Python packages discovered
   through entry points; the framework installs no datasets by itself. The
-  [Tushare plugin family](plugins/index.md) backfills and refreshes trade calendars,
-  stock and index metadata, index constituents, and daily valuation metrics. Build
-  your own with the [Custom datasets](guide/custom-datasets.md) guide.
+  [official Tushare plugins](plugins/index.md) provide trade calendars, stock and index
+  metadata, index constituents, and daily valuation metrics. Build your own with the
+  [Custom datasets](guide/custom-datasets.md) guide.
 - **Transactional.** Every update is one atomic commit with declared coverage; a failed
   run resumes exactly where the data leaves off, never halfway.
 - **Runs on your schedule.** Opt-in cron jobs keep datasets current in exchange timezones.
@@ -25,8 +25,8 @@ data safely from Python or the command line — while the server is running.
 <div class="grid cards" markdown>
 
 - :rocket: **[Installation](get-started/installation.md)** — requirements and install
-- :zap: **[Quick start](get-started/quickstart.md)** — start the server and load your
-  first dataset in five minutes
+- :zap: **[Quick start](get-started/quickstart.md)** — start the server and explore
+  through the Web UI
 - :gear: **[Server](guide/workspace.md)** — workspaces, configuration, scheduling
 - :package: **[Data](guide/providers-and-datasets.md)** — datasets, tasks, reading data, DataLoader API
 - :wrench: **[Custom datasets](guide/custom-datasets.md)** — bring your own data with a plugin
@@ -37,13 +37,9 @@ data safely from Python or the command line — while the server is running.
 ## A taste
 
 ```bash
-pip install findata findata-plugins
 findata-server init ~/market-data
-findata-server start ~/market-data
-findata task run findata-plugins/tushare_daily_basic complete \
-  --param symbols=tushare:000300.SH \
-  --param timerange=2026-06-29:2026-07-04 \
-  --wait
+findata-server start ~/market-data --provider-mode mock
+# Open http://127.0.0.1:8765 in your browser
 ```
 
 ```python
@@ -56,3 +52,6 @@ table = (
     .query(keys=["600000.SH"], time_range=("2026-06-29", "2026-07-04"))
 )
 ```
+
+The DataLoader API reads committed data directly from DuckDB — no server round-trip
+required.

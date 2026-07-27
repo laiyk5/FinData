@@ -1,100 +1,84 @@
 # Quick start
 
-This walkthrough starts findata, explores a running server, runs a dataset task, and reads
-the committed data — no external credentials required.
+This walkthrough starts findata and explores the server through the Web UI — no
+external credentials required.
 
 ## 1. Install
 
 ```bash
-pip install findata
+pip install <path-to-findata>
 ```
 
 See [Installation](installation.md) for system requirements and alternative methods.
 
-## 2. Create and start the workspace
+## 2. Start the server and open the Web UI
 
 ```bash
-# Terminal 1
 findata-server init ~/market-data
-findata-server start ~/market-data
+findata-server start ~/market-data --provider-mode mock
 ```
 
 `init` creates the workspace directory and an API credential. `start` runs the server
-in the foreground and prints a readiness report with the version, workspace, and
-listening address (default `http://127.0.0.1:8765`). Leave it running.
+in the foreground with mock responses so you can explore without any API token.
+
+Open your browser to `http://127.0.0.1:8765` and paste the token from
+`~/market-data/token`. The Web UI shows the server status, registered plugins, and
+available datasets — everything is empty at first because no plugins are installed yet.
+
+Leave the server running; the Web UI polls for live updates.
 
 !!! tip
-    While the server runs, open that address in a browser and paste the token from
-    `~/market-data/token` to use the Web UI.
+    The server also serves a [REST API](../reference/cli.md) that the CLI and Web UI
+    share. The Web UI is the primary interface for exploration; the CLI is designed for
+    scripting and automation.
 
-## 3. Explore the server
+## 3. Install plugins
 
-In another terminal:
+Datasets and data sources are added by installing plugin distributions. findata ships
+with no datasets by default — plugins bring their own.
+
+From a checkout of this repository, install the official Tushare family:
 
 ```bash
-# Terminal 2
-cd ~/market-data
-findata provider ls
-findata dataset ls
+pip install -e ./plugins/tushare/provider \
+             ./plugins/tushare/trade-cal \
+             ./plugins/tushare/stock-basic \
+             ./plugins/tushare/index-basic \
+             ./plugins/tushare/index-weight \
+             ./plugins/tushare/daily-basic
 ```
 
-These commands show the plugins currently installed and registered. A fresh `pip install
-findata` includes no datasets by default — the lists may be sparse until you install
+Stop the server (`Ctrl-C`) and restart it:
+
+```bash
+findata-server start ~/market-data --provider-mode mock
+```
+
+Refresh the Web UI — the **Datasets** and **Providers** pages now list the installed
 plugins.
 
-```bash
-# Check the server status
-findata dataset status --all
-```
-
-## 4. Install plugins
-
-Datasets are added by installing plugin distributions. The
-[Official plugins](../plugins/index.md) page covers the Tushare family —
-the primary data source for Chinese A-share markets:
-
-```bash
-pip install findata-plugins
-```
-
-Stop the server (`Ctrl-C`) and restart it so the new entry points are discovered:
-
-```bash
-findata-server start ~/market-data
-```
-
-Now `findata dataset ls` shows the installed datasets, and
-`findata provider ls` shows the Tushare provider.
-
 !!! tip
-    Datasets don't have to come from a financial API. See
-    [Custom datasets](../guide/custom-datasets.md) to build a plugin that generates or
-    ingests data on your own terms.
+    Plugins don't have to come from a financial API. Run
+    ``findata plugin scaffold mycompany hello`` to generate your own — see
+    [Custom datasets](../guide/custom-datasets.md).
 
-## 5. Configure and run
+## 4. Run a task
 
-If you have a [Tushare API token](https://tushare.pro), configure it and run a
-backfill:
+From the Web UI, navigate to a dataset and click **Complete** to backfill data, or use
+the CLI:
 
 ```bash
-findata config set provider.findata-plugins/tushare.token --stdin
 findata task run findata-plugins/tushare_daily_basic complete \
   --param symbols=tushare:000300.SH \
   --param timerange=2026-06-29:2026-07-04 \
   --wait
 ```
 
-Tasks run in a child process, publish data transactionally, and report their result.
-`--wait` blocks until the task reaches a terminal state.
+With `--provider-mode mock`, the server returns deterministic fake data — no API token
+needed. Tasks run in a child process, publish data transactionally, and report their
+result. The Web UI shows live progress.
 
-Without a token, the server's `--provider-mode mock` flag enables deterministic mock
-responses for evaluation:
-
-```bash
-findata-server start ~/market-data --provider-mode mock
-```
-
-## 6. Read the data
+## 5. Read the data
 
 Data is readable whether the server is running or not:
 
@@ -102,7 +86,7 @@ Data is readable whether the server is running or not:
 findata data preview findata-plugins/tushare_daily_basic \
   --keys 600000.SH \
   --from 2026-06-29 --to 2026-07-04 \
-  --columns ts_code,trade_date,close,pe,pb
+  --columns ts_code,trade_date,close
 ```
 
 or from Python:
@@ -117,7 +101,6 @@ table = (
     .query(
         keys=["600000.SH"],
         time_range=("2026-06-29", "2026-07-04"),
-        require_coverage=True,
     )
 )
 ```
@@ -127,6 +110,7 @@ through a cross-process read-write gate — no server round-trip needed.
 
 ## Next steps
 
+- [Server](../guide/workspace.md) — workspace management, configuration, scheduling
 - [Data](../guide/providers-and-datasets.md) — dataset operations, tasks, reading data
 - [Custom datasets](../guide/custom-datasets.md) — write your own plugin from scratch
 - [Official plugins](../plugins/index.md) — the Tushare plugin family reference

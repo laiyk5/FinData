@@ -9,36 +9,22 @@
 
 ## Install
 
-From a source checkout:
+Install the framework from a source checkout:
 
 ```bash
-python -m pip install . ./plugins/tushare/umbrella
+pip install <path-to-findata>
 ```
 
-This installs the framework and the official Tushare plugin collection, and two
-commands:
+or, if you are working from this repository:
+
+```bash
+pip install -e .
+```
+
+This installs two commands:
 
 - `findata` — the client CLI (configuration, datasets, tasks, data reads)
-- `findata-server` — the local API server that performs maintenance work
-
-**The framework installs no datasets.** Plugins are ordinary separate distributions that
-depend on `findata` — install what you need and it mounts automatically at the next
-server start:
-
-```bash
-# the whole official Tushare family via its umbrella package
-python -m pip install findata-plugins
-
-# or just one dataset (its dependencies resolve automatically)
-python -m pip install findata-plugins-datasets-tushare-daily-basic
-```
-
-Third-party plugins install the same way (`pip install <their-package>`); a workspace
-can block individual plugins via the `plugins.blocked` configuration key. See
-[Custom datasets and providers](../guide/custom-datasets.md).
-
-!!! tip
-    Use a virtual environment when isolation from other Python packages is desired.
+- `findata-server` — the local API server and Web UI
 
 Verify the installation:
 
@@ -46,6 +32,28 @@ Verify the installation:
 findata --version
 findata-server --help
 ```
+
+**The framework installs no datasets.** Plugins are separate distributions that depend on
+`findata` — install what you need and it mounts automatically at the next server start.
+
+Official plugins (the Tushare family) ship in this repository under `plugins/tushare/`:
+
+```bash
+# Install the full Tushare plugin family
+pip install -e ./plugins/tushare/provider \
+             ./plugins/tushare/trade-cal \
+             ./plugins/tushare/stock-basic \
+             ./plugins/tushare/index-basic \
+             ./plugins/tushare/index-weight \
+             ./plugins/tushare/daily-basic
+```
+
+Third-party plugins install the same way (`pip install <their-package>` or
+`pip install -e ./path/to/plugin`); a workspace can block individual plugins via the
+`plugins.blocked` configuration key. See [Custom datasets and providers](../guide/custom-datasets.md).
+
+!!! tip
+    Use a virtual environment when isolation from other Python packages is desired.
 
 ## Reading data from your own Python code
 

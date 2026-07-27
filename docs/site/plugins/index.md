@@ -1,12 +1,18 @@
 # Official plugins
 
-The **findata-plugins** family adds Tushare financial data support. Install it with:
+The **findata-plugins** family adds Tushare financial data support. Install it from a
+checkout of this repository:
 
 ```bash
-pip install findata-plugins
+pip install -e ./plugins/tushare/provider \
+             ./plugins/tushare/trade-cal \
+             ./plugins/tushare/stock-basic \
+             ./plugins/tushare/index-basic \
+             ./plugins/tushare/index-weight \
+             ./plugins/tushare/daily-basic
 ```
 
-(or `findata-plugins[dev]` in the repository workspace — see [Installation](../get-started/installation.md)).
+See [Installation](../get-started/installation.md).
 
 ## Datasets
 
