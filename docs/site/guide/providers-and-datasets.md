@@ -8,8 +8,8 @@ findata provider status findata-test/demo     # validate configuration without a
 findata provider check findata-test/demo      # readiness probe through the rate limiter
 ```
 
-Provider commands never display credentials. Configuration lives in
-[Configuration](configuration.md).
+Provider commands never display credentials. Configure provider tokens and
+other settings through the Web UI or the `findata config` CLI.
 
 ## Datasets
 

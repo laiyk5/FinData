@@ -74,8 +74,6 @@ Provider commands never display credentials.
 - `cron ls` / `cron enable <dataset>` / `cron disable <dataset>` / `cron reset <dataset>`
 - `cron set <dataset> --expression CRON --timezone IANA_ZONE`
 
-See [Scheduling](../guide/scheduling.md).
-
 ## Events and system
 
 - `system status`
@@ -89,8 +87,6 @@ See [Scheduling](../guide/scheduling.md).
 - `config set <key> <value>` / `config set <key> --value-json JSON|@file|-`
 - `config set <key> --stdin` / `config set <key> --env <variable>`
 - `config unset <key>`
-
-See [Configuration](../guide/configuration.md).
 
 ## Data
 

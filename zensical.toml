@@ -17,8 +17,8 @@ nav = [
   ]},
   { "Core Concepts" = [
     "guide/workspace.md",
-    "guide/configuration.md",
-    "guide/scheduling.md",
+    "guide/client-server.md",
+    "guide/plugin-architecture.md",
   ]},
   { "Data" = [
     "guide/providers-and-datasets.md",
