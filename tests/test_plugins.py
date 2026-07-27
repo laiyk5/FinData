@@ -7,8 +7,8 @@ import unittest
 from dataclasses import replace
 from pathlib import Path
 
-from findata.contracts import OperationReporter, OperationRequest
-from findata.plugins import (
+from findata.sdk.contracts import OperationReporter, OperationRequest
+from findata.sdk.plugins import (
     DatasetRuntime,
     PluginRegistrationError,
     ProviderPlugin,
@@ -18,7 +18,7 @@ from findata.plugins import (
     validate_provider_plugins,
 )
 from findata.storage import Workspace
-from findata.taskrunner import TaskContext
+from findata.server.taskrunner import TaskContext
 from findata_plugins.plugins.datasets.tushare_daily_basic import daily_basic_plugin
 from findata_plugins.plugins.datasets.tushare_daily_basic.operations import DailyBasicDatasetRuntime
 from findata_plugins.plugins.datasets.tushare_index_basic import index_basic_plugin

@@ -12,7 +12,7 @@ from unittest.mock import patch
 from urllib.error import URLError
 from zoneinfo import ZoneInfo
 
-from findata.cli import (
+from findata.cli.main import (
     CLIUsageError,
     ServerError,
     _dataset_operands,
@@ -27,7 +27,7 @@ from findata.cli import (
     _validate_cli_args,
     main as cli_main,
 )
-from findata.presentation import (
+from findata.server.presentation import (
     _display,
     _error_suggestion,
     _format_count,
@@ -337,7 +337,7 @@ class ErrorMappingTests(unittest.TestCase):
             500: "server returned 500: detail",
         }
         for status, expected in expectations.items():
-            with patch("findata.cli._Client") as client_type:
+            with patch("findata.cli.main._Client") as client_type:
                 client_type.return_value.request.side_effect = ServerError(status, "detail")
                 code, output, errors = self.run_cli("task", "ls")
             self.assertEqual(code, 1, msg=f"status {status}")
@@ -347,7 +347,7 @@ class ErrorMappingTests(unittest.TestCase):
 
     def test_server_error_json_detail_is_unwrapped_for_humans(self) -> None:
         detail = '{"error":"unknown dataset \'tushare_daily\'"}'
-        with patch("findata.cli._Client") as client_type:
+        with patch("findata.cli.main._Client") as client_type:
             client_type.return_value.request.side_effect = ServerError(400, detail)
             code, _, errors = self.run_cli("dataset", "describe", "tushare_daily")
         self.assertEqual(code, 1)
@@ -356,7 +356,7 @@ class ErrorMappingTests(unittest.TestCase):
         self.assertNotIn("{", errors)
 
     def test_structured_format_keeps_error_object_on_stderr(self) -> None:
-        with patch("findata.cli._Client") as client_type:
+        with patch("findata.cli.main._Client") as client_type:
             client_type.return_value.request.side_effect = ServerError(409, "queue is full")
             code, output, errors = self.run_cli("--format", "json", "task", "ls")
         self.assertEqual(code, 1)
@@ -366,7 +366,7 @@ class ErrorMappingTests(unittest.TestCase):
         self.assertIn("queue is full", record["error"])
 
     def test_network_failures_render_an_error_without_a_traceback(self) -> None:
-        with patch("findata.cli._Client") as client_type:
+        with patch("findata.cli.main._Client") as client_type:
             client_type.return_value.request.side_effect = URLError("connection refused")
             code, _, errors = self.run_cli("task", "ls")
         self.assertEqual(code, 1)
@@ -374,7 +374,7 @@ class ErrorMappingTests(unittest.TestCase):
         self.assertIn("connection refused", errors)
         self.assertNotIn("Traceback", errors)
 
-        with patch("findata.cli._Client") as client_type:
+        with patch("findata.cli.main._Client") as client_type:
             client_type.return_value.request.side_effect = TimeoutError("timed out")
             code, _, errors = self.run_cli("task", "ls")
         self.assertEqual(code, 1)
@@ -382,7 +382,7 @@ class ErrorMappingTests(unittest.TestCase):
         self.assertNotIn("Traceback", errors)
 
     def test_dynamic_completion_falls_back_to_static_candidates_on_timeout(self) -> None:
-        with patch("findata.cli._Client") as client_type:
+        with patch("findata.cli.main._Client") as client_type:
             client_type.return_value.request.side_effect = TimeoutError("timed out")
             code, output, errors = self.run_cli("_complete", "d")
         self.assertEqual(code, 0)
@@ -403,7 +403,7 @@ class ErrorMappingTests(unittest.TestCase):
                 raise URLError("connection reset")
             return {"status": "running", "handle_id": handle}
 
-        with patch("findata.cli._Client") as client_type:
+        with patch("findata.cli.main._Client") as client_type:
             client_type.return_value.request.side_effect = route
             code, output, errors = self.run_cli("task", "watch", handle)
         self.assertEqual(code, 1)

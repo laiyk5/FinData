@@ -9,9 +9,9 @@ from datetime import date
 from pathlib import Path
 from unittest.mock import patch
 
-from findata.cli import main as cli_main
-from findata.presentation import CLIOutput
-from findata.server import FindataServer, initialize_workspace
+from findata.cli.main import main as cli_main
+from findata.server.presentation import CLIOutput
+from findata.server.server import FindataServer, initialize_workspace
 
 
 class TTYBuffer(io.StringIO):
@@ -119,7 +119,7 @@ class CLIPresentationTests(unittest.TestCase):
         self.assertEqual(output, "No results found.\n")
 
         with patch(
-            "findata.presentation.shutil.get_terminal_size",
+            "findata.server.presentation.shutil.get_terminal_size",
             return_value=os.terminal_size((40, 24)),
         ):
             code, output, _ = self.run_cli("dataset", "ls", tty=True)
@@ -228,7 +228,7 @@ class CLIPresentationTests(unittest.TestCase):
         self.assertEqual(json.loads(output)["status"], "succeeded")
 
     def test_wait_reports_acceptance_and_ctrl_c_detaches(self) -> None:
-        with patch("findata.cli.time.sleep", side_effect=KeyboardInterrupt):
+        with patch("findata.cli.main.time.sleep", side_effect=KeyboardInterrupt):
             code, output, errors = self.run_cli(
                 "task",
                 "run",
@@ -260,7 +260,7 @@ class CLIPresentationTests(unittest.TestCase):
                 '{"exchanges":["SSE"],"timerange":"2020-01-01:2026-07-20"}',
             )[1]
         )
-        with patch("findata.cli.time.sleep", side_effect=KeyboardInterrupt):
+        with patch("findata.cli.main.time.sleep", side_effect=KeyboardInterrupt):
             code, _, errors = self.run_cli("task", "logs", str(submitted["handle_id"]), "--follow")
 
         self.assertEqual(code, 130)
@@ -333,7 +333,7 @@ class ProgressPresentationTests(unittest.TestCase):
         output.state({"status": "waiting", "reason": "provider_rate_limit"})
         self.assertIn("provider_rate_limit", stderr.getvalue())
 
-    @patch("findata.presentation.Progress")
+    @patch("findata.server.presentation.Progress")
     def test_interactive_progress_uses_one_transient_rich_live_task(self, progress_type) -> None:
         stderr = TTYBuffer()
         output = CLIOutput(
@@ -347,7 +347,7 @@ class ProgressPresentationTests(unittest.TestCase):
         progress.add_task.return_value = 7
         output._accepted_at = 0
 
-        with patch("findata.presentation.time.monotonic", return_value=1):
+        with patch("findata.server.presentation.time.monotonic", return_value=1):
             output.state(
                 {
                     "status": "running",
@@ -370,7 +370,7 @@ class ProgressPresentationTests(unittest.TestCase):
         output.finish_progress()
         progress.stop.assert_called_once_with()
 
-    @patch("findata.presentation.Progress")
+    @patch("findata.server.presentation.Progress")
     def test_redirected_progress_remains_plain_newline_text(self, progress_type) -> None:
         stderr = io.StringIO()
         output = CLIOutput(
@@ -386,7 +386,7 @@ class ProgressPresentationTests(unittest.TestCase):
         progress_type.assert_not_called()
         self.assertEqual(stderr.getvalue(), "... fetching data\n")
 
-    @patch("findata.presentation.Progress")
+    @patch("findata.server.presentation.Progress")
     def test_rich_rendering_failure_falls_back_to_plain_text(self, progress_type) -> None:
         stderr = TTYBuffer()
         output = CLIOutput(
@@ -399,13 +399,13 @@ class ProgressPresentationTests(unittest.TestCase):
         progress_type.return_value.start.side_effect = RuntimeError("render failed")
         output._accepted_at = 0
 
-        with patch("findata.presentation.time.monotonic", return_value=1):
+        with patch("findata.server.presentation.time.monotonic", return_value=1):
             output.state({"status": "running", "stage": "fetching:data"})
 
         self.assertEqual(stderr.getvalue(), "... fetching data\n")
         self.assertIsNone(output._progress)
 
-    @patch("findata.presentation.Progress")
+    @patch("findata.server.presentation.Progress")
     def test_persistent_follow_log_stops_live_progress_first(self, progress_type) -> None:
         output = CLIOutput(
             output_format="human",
@@ -418,7 +418,7 @@ class ProgressPresentationTests(unittest.TestCase):
         progress.add_task.return_value = 7
         output._accepted_at = 0
 
-        with patch("findata.presentation.time.monotonic", return_value=1):
+        with patch("findata.server.presentation.time.monotonic", return_value=1):
             output.state({"status": "running", "stage": "fetching:data"})
         output.log("provider request completed")
 
@@ -426,7 +426,7 @@ class ProgressPresentationTests(unittest.TestCase):
         self.assertIsNone(output._progress)
         self.assertEqual(output.stdout.getvalue(), "provider request completed\n")
 
-    @patch("findata.presentation.Progress")
+    @patch("findata.server.presentation.Progress")
     def test_progress_includes_server_metrics_elapsed_and_eta(self, progress_type) -> None:
         output = CLIOutput(
             output_format="human",
@@ -438,7 +438,7 @@ class ProgressPresentationTests(unittest.TestCase):
         progress_type.return_value.add_task.return_value = 1
         output._accepted_at = 1
 
-        with patch("findata.presentation.time.monotonic", return_value=3):
+        with patch("findata.server.presentation.time.monotonic", return_value=3):
             output.state(
                 {
                     "status": "running",
@@ -460,7 +460,7 @@ class ProgressPresentationTests(unittest.TestCase):
         self.assertIn("2 s elapsed", description)
         self.assertIn("ETA 2 s", description)
 
-    @patch("findata.presentation.Progress")
+    @patch("findata.server.presentation.Progress")
     def test_no_progress_uses_plain_status_without_rich(self, progress_type) -> None:
         stderr = TTYBuffer()
         output = CLIOutput(

@@ -11,9 +11,9 @@ from typing import TextIO
 import click
 
 from findata import __version__
-from findata.click_parser import DocumentedCommand, DocumentedGroup
-from findata.plugins import plugin_load_errors
-from findata.server import FindataServer, ServerAlreadyRunningError, initialize_workspace
+from findata.cli.click_parser import DocumentedCommand, DocumentedGroup
+from findata.sdk.plugins import plugin_load_errors
+from findata.server.server import FindataServer, ServerAlreadyRunningError, initialize_workspace
 
 
 def main(

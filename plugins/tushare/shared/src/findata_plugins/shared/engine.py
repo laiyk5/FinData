@@ -17,7 +17,7 @@ from zoneinfo import ZoneInfo
 
 import pyarrow as pa
 
-from findata.contracts import (
+from findata.sdk.contracts import (
     DatasetDataError,
     DateRange,
     DatasetSpec,
@@ -25,13 +25,13 @@ from findata.contracts import (
     OperationReporter,
     OperationRequest,
 )
-from findata.loader import (
+from findata.sdk.loader import (
     DataLoader,
     DatasetNotReadyError,
     UnsupportedCoverageError,
 )
-from findata.plugins import DatasetPlugin
-from findata.toolkit import FileRateLimiter
+from findata.sdk.plugins import DatasetPlugin
+from findata.sdk.toolkit import FileRateLimiter
 from findata.storage import (
     DATABASE_NAME,
     Coverage,

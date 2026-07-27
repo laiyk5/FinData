@@ -7,10 +7,10 @@ import unittest
 from pathlib import Path
 
 from findata import DataLoader
-from findata.plugins import PluginWorkerDispatcher, register_plugins
-from findata.toolkit.rate_limit import FileRateLimiter
+from findata.sdk.plugins import PluginWorkerDispatcher, register_plugins
+from findata.sdk.toolkit.rate_limit import FileRateLimiter
 from findata.storage import Workspace
-from findata.taskrunner import (
+from findata.server.taskrunner import (
     DatasetBusyError,
     QueueFullError,
     TaskContext,

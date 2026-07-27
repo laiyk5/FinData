@@ -4,7 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date
 
-from findata.loader import DataLoader
+from findata.sdk.loader import DataLoader
 
 
 @dataclass(frozen=True, slots=True)

@@ -6,7 +6,7 @@ import unittest
 from datetime import date
 from pathlib import Path
 
-from findata.plugins import register_plugins
+from findata.sdk.plugins import register_plugins
 from findata.storage import Workspace
 from findata_plugins.plugins.datasets.tushare_daily_basic import daily_basic_plugin
 from findata_plugins.plugins.datasets.tushare_index_basic import index_basic_plugin

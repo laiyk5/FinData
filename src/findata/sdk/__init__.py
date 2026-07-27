@@ -14,7 +14,7 @@ Usage::
     )
 """
 
-from findata.contracts import (
+from findata.sdk.contracts import (
     DatasetSpec,
     DateRange,
     OperandError,
@@ -22,8 +22,8 @@ from findata.contracts import (
     OperationRequest,
     OperationWorker,
 )
-from findata.loader import DataLoader
-from findata.plugins import (
+from findata.sdk.loader import DataLoader
+from findata.sdk.plugins import (
     DatasetPlugin,
     DatasetRuntime,
     DatasetRuntimeBase,

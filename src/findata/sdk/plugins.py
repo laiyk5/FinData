@@ -9,7 +9,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Iterable, Protocol, runtime_checkable
 
-from findata.contracts import (
+from .contracts import (
     DatasetSpec,
     OperationReporter,
     OperationRequest,
@@ -284,7 +284,7 @@ class DatasetRuntimeBase:
         *,
         provider_ready: bool,
     ) -> dict[str, Any]:
-        from findata.loader import DataLoader, DatasetNotReadyError
+        from findata.sdk.loader import DataLoader, DatasetNotReadyError
 
         spec_name = self.spec.name if self.spec else ""
         state = "uninitialized"

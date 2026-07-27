@@ -29,8 +29,8 @@ dependencies = [
 ]
 
 [project.scripts]
-findata = "findata.cli:main"
-findata-server = "findata.server_cli:main"
+findata = "findata.cli.main:main"
+findata-server = "findata.server.server_cli:main"
 
 [project.optional-dependencies]
 dev = [

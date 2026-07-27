@@ -7,11 +7,11 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
-from findata.contracts import DatasetSpec, provider_date
+from findata.sdk.contracts import DatasetSpec, provider_date
 from findata_plugins.shared.engine import _index_code, _materialized, _setting_array
 
 if TYPE_CHECKING:
-    from findata.plugins import DatasetPlugin
+    from findata.sdk.plugins import DatasetPlugin
 
 
 def _normalize_index_weight(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -75,7 +75,7 @@ def _normalize_update_indexes(value: Any, workspace: Any) -> list[str]:
 
 
 def index_weight_plugin() -> "DatasetPlugin":
-    from findata.plugins import DatasetPlugin, SettingSpec
+    from findata.sdk.plugins import DatasetPlugin, SettingSpec
 
     from findata_plugins.plugins.datasets.tushare_index_weight.operations import (
         IndexWeightDatasetRuntime,

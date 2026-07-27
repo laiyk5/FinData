@@ -4,13 +4,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from findata.plugins import (
+from findata.sdk.plugins import (
     apply_plugin_blocklist,
     discover_dataset_plugins,
     discover_provider_plugins,
     plugin_blocklist,
 )
-from findata.server import initialize_workspace
+from findata.server.server import initialize_workspace
 from findata.storage import Workspace
 from findata_plugins.plugins.datasets.tushare_daily_basic import daily_basic_plugin
 from findata_plugins.plugins.datasets.tushare_index_basic import index_basic_plugin
@@ -90,7 +90,7 @@ class PluginBlocklistTests(unittest.TestCase):
 
     def test_malformed_config_value_reads_as_empty(self) -> None:
         self.workspace.set_config("plugins.blocked", "not-a-list")
-        with self.assertLogs("findata.plugins", level="WARNING"):
+        with self.assertLogs("findata.sdk.plugins", level="WARNING"):
             self.assertEqual(plugin_blocklist(self.workspace), [])
 
     def test_workspace_initialization_honors_the_blocklist(self) -> None:

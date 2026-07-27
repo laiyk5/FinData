@@ -15,8 +15,8 @@ import unittest
 from datetime import date
 from pathlib import Path
 
-from findata.presentation import CLIOutput
-from findata.server import FindataServer, initialize_workspace
+from findata.server.presentation import CLIOutput
+from findata.server.server import FindataServer, initialize_workspace
 
 
 def read_available(master: int, deadline: float) -> str:
@@ -88,7 +88,7 @@ class PtyTaskFollowTests(unittest.TestCase):
         environment = {key: value for key, value in os.environ.items() if key != "NO_COLOR"}
         environment["TERM"] = "xterm-256color"
         process = subprocess.Popen(
-            [sys.executable, "-m", "findata.cli", "--workspace", str(self.root), *arguments],
+            [sys.executable, "-m", "findata.cli.main", "--workspace", str(self.root), *arguments],
             stdout=slave,
             stderr=slave,
             stdin=subprocess.DEVNULL,

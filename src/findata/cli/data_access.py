@@ -13,7 +13,7 @@ import pyarrow.csv as pacsv
 import pyarrow.ipc as ipc
 import pyarrow.parquet as pq
 
-from findata.loader import DataLoader
+from findata.sdk.loader import DataLoader
 from findata.storage import Workspace
 
 

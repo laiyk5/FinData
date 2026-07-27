@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
-from findata.contracts import DatasetSpec, provider_date
+from findata.sdk.contracts import DatasetSpec, provider_date
 from findata_plugins.shared.engine import (
     _SECURITY,
     _index_code,
@@ -15,7 +15,7 @@ from findata_plugins.shared.engine import (
 )
 
 if TYPE_CHECKING:
-    from findata.plugins import DatasetPlugin
+    from findata.sdk.plugins import DatasetPlugin
 
 
 def _normalize_daily_basic(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -92,7 +92,7 @@ def _normalize_update_symbols(value: Any, workspace: Any) -> list[str]:
 
 
 def daily_basic_plugin() -> "DatasetPlugin":
-    from findata.plugins import DatasetPlugin, SettingSpec
+    from findata.sdk.plugins import DatasetPlugin, SettingSpec
 
     from findata_plugins.plugins.datasets.tushare_daily_basic.operations import (
         DailyBasicDatasetRuntime,

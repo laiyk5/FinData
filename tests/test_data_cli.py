@@ -13,8 +13,8 @@ import pyarrow.csv as pacsv
 import pyarrow.ipc as ipc
 import pyarrow.parquet as pq
 
-from findata.cli import main as cli_main
-from findata.plugins import register_plugins
+from findata.cli.main import main as cli_main
+from findata.sdk.plugins import register_plugins
 from findata.storage import Workspace
 from findata_plugins.plugins.datasets.tushare_daily_basic import daily_basic_plugin
 from findata_plugins.plugins.datasets.tushare_daily_basic.operations import DailyBasicDatasetService

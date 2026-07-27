@@ -7,8 +7,8 @@ from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from findata import server as server_module
-from findata.server import FindataServer, initialize_workspace
+from findata.server import server as server_module
+from findata.server.server import FindataServer, initialize_workspace
 
 
 class WebUIStaticTests(unittest.TestCase):

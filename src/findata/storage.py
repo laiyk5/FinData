@@ -19,7 +19,7 @@ from typing import Any, Literal
 import duckdb
 import pyarrow as pa
 
-from findata.contracts import DatasetSpec, validate_dataset_name
+from findata.sdk.contracts import DatasetSpec, validate_dataset_name
 
 
 WORKSPACE_VERSION = 1

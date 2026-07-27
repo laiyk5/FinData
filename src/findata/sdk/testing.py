@@ -2,7 +2,7 @@
 
 Usage::
 
-    from findata.testing import RecordingReporter, FakeDatasetRuntime, create_test_workspace
+    from findata.sdk.testing import RecordingReporter, FakeDatasetRuntime, create_test_workspace
 """
 
 from __future__ import annotations
@@ -14,8 +14,8 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
-from findata.contracts import DatasetSpec, OperationReporter, OperationRequest
-from findata.plugins import (
+from findata.sdk.contracts import DatasetSpec, OperationReporter, OperationRequest
+from findata.sdk.plugins import (
     DatasetPlugin,
     DatasetRuntimeBase,
     OperationWorker,
@@ -221,7 +221,7 @@ def create_test_workspace(
     resolved_plugins = list(plugins) if plugins else []
 
     if resolved_plugins:
-        from findata.plugins import register_plugins
+        from findata.sdk.plugins import register_plugins
 
         register_plugins(ws, resolved_plugins, providers=resolved_providers)
 

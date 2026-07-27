@@ -16,9 +16,9 @@ from urllib.request import ProxyHandler, Request, build_opener
 import click
 
 from findata import __version__
-from findata.click_parser import command_tree
-from findata.data_access import DataCommandUsageError, ExportOutcome, execute_data_command
-from findata.presentation import CLIOutput
+from findata.cli.click_parser import command_tree
+from findata.cli.data_access import DataCommandUsageError, ExportOutcome, execute_data_command
+from findata.server.presentation import CLIOutput
 from findata.storage import DATABASE_NAME
 
 
@@ -495,7 +495,7 @@ def _try_load(ep: Any, group_name: str) -> dict[str, object]:
 
 def _plugin_blocked(args: Any) -> dict[str, object]:
     """Show the workspace plugin blocklist."""
-    from findata.plugins import plugin_blocklist as read_blocklist
+    from findata.sdk.plugins import plugin_blocklist as read_blocklist
     from findata.storage import Workspace
 
     try:
@@ -509,7 +509,7 @@ def _plugin_blocked(args: Any) -> dict[str, object]:
 
 def _plugin_scaffold(args: Any) -> dict[str, object]:
     """Generate a plugin family directory tree."""
-    from findata.scaffold import ScaffoldError, scaffold_plugin
+    from findata.sdk.scaffold import ScaffoldError, scaffold_plugin
 
     namespace = str(args.namespace)
     name = str(args.name)
@@ -553,7 +553,7 @@ def _plugin_unblock(args: Any) -> dict[str, object]:
 
 
 def _modify_blocklist(args: Any, *, add: bool) -> dict[str, object]:
-    from findata.plugins import plugin_blocklist as read_blocklist
+    from findata.sdk.plugins import plugin_blocklist as read_blocklist
     from findata.storage import Workspace
 
     try:

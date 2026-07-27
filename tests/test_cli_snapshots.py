@@ -16,8 +16,8 @@ import unittest
 from datetime import date
 from pathlib import Path
 
-from findata.cli import main as cli_main
-from findata.server import FindataServer, initialize_workspace
+from findata.cli.main import main as cli_main
+from findata.server.server import FindataServer, initialize_workspace
 
 SNAPSHOTS = Path(__file__).parent / "snapshots"
 

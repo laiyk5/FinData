@@ -6,10 +6,10 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
-from findata.contracts import DatasetSpec, provider_date
+from findata.sdk.contracts import DatasetSpec, provider_date
 
 if TYPE_CHECKING:
-    from findata.plugins import DatasetPlugin
+    from findata.sdk.plugins import DatasetPlugin
 
 
 def _normalize_trade_cal(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -47,7 +47,7 @@ TRADE_CAL_SPEC = DatasetSpec(
 
 
 def trade_cal_plugin() -> "DatasetPlugin":
-    from findata.plugins import DatasetPlugin
+    from findata.sdk.plugins import DatasetPlugin
 
     from findata_plugins.plugins.datasets.tushare_trade_cal.operations import TradeCalDatasetRuntime
 

@@ -6,10 +6,10 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
-from findata.contracts import DatasetSpec
+from findata.sdk.contracts import DatasetSpec
 
 if TYPE_CHECKING:
-    from findata.plugins import DatasetPlugin
+    from findata.sdk.plugins import DatasetPlugin
 
 
 RANDOM_FLOAT_FIELDS = ("close", "daily_return")
@@ -92,7 +92,7 @@ def _generate_random_walk(
 
 def _normalize_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Normalize the generated rows — type coercion."""
-    from findata.contracts import provider_date
+    from findata.sdk.contracts import provider_date
 
     result: list[dict[str, Any]] = []
     for row in rows:
@@ -118,7 +118,7 @@ def _normalize_update_symbols(value: Any, workspace: Any) -> list[str]:
 
 
 def demo_random_plugin() -> "DatasetPlugin":
-    from findata.plugins import DatasetPlugin, SettingSpec
+    from findata.sdk.plugins import DatasetPlugin, SettingSpec
 
     from findata_test.plugins.datasets.demo_random.operations import (
         RandomDatasetRuntime,

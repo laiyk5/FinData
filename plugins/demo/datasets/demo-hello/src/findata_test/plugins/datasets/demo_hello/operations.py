@@ -7,14 +7,14 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
-from findata.contracts import (
+from findata.sdk.contracts import (
     DatasetSpec,
     OperandError,
     OperationReporter,
     OperationRequest,
 )
-from findata.loader import DataLoader, DatasetNotReadyError
-from findata.plugins import DatasetRuntime
+from findata.sdk.loader import DataLoader, DatasetNotReadyError
+from findata.sdk.plugins import DatasetRuntime
 from findata.storage import Workspace
 
 from findata_test.plugins.datasets.demo_hello import HELLO_SPEC, _hello_rows

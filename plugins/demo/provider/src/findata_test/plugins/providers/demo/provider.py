@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from findata.plugins import ProviderPlugin, ProviderRuntime
+from findata.sdk.plugins import ProviderPlugin, ProviderRuntime
 from findata.storage import Workspace
 
 

@@ -3,8 +3,8 @@ from __future__ import annotations
 import os
 from datetime import date
 
-from findata.plugins import ProviderPlugin, ProviderRuntime
-from findata.toolkit import FileRateLimiter
+from findata.sdk.plugins import ProviderPlugin, ProviderRuntime
+from findata.sdk.toolkit import FileRateLimiter
 from findata.storage import Workspace
 from findata_plugins.shared.engine import (
     ProviderProtocolError,

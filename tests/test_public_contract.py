@@ -11,11 +11,11 @@ from pathlib import Path
 import click
 
 from findata import __version__
-from findata.cli import main as cli_main, resolve_workspace
-from findata.click_parser import command_tree
-from findata.contracts import OperandError
-from findata.server_cli import _command_tree as server_command_tree
-from findata.server_cli import main as server_cli_main
+from findata.cli.main import main as cli_main, resolve_workspace
+from findata.cli.click_parser import command_tree
+from findata.sdk.contracts import OperandError
+from findata.server.server_cli import _command_tree as server_command_tree
+from findata.server.server_cli import main as server_cli_main
 from findata.storage import Workspace
 from findata_plugins.plugins.datasets.tushare_daily_basic.operations import DailyBasicDatasetRuntime
 from findata_plugins.plugins.datasets.tushare_stock_basic.operations import StockBasicDatasetRuntime
@@ -52,7 +52,7 @@ class ReadProtocolImportTests(unittest.TestCase):
 
     def test_package_root_reexports_the_official_reader(self) -> None:
         import findata
-        from findata.loader import DataLoader
+        from findata.sdk.loader import DataLoader
 
         self.assertIs(findata.DataLoader, DataLoader)
         self.assertIn("DataLoader", findata.__all__)

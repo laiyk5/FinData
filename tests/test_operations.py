@@ -9,8 +9,8 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from findata import DataLoader
-from findata.contracts import OperandError
-from findata.plugins import register_plugins
+from findata.sdk.contracts import OperandError
+from findata.sdk.plugins import register_plugins
 from findata.storage import Workspace
 from findata_plugins.plugins.datasets.tushare_daily_basic import (
     DAILY_BASIC_SPEC,

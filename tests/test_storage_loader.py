@@ -15,7 +15,7 @@ from findata import DataLoader
 from findata_plugins.plugins.datasets.tushare_daily_basic import DAILY_BASIC_SPEC
 from findata_plugins.plugins.datasets.tushare_index_basic import INDEX_BASIC_SPEC
 from findata_plugins.plugins.datasets.tushare_index_weight import INDEX_WEIGHT_SPEC
-from findata.loader import (
+from findata.sdk.loader import (
     CoverageError,
     DatasetNotFoundError,
     DatasetNotReadyError,

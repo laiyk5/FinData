@@ -9,7 +9,7 @@ from typing import Any
 
 import pyarrow as pa
 
-from findata.contracts import OperandError, OperationReporter
+from findata.sdk.contracts import OperandError, OperationReporter
 from findata.storage import Workspace
 from findata_plugins.shared.engine import (
     _merge_tables,

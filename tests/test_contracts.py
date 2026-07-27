@@ -5,7 +5,7 @@ from datetime import date
 
 import pyarrow as pa
 
-from findata.contracts import DateRange, OperandError
+from findata.sdk.contracts import DateRange, OperandError
 from findata_plugins.plugins.datasets.tushare_daily_basic import DAILY_BASIC_SPEC
 from findata_plugins.plugins.datasets.tushare_index_basic import INDEX_BASIC_SPEC
 from findata_plugins.plugins.datasets.tushare_index_weight import INDEX_WEIGHT_SPEC

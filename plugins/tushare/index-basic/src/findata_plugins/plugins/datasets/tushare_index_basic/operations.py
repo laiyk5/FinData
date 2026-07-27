@@ -8,8 +8,8 @@ from pathlib import Path
 from time import monotonic
 from typing import Any
 
-from findata.contracts import OperandError, OperationReporter
-from findata.loader import DataLoader, DatasetNotReadyError
+from findata.sdk.contracts import OperandError, OperationReporter
+from findata.sdk.loader import DataLoader, DatasetNotReadyError
 from findata.storage import DataMutation, Workspace
 from findata_plugins.shared.engine import (
     _OPERAND_HELP,

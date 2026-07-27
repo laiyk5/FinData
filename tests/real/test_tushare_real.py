@@ -8,7 +8,7 @@ import unittest
 from datetime import date
 
 from findata import DataLoader
-from findata.plugins import register_plugins
+from findata.sdk.plugins import register_plugins
 from findata.storage import Workspace
 from findata_plugins.plugins.datasets.tushare_daily_basic import (
     DAILY_BASIC_SPEC,

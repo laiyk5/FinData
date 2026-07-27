@@ -11,8 +11,8 @@ import unittest
 from datetime import date
 from pathlib import Path
 
-from findata.server import FindataServer, initialize_workspace
-from findata.server_cli import main as server_cli_main
+from findata.server.server import FindataServer, initialize_workspace
+from findata.server.server_cli import main as server_cli_main
 
 
 class ServerProcessTests(unittest.TestCase):
@@ -42,7 +42,7 @@ class ServerProcessTests(unittest.TestCase):
                 [
                     sys.executable,
                     "-m",
-                    "findata.server_cli",
+                    "findata.server.server_cli",
                     "start",
                     str(workspace),
                     "--port",
@@ -80,7 +80,7 @@ class ServerProcessTests(unittest.TestCase):
                 [
                     sys.executable,
                     "-m",
-                    "findata.server_cli",
+                    "findata.server.server_cli",
                     "start",
                     str(workspace),
                     "--port",

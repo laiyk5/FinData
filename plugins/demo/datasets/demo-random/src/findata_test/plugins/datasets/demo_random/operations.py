@@ -7,14 +7,14 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from findata.contracts import (
+from findata.sdk.contracts import (
     DateRange,
     OperandError,
     OperationReporter,
     OperationRequest,
 )
-from findata.loader import DataLoader, DatasetNotReadyError
-from findata.plugins import DatasetRuntime
+from findata.sdk.loader import DataLoader, DatasetNotReadyError
+from findata.sdk.plugins import DatasetRuntime
 from findata.storage import Workspace
 
 from findata_test.plugins.datasets.demo_random import (

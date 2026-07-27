@@ -6,10 +6,10 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
-from findata.contracts import DatasetSpec
+from findata.sdk.contracts import DatasetSpec
 
 if TYPE_CHECKING:
-    from findata.plugins import DatasetPlugin
+    from findata.sdk.plugins import DatasetPlugin
 
 
 HELLO_FIELDS = ("name", "greeting", "count")
@@ -49,7 +49,7 @@ def _hello_rows(rows: int) -> list[dict[str, Any]]:
 
 
 def demo_hello_plugin() -> "DatasetPlugin":
-    from findata.plugins import DatasetPlugin
+    from findata.sdk.plugins import DatasetPlugin
 
     from findata_test.plugins.datasets.demo_hello.operations import (
         HelloDatasetRuntime,

@@ -13,11 +13,11 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from findata import DataLoader
-from findata.cli import main as cli_main
-from findata.loader import DatasetNotReadyError
-from findata.plugins import ProviderPlugin
-from findata.presentation import default_display_timezone
-from findata.server import (
+from findata.cli.main import main as cli_main
+from findata.sdk.loader import DatasetNotReadyError
+from findata.sdk.plugins import ProviderPlugin
+from findata.server.presentation import default_display_timezone
+from findata.server.server import (
     FindataServer,
     ServerAlreadyRunningError,
     _redact,

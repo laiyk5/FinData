@@ -6,7 +6,7 @@ from datetime import UTC, datetime, time, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from findata.events import EventStore
+from findata.server.events import EventStore
 from findata.storage import Workspace
 
 

@@ -6,10 +6,10 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
-from findata.contracts import DatasetSpec, provider_date
+from findata.sdk.contracts import DatasetSpec, provider_date
 
 if TYPE_CHECKING:
-    from findata.plugins import DatasetPlugin
+    from findata.sdk.plugins import DatasetPlugin
 
 
 def _normalize_index_basic(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -68,7 +68,7 @@ INDEX_BASIC_SPEC = DatasetSpec(
 
 
 def index_basic_plugin() -> "DatasetPlugin":
-    from findata.plugins import DatasetPlugin
+    from findata.sdk.plugins import DatasetPlugin
 
     from findata_plugins.plugins.datasets.tushare_index_basic.operations import (
         IndexBasicDatasetRuntime,

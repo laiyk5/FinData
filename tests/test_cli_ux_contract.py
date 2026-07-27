@@ -11,16 +11,16 @@ from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from findata.cli import main as cli_main
-from findata.events import EventStore
+from findata.cli.main import main as cli_main
+from findata.server.events import EventStore
 from findata.identifiers import (
     AmbiguousIdentifierError,
     InvalidIdentifierError,
     resolve_identifier,
 )
-from findata.presentation import CLIOutput
-from findata.server import FindataServer, initialize_workspace
-from findata.taskrunner import TaskContext, TaskRunner
+from findata.server.presentation import CLIOutput
+from findata.server.server import FindataServer, initialize_workspace
+from findata.server.taskrunner import TaskContext, TaskRunner
 
 
 class TTYBuffer(io.StringIO):
