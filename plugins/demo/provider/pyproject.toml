@@ -9,7 +9,7 @@ description = "Mock/example provider plugin for findata — always ready, genera
 requires-python = ">=3.11"
 license = "Apache-2.0"
 dependencies = [
-  "findata==0.3.0",
+  "findata==0.4.0",
 ]
 
 [project.entry-points."findata.providers"]

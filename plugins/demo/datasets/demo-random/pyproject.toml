@@ -9,7 +9,7 @@ description = "Demo random-walk dataset plugin for findata — generates simulat
 requires-python = ">=3.11"
 license = "Apache-2.0"
 dependencies = [
-  "findata==0.3.0",
+  "findata==0.4.0",
   "findata-test-providers-demo==0.1.0",
   "pyarrow>=15",
 ]
