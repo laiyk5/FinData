@@ -27,7 +27,6 @@ from findata.storage import DATABASE_NAME, Workspace
 from findata.sdk.plugins import (
     DatasetPlugin,
     PluginWorkerDispatcher,
-    PluginLoadError,
     ProviderPlugin,
     apply_plugin_blocklist,
     discover_dataset_plugins_safe,

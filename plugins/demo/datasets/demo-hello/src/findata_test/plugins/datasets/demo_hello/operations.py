@@ -14,7 +14,6 @@ from findata.sdk.contracts import (
     OperationRequest,
 )
 from findata.sdk.loader import DataLoader, DatasetNotReadyError
-from findata.sdk.plugins import DatasetRuntime
 from findata.storage import Workspace
 
 from findata_test.plugins.datasets.demo_hello import HELLO_SPEC, _hello_rows
@@ -32,7 +31,6 @@ class HelloOperationWorker:
         request: OperationRequest,
         context: OperationReporter,
     ) -> dict[str, Any]:
-        operation = str(request["operation"])
         operands = dict(request.get("operands", {}))
         spec = HELLO_SPEC
         rows = int(operands.get("rows", 5))
@@ -116,7 +114,6 @@ class HelloDatasetRuntime:
         today: date,
     ) -> dict[str, Any]:
         normalized = self.normalize_operation(operation, operands, today=today)
-        rows = normalized.get("rows", 5)
         return {
             "dry_run": True,
             "dataset": HELLO_SPEC.name,

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -14,7 +14,6 @@ from findata.sdk.contracts import (
     OperationRequest,
 )
 from findata.sdk.loader import DataLoader, DatasetNotReadyError
-from findata.sdk.plugins import DatasetRuntime
 from findata.storage import Workspace
 
 from findata_test.plugins.datasets.demo_random import (
@@ -37,7 +36,6 @@ class RandomOperationWorker:
         request: OperationRequest,
         context: OperationReporter,
     ) -> dict[str, Any]:
-        operation = str(request["operation"])
         operands = dict(request.get("operands", {}))
         spec = RANDOM_SPEC
         seed = int(operands.get("seed", self.seed))
@@ -194,7 +192,6 @@ class RandomDatasetRuntime:
         today: date,
     ) -> dict[str, Any]:
         normalized = self.normalize_operation(operation, operands, today=today)
-        tickers = normalized.get("tickers", [])
         return {
             "dry_run": True,
             "dataset": RANDOM_SPEC.name,

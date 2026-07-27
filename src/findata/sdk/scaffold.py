@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 import re
 from pathlib import Path
-from typing import Any
 
 _NAMESPACE_RE = re.compile(r"\A[a-z][a-z0-9_-]*\Z")
 
@@ -294,7 +293,6 @@ def scaffold_plugin(namespace: str, name: str, *, output_dir: str | Path = Path(
 
     # PEP 420 namespace root — no __init__.py.
     # Files under src/ so hatchling's src layout works with pip install -e.
-    ns_dir = root / "src" / ns_pkg
 
     files: list[tuple[str, str, bool]] = [
         ("provider/pyproject.toml", _PROVIDER_PYPROJECT.format(

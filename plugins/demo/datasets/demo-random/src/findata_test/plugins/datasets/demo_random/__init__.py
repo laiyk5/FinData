@@ -58,8 +58,7 @@ def _generate_random_walk(
     end_date = date.fromisoformat(end)
 
     for ticker in tickers:
-        # Deterministic per-ticker seed
-        ticker_seed = int(hashlib.md5(ticker.encode()).hexdigest()[:8], 16) ^ seed
+        # Deterministic per-ticker seed — used implicitly via the per-day hash
         price = 100.0
         cursor = start_date
         while cursor < end_date:

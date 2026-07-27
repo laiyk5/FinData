@@ -529,7 +529,8 @@ def _plugin_scaffold(args: Any) -> dict[str, object]:
 
         # --install flag
         if getattr(args, "install", False):
-            import subprocess, sys
+            import subprocess
+            import sys
             provider_path = str(root / "provider")
             dataset_path = str(root / "datasets" / name)
             subprocess.check_call(

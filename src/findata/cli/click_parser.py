@@ -93,11 +93,10 @@ ARGUMENT_HELP = {
     "declared keys are listed by 'findata dataset describe <dataset>' and suggested by "
     "shell completion.",
     "value": "Plain string value; use an alternate input option for typed or secret values.",
-    "name": "Registered provider identifier.",
+    "name": "Registered provider or entry-point identifier.",
     "dataset": "Registered dataset identifier.",
     "operation": "Dataset operation identifier.",
     "namespace": "Plugin author namespace, for example ``mycompany``.",
-    "name": "Entry-point name or plugin full name to inspect.",
     "handle": "Full task handle or an unambiguous lowercase-hex prefix of at least eight characters.",
     "event_id": "Full event identifier or an unambiguous lowercase-hex prefix of at least eight characters.",
     "shell": "Shell whose sourceable completion script should be generated.",

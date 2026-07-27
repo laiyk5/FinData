@@ -11,6 +11,7 @@ from typing import Any, Iterable, Protocol, runtime_checkable
 
 from .contracts import (
     DatasetSpec,
+    OperandError,
     OperationReporter,
     OperationRequest,
     OperationWorker,
