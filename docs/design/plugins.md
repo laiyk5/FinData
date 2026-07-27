@@ -119,6 +119,63 @@ This is metadata only: the package manager keeps installations
 complete while imports remain forbidden. A missing data dependency at runtime still
 fails validation with a clear error.
 
+## Plugin SDK
+
+Plugin SDK services live in the `findata` distribution as public modules. There is no
+separate `findata-sdk` distribution; extraction into one is deferred until a second
+independent consumer outside this repository demonstrates the need.
+
+Three public surfaces, all under `findata`:
+
+### `findata.sdk` — unified import module
+
+A single re-export module so plugin authors write one import instead of hunting across
+`findata.contracts`, `findata.plugins`, and `findata.storage`:
+
+```python
+from findata.sdk import (
+    Coverage, DataLoader, DataMutation, DatasetPlugin, DatasetRuntimeBase,
+    DatasetSpec, DateRange, OperandError, OperationReporter, OperationRequest,
+    OperationWorker, ProviderPlugin, ProviderRuntime, SettingSpec, Workspace,
+    discover_provider_plugins, discover_dataset_plugins,
+    validate_plugins, validate_provider_plugins, register_plugins,
+    plugin_blocklist, plugin_load_errors,
+)
+```
+
+No new logic — pure re-exports. The original import paths continue working. The toolkit
+package (`findata.toolkit`) is opt-in and documented separately, not included here.
+
+### `findata.testing` — test utilities
+
+Plugin authors need shared test infrastructure without depending on Tushare internals:
+
+- **`RecordingReporter`** — minimal `OperationReporter` that captures `log()`,
+  `diagnostic()`, `progress()` calls for test assertions.
+- **`FakeDatasetRuntime`** — `DatasetRuntimeBase` subclass with a configurable worker
+  for testing registration and validation without a real operation engine.
+- **`create_test_workspace`** — context manager that creates a temp workspace with
+  registered datasets.
+
+Framework-provided mock transports are excluded: each provider family has its own API
+shape, so mocking is inherently domain-specific.
+
+### `findata plugin scaffold` — code generator
+
+The CLI command `findata plugin scaffold <namespace> <name>` generates a complete plugin
+family directory tree in the current working directory:
+
+- Validates `<namespace>` matches `[a-z][a-z0-9_-]*`
+- Creates `./<namespace>/` with provider, dataset, and umbrella packages
+- Templates use `DatasetRuntimeBase` and `findata.sdk` imports
+- PEP 420 namespace directories are set up correctly (no `__init__.py`)
+- Refuses to overwrite an existing directory
+- Deleting generated files is the uninstall path
+
+Generated code targets this tier model: a new plugin imports from `findata.sdk` (tier
+1) and its own namespace's shared subpackage (tier 2). The scaffold is purely a
+developer convenience — it does not register, publish, or depend on any remote service.
+
 ## Code sharing: three tiers by generality
 
 When plugins genuinely share code, it lives at the most general tier it honestly fits:

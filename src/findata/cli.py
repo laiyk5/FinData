@@ -387,6 +387,8 @@ def execute_plugin_command(args: Any) -> dict[str, object]:
         return _plugin_check(str(args.name))
     if args.action == "blocked":
         return _plugin_blocked(args)
+    if args.action == "scaffold":
+        return _plugin_scaffold(args)
     raise ValueError(f"unsupported plugin action: {args.action}")
 
 
@@ -458,6 +460,30 @@ def _plugin_blocked(args: Any) -> dict[str, object]:
         return {"blocked": blocked, "workspace": str(ws_path)}
     except RuntimeError as exc:
         return {"blocked": [], "error": str(exc), "workspace": None}
+
+
+def _plugin_scaffold(args: Any) -> dict[str, object]:
+    """Generate a plugin family directory tree."""
+    from findata.scaffold import ScaffoldError, scaffold_plugin
+
+    namespace = str(args.namespace)
+    name = str(args.name)
+    try:
+        root = scaffold_plugin(namespace, name)
+        return {
+            "namespace": namespace,
+            "name": name,
+            "path": str(root),
+            "succeeded": True,
+        }
+    except ScaffoldError as exc:
+        return {
+            "namespace": namespace,
+            "name": name,
+            "path": None,
+            "succeeded": False,
+            "error": str(exc),
+        }
 
 
 def _declared_secret_keys(client: _Client) -> set[str]:

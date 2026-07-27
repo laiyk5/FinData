@@ -37,7 +37,7 @@ GROUP_HELP = {
     "cron": "Manage dataset update schedules.",
     "events": "Inspect and acknowledge retained operational events.",
     "system": "Inspect the local findata service.",
-    "plugin": "List and diagnose installed plugin distributions.",
+    "plugin": "List, diagnose, and scaffold plugin distributions.",
 }
 
 COMMAND_HELP = {
@@ -81,6 +81,7 @@ COMMAND_HELP = {
     ("plugin", "ls"): "List installed plugin distributions with entry points and versions.",
     ("plugin", "check"): "Check whether a specific plugin entry point loads correctly.",
     ("plugin", "blocked"): "Show the workspace plugin blocklist.",
+    ("plugin", "scaffold"): "Generate a complete plugin distribution tree.",
     ("completion", "completion"): "Generate a shell script that enables command completion.",
 }
 
@@ -92,6 +93,7 @@ ARGUMENT_HELP = {
     "name": "Registered provider identifier.",
     "dataset": "Registered dataset identifier.",
     "operation": "Dataset operation identifier.",
+    "namespace": "Plugin author namespace, for example ``mycompany``.",
     "name": "Entry-point name or plugin full name to inspect.",
     "handle": "Full task handle or an unambiguous lowercase-hex prefix of at least eight characters.",
     "event_id": "Full event identifier or an unambiguous lowercase-hex prefix of at least eight characters.",
@@ -451,6 +453,15 @@ def command_tree(*, version: str) -> click.Group:
         "plugin",
         "blocked",
         [click.Option(["--all"], is_flag=True, help="Show all installed plugins and their block status.")],
+    )
+    attach(
+        plugin,
+        "plugin",
+        "scaffold",
+        [
+            click.Argument(["namespace"]),
+            click.Argument(["name"]),
+        ],
     )
 
     attach(
