@@ -53,10 +53,21 @@ class DailyBasicDatasetService(TushareDatasetService):
         if operation == "update":
             _require_no_operands(operands)
             selectors = self._update_setting(self.spec.name)
-            if not selectors:
-                raise OperandError(
-                    "findata-plugins/tushare_daily_basic update requires update_symbols"
-                )
+            if not selectors or selectors == ["all"]:
+                # "all" selector — resolve to every listed stock from stock_basic.
+                try:
+                    table = self.loader.dataset(
+                        "findata-plugins/tushare_stock_basic"
+                    ).query(columns=["ts_code"])
+                    selectors = sorted(
+                        row["ts_code"] for row in table.to_pylist()
+                    )
+                except Exception as exc:
+                    raise OperandError(
+                        "cannot resolve 'all' selector: "
+                        "stock_basic data is required; run "
+                        "findata-plugins/tushare_stock_basic update first"
+                    ) from exc
             requested = DateRange(self.today, self.today + timedelta(days=1))
         elif operation in {"complete", "refresh"}:
             selectors = _string_array(operands, "symbols")
@@ -449,9 +460,10 @@ class DailyBasicDatasetRuntime:
         return "complete", dict(requirement)
 
     def update_ready(self, workspace: Workspace) -> bool:
-        return bool(
-            workspace.get_config("dataset.findata-plugins/tushare_daily_basic.update_symbols")
+        value = workspace.get_config(
+            "dataset.findata-plugins/tushare_daily_basic.update_symbols"
         )
+        return value is not None  # "all" or specific symbols both work
 
 
 _OPERATION_NAMES = ["update", "complete", "refresh"]

@@ -316,7 +316,8 @@ class CLIPresentationTests(unittest.TestCase):
 
         code, output, _ = self.run_cli("task", "explain", handle)
         self.assertEqual(code, 0)
-        self.assertIn("update_symbols", output)
+        # The error now mentions the "all" selector resolution failure
+        self.assertIn("selector", output)
         self.assertIn(f"findata task retry {handle}", output)
 
 

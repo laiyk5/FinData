@@ -71,6 +71,8 @@ def _normalize_update_symbols(value: Any, workspace: Any) -> list[str]:
         raise ValueError(
             f"expected a string or array of fund codes, got {type(value).__name__}"
         )
+    if values == ["all"]:
+        return ["all"]
     return sorted(set(values))
 
 

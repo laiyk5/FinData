@@ -92,8 +92,9 @@ def index_weight_plugin() -> "DatasetPlugin":
             "dataset.findata-plugins/tushare_index_weight.update_indexes": SettingSpec(
                 schema={"type": "array", "minItems": 1, "items": {"type": "string"}},
                 normalize=_normalize_update_indexes,
-                help="Exact Tushare index references maintained by update.",
-                required=True,
+                help="Exact Tushare index references maintained by update"
+                " (defaults to CSI 300 when unconfigured).",
+                required=False,
             )
         },
         schedule=("0 18 * * 1", "Asia/Shanghai"),

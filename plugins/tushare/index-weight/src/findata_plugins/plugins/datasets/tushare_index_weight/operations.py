@@ -51,9 +51,7 @@ class IndexWeightDatasetService(TushareDatasetService):
             _require_no_operands(operands)
             references = self._update_setting(self.spec.name)
             if not references:
-                raise OperandError(
-                    "findata-plugins/tushare_index_weight update requires update_indexes"
-                )
+                references = ["tushare:000300.SH"]
             self._ensure_index_metadata(references)
             indexes = [_canonical_index(value) for value in references]
             requested = _month_range(self.today, self.today)
@@ -222,9 +220,7 @@ class IndexWeightDatasetRuntime:
         return "complete", dict(requirement)
 
     def update_ready(self, workspace: Workspace) -> bool:
-        return bool(
-            workspace.get_config("dataset.findata-plugins/tushare_index_weight.update_indexes")
-        )
+        return True  # defaults to CSI 300 when unconfigured
 
 
 _OPERATION_NAMES = ["update", "complete"]

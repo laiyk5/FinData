@@ -44,10 +44,24 @@ class FundDailyDatasetService(TushareDatasetService):
         if operation == "update":
             _require_no_operands(operands)
             selectors = self._update_setting(self.spec.name)
+            if not selectors or selectors == ["all"]:
+                # "all" selector — resolve to every fund code from the API.
+                try:
+                    payload = {
+                        "api_name": "fund_daily",
+                        "token": self.client._token,
+                        "params": {"trade_date": self.today.strftime("%Y%m%d")},
+                        "fields": "",
+                    }
+                    result = self.client._transport(payload)
+                    items = (result.get("data") or {}).get("items") or []
+                    selectors = sorted(set(str(item[0]) for item in items))
+                except Exception as exc:
+                    raise OperandError(
+                        f"cannot resolve 'all' selector: {exc}"
+                    ) from exc
             if not selectors:
-                raise OperandError(
-                    "findata-plugins/tushare_fund_daily update requires update_symbols"
-                )
+                raise OperandError("no fund codes resolved for update")
             requested = DateRange(self.today, self.today + timedelta(days=1))
         elif operation in {"complete", "refresh"}:
             selectors = _string_array(operands, "symbols")
@@ -237,11 +251,10 @@ class FundDailyDatasetRuntime:
         )
 
     def update_ready(self, workspace: Workspace) -> bool:
-        return bool(
-            workspace.get_config(
-                f"dataset.{FUND_DAILY_SPEC.name}.update_symbols"
-            )
+        value = workspace.get_config(
+            f"dataset.{FUND_DAILY_SPEC.name}.update_symbols"
         )
+        return value is not None  # "all" or specific fund codes both work
 
 
 _OPERATION_NAMES = ["update", "complete", "refresh"]

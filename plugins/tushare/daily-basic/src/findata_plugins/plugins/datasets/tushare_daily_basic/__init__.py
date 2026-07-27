@@ -80,6 +80,8 @@ DAILY_BASIC_SPEC = DatasetSpec(
 
 def _normalize_update_symbols(value: Any, workspace: Any) -> list[str]:
     values = _setting_array(value)
+    if len(values) == 1 and values[0] == "all":
+        return ["all"]
     for item in values:
         if _SECURITY.fullmatch(item):
             continue

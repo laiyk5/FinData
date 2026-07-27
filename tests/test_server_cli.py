@@ -371,7 +371,8 @@ class ServerCLITests(unittest.TestCase):
         self.assertTrue(setting["schema"])
         self.assertTrue(setting["required"])
         self.assertFalse(setting["configured"])
-        self.assertTrue(
+        # update_indexes is optional — it defaults to CSI 300 when unconfigured
+        self.assertFalse(
             by_key["dataset.findata-plugins/tushare_index_weight.update_indexes"]["required"]
         )
 
