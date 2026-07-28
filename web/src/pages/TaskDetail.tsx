@@ -36,6 +36,23 @@ function lineMatches(line: DedupedLogLine, filter: SeverityFilter): boolean {
   return line.view.severity === filter;
 }
 
+function datasetLabel(name: string): string {
+  return name.slice(name.lastIndexOf("/") + 1).replace(/_/g, " ");
+}
+
+function operationLabel(operation: string): string {
+  return operation.replace(/[_-]/g, " ");
+}
+
+function taskSummary(status: string): string {
+  if (status === "succeeded") return "Completed successfully";
+  if (status === "failed") return "Needs attention";
+  if (status === "canceled") return "Canceled";
+  if (status === "queued") return "Waiting to start";
+  if (status === "waiting") return "Waiting for a dependency";
+  return "Work in progress";
+}
+
 export default function TaskDetailPage() {
   const { id = "" } = useParams();
   const [logs, setLogs] = useState<TaskLogEntry[] | null>(null);
@@ -102,41 +119,51 @@ export default function TaskDetailPage() {
       <ConnectionWarning error={taskLive.error} />
       {task && (
         <>
-          <div className="page-head">
-            <h1>
-              <StatusBadge status={task.status} />{" "}
-              <Link to={`/datasets/${encodeURIComponent(task.dataset)}`} className="mono">
-                {task.dataset}
-              </Link>{" "}
-              <span>{task.operation}</span>{" "}
-              <span className="muted">by {ownerLabel(task.owner)}</span>
-            </h1>
+          <header className="task-detail-header">
+            <div>
+              <Link to="/tasks" className="task-detail-back">← Tasks</Link>
+              <div className="task-detail-title-row">
+                <div>
+                  <h1>{operationLabel(task.operation)} {datasetLabel(task.dataset)}</h1>
+                  <p>Dataset: <Link to={`/datasets/${encodeURIComponent(task.dataset)}`}>{datasetLabel(task.dataset)}</Link> <span className="mono">{task.dataset}</span></p>
+                </div>
+                <StatusBadge status={task.status} />
+              </div>
+            </div>
             <FreshnessNote lastUpdated={taskLive.lastUpdated} />
-          </div>
+          </header>
 
-          <div className="panel">
-            <ProgressBar progress={task.progress} />
-            <dl className="kv" style={{ marginTop: 10 }}>
-              <dt>elapsed</dt>
-              <dd>{formatDuration(task.updated_at - task.created_at)}</dd>
-              <dt>created</dt>
+          <section className={`task-detail-summary status-${task.status}`}>
+            <div>
+              <p className="eyebrow">Task status</p>
+              <h2>{taskSummary(task.status)}</h2>
+              <p>{task.reason ?? task.stage ?? `Started by ${ownerLabel(task.owner)}.`}</p>
+            </div>
+            <div className="task-detail-summary-actions">
+              {!terminal && <CancelTaskButton task={task} onChanged={() => void taskLive.refresh()} size="btn" />}
+              {(task.status === "failed" || task.status === "canceled") && <RetryTaskButton task={task} size="btn" />}
+            </div>
+          </section>
+
+          <section className="panel task-detail-progress-panel">
+            <div className="task-detail-section-heading"><div><p className="eyebrow">{terminal ? "Run summary" : "Progress"}</p><h2>{terminal ? task.status === "succeeded" ? "Completed run" : "Run details" : "Current progress"}</h2></div><span className="muted">Updated <Time unix={task.updated_at} /></span></div>
+            {!terminal && <>
+              <ProgressBar progress={task.progress} />
+              {(task.stage || task.reason) && <p className="task-detail-stage">{task.stage ?? task.reason}</p>}
+            </>}
+            <dl className="kv task-detail-facts">
+              <dt>started by</dt>
+              <dd>{ownerLabel(task.owner)}</dd>
+              <dt>started</dt>
               <dd>
                 <Time unix={task.created_at} />
               </dd>
-              <dt>updated</dt>
-              <dd>
-                <Time unix={task.updated_at} />
-              </dd>
-              {task.stage && (
+              <dt>duration</dt>
+              <dd>{formatDuration(task.updated_at - task.created_at)}</dd>
+              {!terminal && task.stage && (
                 <>
-                  <dt>stage</dt>
+                  <dt>current stage</dt>
                   <dd>{task.stage}</dd>
-                </>
-              )}
-              {task.reason && (
-                <>
-                  <dt>reason</dt>
-                  <dd>{task.reason}</dd>
                 </>
               )}
               {task.diagnostic_counts &&
@@ -157,29 +184,12 @@ export default function TaskDetailPage() {
                     </dd>
                   </>
                 )}
-              <dt>handle</dt>
-              <dd>
-                <CopyableId id={task.handle_id} />
-              </dd>
-              <dt>execution</dt>
-              <dd>
-                <CopyableId id={task.execution_id} />
-              </dd>
             </dl>
-
-            <div className="form-row" style={{ marginTop: 10 }}>
-              {!terminal && (
-                <CancelTaskButton task={task} onChanged={() => void taskLive.refresh()} />
-              )}
-              {(task.status === "failed" || task.status === "canceled") && (
-                <RetryTaskButton task={task} />
-              )}
-            </div>
-          </div>
+          </section>
 
           {(explain || explainError) && (
-            <div className="panel">
-              <h3>Explanation</h3>
+            <section className="panel task-explanation-panel">
+              <div className="task-detail-section-heading"><div><p className="eyebrow">Recovery</p><h2>What happened</h2></div></div>
               <ErrorBanner error={explainError} />
               {explain && (
                 <>
@@ -199,7 +209,7 @@ export default function TaskDetailPage() {
                   )}
                   {Object.keys(explain.inspection).length > 0 && (
                     <>
-                      <h3>Inspect with</h3>
+                      <h3>Helpful commands</h3>
                       <ul className="inspection-list">
                         {Object.entries(explain.inspection).map(([label, cmd]) => (
                           <li key={label}>
@@ -212,13 +222,13 @@ export default function TaskDetailPage() {
                   )}
                 </>
               )}
-            </div>
+            </section>
           )}
 
-          <div className="panel">
-            <div className="form-row" style={{ justifyContent: "space-between" }}>
-              <h3 style={{ margin: 0 }}>Logs</h3>
-              <span className="form-row" style={{ alignItems: "center" }}>
+          <section className="panel task-log-panel">
+            <div className="task-detail-section-heading">
+              <div><p className="eyebrow">Activity</p><h2>Task log</h2></div>
+              <span className="task-log-controls">
                 <span className="filter-chips">
                   {(["all", "info", "warning", "error"] as SeverityFilter[]).map((f) => (
                     <button
@@ -236,7 +246,7 @@ export default function TaskDetailPage() {
                     checked={follow}
                     onChange={(e) => setFollow(e.target.checked)}
                   />
-                  follow{follow && terminal ? " (task terminal — stopped)" : ""}
+                  Follow live{follow && terminal ? " (task finished)" : ""}
                 </label>
               </span>
             </div>
@@ -256,15 +266,15 @@ export default function TaskDetailPage() {
                 ))}
               </div>
             )}
-          </div>
+          </section>
 
-          <details className="panel details-panel">
-            <summary>Details</summary>
+          <details className="panel details-panel task-technical-details">
+            <summary>Technical details <span>IDs, result, and raw error</span></summary>
             <dl className="kv" style={{ marginTop: 8 }}>
               <dt>handle id</dt>
-              <dd className="mono">{task.handle_id}</dd>
+              <dd><CopyableId id={task.handle_id} /></dd>
               <dt>execution id</dt>
-              <dd className="mono">{task.execution_id}</dd>
+              <dd><CopyableId id={task.execution_id} /></dd>
               {task.subscriber_count > 1 && (
                 <>
                   <dt>subscribers</dt>

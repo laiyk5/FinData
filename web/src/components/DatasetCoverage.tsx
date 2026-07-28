@@ -1,7 +1,7 @@
 import { Link } from "react-router";
 import { TERMINAL_STATUSES, type DatasetStatus, type TaskHandle } from "../api";
 import { formatBytes } from "../format";
-import { CopyableId, DatasetStateBadge, StatusBadge, Time } from "./common";
+import { DatasetStateBadge, StatusBadge, Time } from "./common";
 import { ClockIcon } from "./icons";
 
 /** Time-accumulating datasets declare `capabilities.time_accumulating`. */
@@ -67,32 +67,29 @@ export function DatasetCoverage({
 }) {
   if (isTimeAccumulating(capabilities)) {
     return (
-      <span className="coverage-line">
+      <div className="coverage-line">
         {status && status.covered_keys !== null ? (
-          <span className="muted">
-            {status.covered_keys} keys, [{status.coverage_start ?? "?"} →{" "}
-            {status.coverage_end ?? "?"})
+          <span className="coverage-primary">
+            <strong>{status.covered_keys}</strong> keys
+            <span className="coverage-range">
+              {status.coverage_start ?? "?"} → {status.coverage_end ?? "?"}
+            </span>
           </span>
         ) : (
           <span className="muted">no coverage yet</span>
         )}
         <StorageFact status={status} />
-      </span>
+      </div>
     );
   }
 
   const last = newestTerminalTask(tasks);
   return (
-    <span className="coverage-line">
-      <span className="muted">complete replacement — no coverage tracked</span>
+    <div className="coverage-line">
+      <span className="coverage-primary">
+        {publicationId ? "replacement snapshot" : "no snapshot yet"}
+      </span>
       <span className="coverage-facts">
-        <span className="muted">publication:</span>{" "}
-        {publicationId ? (
-          <CopyableId id={publicationId} />
-        ) : (
-          <span className="muted">—</span>
-        )}{" "}
-        <span className="muted">· last update:</span>{" "}
         {last ? (
           <Link to={`/tasks/${encodeURIComponent(last.handle_id)}`}>
             <StatusBadge status={last.status} /> <Time unix={last.updated_at} />
@@ -102,7 +99,7 @@ export function DatasetCoverage({
         )}
       </span>
       <StorageFact status={status} />
-    </span>
+    </div>
   );
 }
 
@@ -110,6 +107,6 @@ export function DatasetCoverage({
 function StorageFact({ status }: { status: DatasetStatus | null }) {
   if (status?.storage_bytes === null || status?.storage_bytes === undefined) return null;
   return (
-    <span className="coverage-facts muted">storage: {formatBytes(status.storage_bytes)}</span>
+    <span className="coverage-storage">{formatBytes(status.storage_bytes)}</span>
   );
 }

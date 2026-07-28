@@ -19,8 +19,8 @@ dependencies = [
 ]
 
 [project.entry-points."findata.datasets"]
-tushare_daily_basic = "findata_plugins.plugins.datasets.tushare_daily_basic:daily_basic_plugin"
+tushare_daily_basic = "findata_plugins.tushare.plugins.datasets.stock.daily_basic:daily_basic_plugin"
 
 [tool.hatch.build.targets.wheel]
-only-include = ["src/findata_plugins/plugins/datasets/tushare_daily_basic"]
+only-include = ["src/findata_plugins"]
 sources = ["src"]

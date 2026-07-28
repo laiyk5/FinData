@@ -88,12 +88,12 @@ The repository is a uv workspace:
   configuration, cron, and events live in the `findata` distribution under `src/findata`;
 - each official provider family lives under `plugins/<family>/`, contributing to the
   `findata_plugins` PEP 420 namespace: a shared distribution (`findata-plugins-shared`,
-  import package `findata_plugins.shared` — client/transport adapter, shared operation
+  import package `findata_plugins.tushare.shared` — client/transport adapter, shared operation
   engine, publication timing, and mock/test helpers), one provider distribution
   (`findata-plugins-providers-tushare`, import package
-  `findata_plugins.plugins.providers.tushare`), one
+  `findata_plugins.tushare.plugins.providers.tushare`), one
   `findata-plugins-datasets-tushare-*` distribution per dataset (import packages
-  `findata_plugins.plugins.datasets.tushare_*`), and the metadata-only
+  `findata_plugins.tushare.plugins.datasets.<family>.<dataset>`), and the metadata-only
   `findata-plugins` umbrella;
 - reusable opt-in plugin helpers live under `findata.toolkit` in the core distribution.
 

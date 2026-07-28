@@ -129,6 +129,7 @@ class ProviderPlugin:
     rate_limit: int
     period: int
     runtime: object | None = None
+    family: tuple[str, ...] = ()
 
 
 @runtime_checkable
@@ -339,6 +340,7 @@ class SettingSpec:
     normalize: SettingNormalizer
     help: str
     required: bool = False
+    default: Any | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -351,6 +353,7 @@ class DatasetPlugin:
     dependencies: tuple[str, ...] = ()
     settings: Mapping[str, SettingSpec] = field(default_factory=dict)
     schedule: tuple[str, str] | None = None
+    family: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "settings", MappingProxyType(dict(self.settings)))

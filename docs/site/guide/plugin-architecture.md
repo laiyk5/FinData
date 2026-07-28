@@ -1,8 +1,8 @@
 # Plugin architecture
 
 findata discovers plugins through Python entry points. Installing a plugin distribution
-is the only step — the next server start discovers, validates, registers, and serves it.
-Uninstalling removes it. No framework changes are needed.
+is the only step — the next server start or a server plugin reload discovers, validates,
+registers, and serves it. Uninstalling removes it after reload. No framework changes are needed.
 
 ## Two plugin kinds
 
@@ -23,10 +23,10 @@ Every plugin package declares its entry points in `pyproject.toml`:
 
 ```toml
 [project.entry-points."findata.providers"]
-demo = "findata_test.plugins.providers.demo:provider_plugin"
+demo = "findata_test.demo.plugins.providers.demo:demo_provider_plugin"
 
 [project.entry-points."findata.datasets"]
-demo_random = "findata_test.plugins.datasets.demo_random:demo_random_plugin"
+demo_random = "findata_test.demo.plugins.datasets.synthetic.random:demo_random_plugin"
 ```
 
 When the server starts, it reads all installed entry points, validates each plugin's
@@ -39,6 +39,16 @@ A plugin's full name is `<package-namespace>/<local-name>` — for example,
 `findata-test/demo_random`. The namespace is the top-level Python package name,
 derived from the entry point's module path. This prevents impersonation: a plugin
 physically cannot claim a namespace it doesn't live in.
+
+### Families and classification
+
+Publishers can add repository and family segments below their namespace without changing
+plugin IDs. For example, the official Tushare packages use
+`findata_plugins.tushare.plugins.datasets.stock.daily_basic` and
+`findata_plugins.tushare.plugins.providers.tushare`. Set the optional `family` tuple on
+each `DatasetPlugin` or `ProviderPlugin` (for example, `("tushare", "stock")`); the API
+returns it and the WebUI groups datasets and providers by it. Families are publisher-owned
+labels, so nested or entirely different taxonomies work without a framework change.
 
 ### Resilient loading
 
@@ -60,8 +70,10 @@ A blocked plugin is not registered. However, if an unblocked plugin depends on a
 blocked one (as a data dependency or its provider), the block is **ineffective**
 and the required plugin is mounted anyway.
 
-The blocklist is read at server startup only — changes take effect on the next
-restart.
+The Server page can reload installed plugins and remove or restore mounted plugins without a
+process restart. Removal persists a block for the selected plugin and any mounted dependents;
+restoration rediscovers the installed entry points. These changes are refused while affected datasets
+have active work and never delete committed data, settings, or task history.
 
 ## Plugin SDK
 

@@ -13,12 +13,12 @@ dependencies = [
 ]
 
 [project.entry-points."findata.providers"]
-demo = "findata_test.plugins.providers.demo:demo_provider_plugin"
+demo = "findata_test.demo.plugins.providers.demo:demo_provider_plugin"
 
 [tool.hatch.build.targets.wheel]
-only-include = ["src/findata_test/plugins/providers/demo"]
+only-include = ["src/findata_test"]
 sources = ["src"]
 
 [tool.hatch.build.targets.sdist]
-only-include = ["src/findata_test/plugins/providers/demo"]
+only-include = ["src/findata_test"]
 sources = ["src"]

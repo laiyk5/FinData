@@ -31,6 +31,28 @@ class ServerProcessTests(unittest.TestCase):
             finally:
                 server.shutdown()
 
+    def test_status_and_stop_manage_a_running_workspace_server(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            initialize_workspace(workspace)
+            server = FindataServer(workspace, port=0, provider_mode="mock", today=date(2026, 7, 20))
+            server.start_background()
+            try:
+                stdout, stderr = io.StringIO(), io.StringIO()
+                code = server_cli_main(["status", str(workspace)], stdout=stdout, stderr=stderr)
+                self.assertEqual(code, 0)
+                self.assertIn("FinData server running", stdout.getvalue())
+                self.assertEqual(stderr.getvalue(), "")
+
+                stdout, stderr = io.StringIO(), io.StringIO()
+                code = server_cli_main(["stop", str(workspace)], stdout=stdout, stderr=stderr)
+                self.assertEqual(code, 0)
+                self.assertIn("Stopped FinData server", stdout.getvalue())
+                self.assertEqual(stderr.getvalue(), "")
+                self.assertFalse((workspace / "server.json").exists())
+            finally:
+                server.shutdown()
+
     def test_sigterm_performs_clean_shutdown(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             workspace = Path(directory)

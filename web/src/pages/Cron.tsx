@@ -206,15 +206,20 @@ function CronJobCard({
   return (
     <div
       className={`card cron-card ${job.enabled ? "" : "cron-disabled"} ${highlight ? "cron-highlight" : ""}`}
-    >      <div className="health-head">
-        <Link to={`/datasets/${encodeURIComponent(job.dataset)}`} className="mono">
-          {job.dataset}
-        </Link>
-        <span className="chips">
-          <span className={`badge ${job.enabled ? "bool-yes" : "bool-no"}`}>
-            {job.enabled ? "enabled" : "disabled"}
+    >
+      <div className="cron-card-header">
+        <div className="cron-target">
+          <span className="card-label">Scheduled dataset update</span>
+          <Link to={`/datasets/${encodeURIComponent(job.dataset)}`} className="cron-dataset mono">
+            {job.dataset}
+          </Link>
+          <span className="cron-target-meta">
+            <code className="cron-operation-value">{job.operation}</code>
+            <span className="muted">{job.source} schedule</span>
           </span>
-          <span className="badge badge-source">{job.source}</span>
+        </div>
+        <span className={`badge ${job.enabled ? "bool-yes" : "bool-no"}`}>
+          {job.enabled ? "enabled" : "disabled"}
         </span>
       </div>
 
@@ -231,34 +236,42 @@ function CronJobCard({
           onCancel={() => setEditing(false)}
         />
       ) : (
-        <div className="cron-schedule">
-          <span>{humanizeCron(job.expression)}</span>{" "}
-          <code className="muted">{job.expression}</code>{" "}
-          <span className="muted">({job.timezone})</span>
+        <div className="cron-timing">
+          <div className="cron-next-run">
+            <span className="card-label">Next update</span>
+            <strong>
+              {nextRun !== null ? <Time unix={nextRun} timeZone={job.timezone} /> : "Not scheduled"}
+            </strong>
+            <span className="muted">{job.timezone}</span>
+          </div>
+          <div className="cron-schedule">
+            <span className="card-label">Runs</span>
+            <strong>{humanizeCron(job.expression)}</strong>
+            <code className="muted">{job.expression}</code>
+          </div>
+          <div className="cron-last-run">
+            <span className="card-label">Last run</span>
+            <span>{lastRun !== null ? <Time unix={lastRun} /> : "—"}</span>
+          </div>
         </div>
       )}
 
-      <div className="cron-runs muted">
-        last run: {lastRun !== null ? <Time unix={lastRun} /> : "—"} · next run:{" "}
-        {nextRun !== null ? <Time unix={nextRun} timeZone={job.timezone} /> : "—"}
-      </div>
-
-      <div className="health-actions">
+      <div className="cron-actions">
         {job.enabled ? (
           <button className="btn" disabled={busy} onClick={onDisable}>
             Disable
           </button>
         ) : (
-          <button className="btn" disabled={busy} onClick={onEnable}>
+          <button className="btn btn-primary" disabled={busy} onClick={onEnable}>
             Enable
           </button>
         )}{" "}
         {!editing && (
           <>
-            <button className="btn" onClick={() => setEditing(true)}>
+            <button className="btn" disabled={busy} onClick={() => setEditing(true)}>
               Edit schedule
-            </button>{" "}
-            <button className="btn" disabled={busy} onClick={onReset}>
+            </button>
+            <button className="link-button" disabled={busy} onClick={onReset}>
               Reset to suggested
             </button>
           </>

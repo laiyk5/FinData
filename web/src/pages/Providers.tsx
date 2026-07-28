@@ -1,7 +1,6 @@
 import { useCallback } from "react";
 import { Link } from "react-router";
 import { listDatasets, listProviders, type Provider } from "../api";
-import { providerConfigLabel } from "../readiness";
 import {
   ConnectionWarning,
   EmptyState,
@@ -13,6 +12,19 @@ import { useLiveData } from "../hooks";
 interface ProvidersData {
   providers: Provider[];
   datasetCounts: Record<string, number>;
+}
+
+function familyLabel(family: string[] | undefined): string {
+  return family && family.length > 0
+    ? family.map(readableName).join(" / ")
+    : "Other providers";
+}
+
+function readableName(name: string): string {
+  return name
+    .slice(name.lastIndexOf("/") + 1)
+    .replace(/[-_]/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
 /**
@@ -36,13 +48,18 @@ export default function ProvidersPage() {
   const { data } = live;
 
   if (!data && !live.error) return <Loading />;
+  const readyCount = data?.providers.filter((provider) => provider.configured ?? provider.ready).length ?? 0;
+  const setupCount = (data?.providers.length ?? 0) - readyCount;
 
   return (
     <div>
-      <div className="page-head">
-        <h1>Providers</h1>
+      <header className="provider-index-header">
+        <div>
+          <h1>Providers</h1>
+          <p>Connections that supply data to your datasets.</p>
+        </div>
         <FreshnessNote lastUpdated={live.lastUpdated} />
-      </div>
+      </header>
       <ConnectionWarning error={live.error} />
       {data && data.providers.length === 0 && (
         <EmptyState>
@@ -50,32 +67,58 @@ export default function ProvidersPage() {
         </EmptyState>
       )}
       {data && data.providers.length > 0 && (
-        <div className="provider-grid">
-          {data.providers.map((p) => {
-            const configured = p.configured ?? p.ready;
-            const count = data.datasetCounts[p.name] ?? 0;
-            return (
-              <div key={p.name} className="card provider-card">
-                <div className="health-head">
-                  <Link to={`/providers/${encodeURIComponent(p.name)}`} className="mono">
-                    {p.name}
-                  </Link>
-                  <span className="chips">
-                    <span className={`badge mode-${p.mode}`}>{p.mode}</span>
-                    <span className={`badge ${configured ? "bool-yes" : "bool-no"}`}>
-                      {providerConfigLabel(configured)}
-                    </span>
-                  </span>
+        <>
+          <div className="provider-index-summary">
+            <div><strong>{readyCount}</strong><span>ready</span></div>
+            <div><strong>{setupCount}</strong><span>need setup</span></div>
+            <div><strong>{data.providers.length}</strong><span>providers</span></div>
+          </div>
+          <div className="plugin-family-list">
+          {Object.entries(
+            data.providers.reduce<Record<string, Provider[]>>((families, provider) => {
+              const label = familyLabel(provider.family);
+              (families[label] ??= []).push(provider);
+              return families;
+            }, {}),
+          )
+            .sort(([left], [right]) => left.localeCompare(right))
+            .map(([family, providers]) => (
+              <section key={family} className="plugin-family">
+                <h2 className="plugin-family-title">{family}</h2>
+                <div className="provider-grid">
+                  {providers.map((p) => {
+                    const configured = p.configured ?? p.ready;
+                    const count = data.datasetCounts[p.name] ?? 0;
+                    return (
+                      <article key={p.name} className={`card provider-card ${configured ? "is-ready" : "needs-setup"}`}>
+                        <div className="provider-card-heading">
+                          <div>
+                            <h3>{readableName(p.name)}</h3>
+                            <span className="mono muted">{p.name}</span>
+                          </div>
+                          <span className={`badge ${configured ? "bool-yes" : "bool-no"}`}>
+                            {configured ? "ready" : "setup needed"}
+                          </span>
+                        </div>
+                        <p className="provider-card-message">
+                          {configured
+                            ? `${count === 0 ? "No datasets use this provider yet" : `${count} dataset${count === 1 ? "" : "s"} available`}.`
+                            : "Add credentials before using its datasets."}
+                        </p>
+                        <div className="provider-card-footer">
+                          <span className="muted">{p.mode} mode</span>
+                          <Link to={`/providers/${encodeURIComponent(p.name)}`}>
+                            {configured ? "View provider" : "Set up provider"} →
+                          </Link>
+                        </div>
+                      </article>
+                    );
+                  })}
                 </div>
-                <div className="muted provider-card-datasets">
-                  {count === 0
-                    ? "no datasets use this provider"
-                    : `${count} dataset${count === 1 ? "" : "s"}`}
-                </div>
-              </div>
-            );
-          })}
-        </div>
+              </section>
+            ))}
+          </div>
+        </>
       )}
     </div>
   );

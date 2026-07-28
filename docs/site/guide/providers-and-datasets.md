@@ -48,6 +48,10 @@ findata dataset reset    findata-test/demo_random --yes                     # st
 
 - `update` is parameterless: the plugin derives its work from the dataset's configured
   settings and committed state. A one-time `complete` or `refresh` never changes settings.
+- Symbol or index updates normally default to `stored`: the keys already present in that dataset's
+  committed coverage. An empty stored set is a successful no-op, so a suggested cron job remains
+  usable before the first backfill. APIs that support full-market date retrieval expose `all` as an
+  explicit selector instead of requiring a manually enumerated symbol list.
 - `complete` backfills an explicit selection and time range; `refresh` refetches data
   strictly inside existing coverage.
 - Operation commands are generated from each plugin's operand schema. Array operands use
@@ -75,6 +79,9 @@ Date ranges use `start:end` and are half-open: the start is included and the end
 excluded. Dates use `YYYY-MM-DD`; `today` is resolved once in the dataset timezone, so it
 excludes the current date when used as the end. For example, `2026-07-01:2026-07-10`
 covers July 1 through July 9.
+
+In the WebUI operation form, a date range defaults from the start of the current year through
+today unless the dataset declares a narrower default.
 
 A scalar passed for an array operand is coerced to one element, so
 `--param tickers=AAPL` is equivalent to

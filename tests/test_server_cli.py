@@ -11,6 +11,7 @@ from datetime import date, datetime
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
+from unittest.mock import patch
 
 from findata import DataLoader
 from findata.cli.main import main as cli_main
@@ -76,6 +77,39 @@ class ServerCLITests(unittest.TestCase):
 
         self.assertEqual(caught.exception.code, 401)
         caught.exception.close()
+
+    def test_web_login_code_exchanges_once_for_a_cookie_session(self) -> None:
+        issued = self.request("POST", "/v1/web/sessions", {})
+        code = str(issued["code"])
+        exchange = Request(
+            f"{self.server.base_url}/v1/web/session/exchange",
+            data=json.dumps({"code": code}).encode("utf-8"),
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        with urlopen(exchange, timeout=2) as response:
+            cookie = response.headers["Set-Cookie"]
+            self.assertEqual(json.loads(response.read()), {"authenticated": True})
+
+        session_request = Request(
+            f"{self.server.base_url}/v1/system/status", headers={"Cookie": cookie}
+        )
+        with urlopen(session_request, timeout=2) as response:
+            self.assertEqual(json.loads(response.read())["status"], "running")
+
+        with self.assertRaises(HTTPError) as caught:
+            urlopen(exchange, timeout=2)
+        self.assertEqual(caught.exception.code, 401)
+        caught.exception.close()
+
+    def test_cli_web_open_uses_a_one_time_login_url(self) -> None:
+        with patch("findata.cli.main.webbrowser.open", return_value=True) as open_browser:
+            code, output = self.run_cli("web", "open")
+
+        self.assertEqual(code, 0)
+        self.assertIn(self.server.base_url, output)
+        url = open_browser.call_args.args[0]
+        self.assertTrue(url.startswith(f"{self.server.base_url}/#/login?code="))
 
     def test_cli_primary_workflow_submits_waits_and_queries_published_data(self) -> None:
         os.environ["TUSHARE_API_TOKEN"] = "not-used-by-mock"
@@ -291,6 +325,7 @@ class ServerCLITests(unittest.TestCase):
             )[1]
         )
         self.assertEqual(described["provider"], "findata-plugins/tushare")
+        self.assertEqual(described["family"], ["tushare", "stock"])
         self.assertEqual(
             {item["name"] for item in described["operations"]},
             {"update", "complete", "refresh"},
@@ -314,8 +349,37 @@ class ServerCLITests(unittest.TestCase):
         self.assertIn("symbols, timerange", operations_table)
         providers = json.loads(self.run_cli("--format", "json", "provider", "ls")[1])
         self.assertEqual(providers["items"][0]["name"], "findata-plugins/tushare")
+        self.assertEqual(providers["items"][0]["family"], ["tushare"])
         statuses = json.loads(self.run_cli("--format", "json", "dataset", "status", "--all")[1])
         self.assertEqual(len(statuses["items"]), 8)
+
+    def test_plugins_can_be_removed_restored_and_reloaded_without_restart(self) -> None:
+        initial = self.request("GET", "/v1/plugins")
+        self.assertIn(
+            "findata-test/demo_random",
+            {item["name"] for item in initial["datasets"]},
+        )
+
+        removed = self.request("DELETE", "/v1/plugins/findata-test/demo_random")
+        self.assertEqual(removed["removed"], ["findata-test/demo_random"])
+        self.assertIn("findata-test/demo_random", removed["blocked"])
+        self.assertNotIn(
+            "findata-test/demo_random",
+            {item["name"] for item in removed["datasets"]},
+        )
+
+        restored = self.request("POST", "/v1/plugins/findata-test/demo_random/restore")
+        self.assertNotIn("findata-test/demo_random", restored["blocked"])
+        self.assertIn(
+            "findata-test/demo_random",
+            {item["name"] for item in restored["datasets"]},
+        )
+
+        reloaded = self.request("POST", "/v1/plugins/reload")
+        self.assertEqual(
+            {item["name"] for item in reloaded["datasets"]},
+            {item["name"] for item in restored["datasets"]},
+        )
 
     def test_config_ls_is_a_table_and_internal_keys_stay_internal(self) -> None:
         self.run_cli("config", "set", "display.timezone", "UTC")
@@ -369,12 +433,12 @@ class ServerCLITests(unittest.TestCase):
         setting = by_key["dataset.findata-plugins/tushare_daily_basic.update_symbols"]
         self.assertTrue(setting["help"])
         self.assertTrue(setting["schema"])
-        self.assertTrue(setting["required"])
+        self.assertFalse(setting["required"])
+        self.assertEqual(setting["default"], ["stored"])
         self.assertFalse(setting["configured"])
-        # update_indexes is optional — it defaults to CSI 300 when unconfigured
-        self.assertFalse(
-            by_key["dataset.findata-plugins/tushare_index_weight.update_indexes"]["required"]
-        )
+        index_setting = by_key["dataset.findata-plugins/tushare_index_weight.update_indexes"]
+        self.assertFalse(index_setting["required"])
+        self.assertEqual(index_setting["default"], ["stored"])
 
         self.assertFalse(any(key.startswith("cron.") for key in by_key))
 
@@ -519,6 +583,138 @@ class ServerCLITests(unittest.TestCase):
         )
         self.assertEqual(status["state"], "ready")
         self.assertIsNone(status["covered_keys"])
+
+    def test_dataset_download_returns_csv_attachment(self) -> None:
+        submitted = self.request(
+            "POST",
+            "/v1/tasks",
+            {
+                "dataset": "findata-plugins/tushare_trade_cal",
+                "operation": "complete",
+                "operands": {
+                    "exchanges": ["SSE"],
+                    "timerange": "2026-07-01:2026-07-03",
+                },
+            },
+        )
+        self.assertEqual(self.wait_http(str(submitted["handle_id"]))["status"], "succeeded")
+        request = Request(
+            f"{self.server.base_url}/v1/datasets/findata-plugins/tushare_trade_cal/download?format=csv",
+            headers={"Authorization": f"Bearer {self.server.token}"},
+        )
+        with urlopen(request, timeout=10) as response:
+            self.assertEqual(response.headers.get_content_type(), "text/csv")
+            self.assertIn("attachment;", response.headers["Content-Disposition"])
+            self.assertIn("exchange", response.read().decode("utf-8"))
+
+    def test_dataset_data_preview_and_filtered_download(self) -> None:
+        submitted = self.request(
+            "POST",
+            "/v1/tasks",
+            {
+                "dataset": "findata-plugins/tushare_trade_cal",
+                "operation": "complete",
+                "operands": {
+                    "exchanges": ["SSE"],
+                    "timerange": "2026-07-01:2026-07-03",
+                },
+            },
+        )
+        self.assertEqual(self.wait_http(str(submitted["handle_id"]))["status"], "succeeded")
+        preview = self.request(
+            "GET",
+            "/v1/datasets/findata-plugins/tushare_trade_cal/data?key=SSE&start=2026-07-01&end=2026-07-03&column=exchange&column=cal_date&limit=1",
+        )
+        self.assertEqual(preview["limit"], 1)
+        self.assertEqual(len(preview["items"]), 1)
+        self.assertEqual(set(preview["items"][0]), {"exchange", "cal_date"})
+        request = Request(
+            f"{self.server.base_url}/v1/datasets/findata-plugins/tushare_trade_cal/download?format=csv&key=SSE&start=2026-07-01&end=2026-07-03&column=exchange&column=cal_date",
+            headers={"Authorization": f"Bearer {self.server.token}"},
+        )
+        with urlopen(request, timeout=10) as response:
+            rows = response.read().decode("utf-8").splitlines()
+        self.assertEqual(rows[0], '"exchange","cal_date"')
+        self.assertEqual(len(rows), 3)
+
+    def test_dataset_sql_preview_and_export(self) -> None:
+        submitted = self.request(
+            "POST",
+            "/v1/tasks",
+            {
+                "dataset": "findata-plugins/tushare_trade_cal",
+                "operation": "complete",
+                "operands": {
+                    "exchanges": ["SSE"],
+                    "timerange": "2026-07-01:2026-07-03",
+                },
+            },
+        )
+        self.assertEqual(self.wait_http(str(submitted["handle_id"]))["status"], "succeeded")
+        sql = "SELECT exchange, cal_date FROM data WHERE exchange = 'SSE' ORDER BY cal_date"
+        preview = self.request(
+            "POST",
+            "/v1/datasets/findata-plugins/tushare_trade_cal/data/query",
+            {"sql": sql, "limit": 1},
+        )
+        self.assertEqual(preview["limit"], 1)
+        self.assertEqual([column["name"] for column in preview["columns"]], ["exchange", "cal_date"])
+        self.assertEqual(len(preview["items"]), 1)
+        request = Request(
+            f"{self.server.base_url}/v1/datasets/findata-plugins/tushare_trade_cal/data/export",
+            data=json.dumps({"sql": sql, "format": "csv"}).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {self.server.token}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        with urlopen(request, timeout=10) as response:
+            rows = response.read().decode("utf-8").splitlines()
+        self.assertEqual(rows[0], '"exchange","cal_date"')
+        self.assertEqual(len(rows), 3)
+
+    def test_daily_basic_update_is_ready_with_or_without_coverage(self) -> None:
+        initial = json.loads(
+            self.run_cli(
+                "--format", "json", "dataset", "status", "findata-plugins/tushare_daily_basic"
+            )[1]
+        )
+        self.assertTrue(initial["update_ready"])
+
+        code, output = self.run_cli(
+            "--format",
+            "json",
+            "task",
+            "run",
+            "findata-plugins/tushare_daily_basic",
+            "update",
+            "--wait",
+        )
+        self.assertEqual(code, 0, output)
+        self.assertEqual(json.loads(output)["status"], "succeeded")
+
+        code, output = self.run_cli(
+            "--format",
+            "json",
+            "task",
+            "run",
+            "findata-plugins/tushare_daily_basic",
+            "complete",
+            "--param",
+            "symbols=000001.SZ",
+            "--param",
+            "timerange=2026-07-17:2026-07-20",
+            "--wait",
+        )
+        self.assertEqual(code, 0, output)
+
+        status = json.loads(
+            self.run_cli(
+                "--format", "json", "dataset", "status", "findata-plugins/tushare_daily_basic"
+            )[1]
+        )
+        self.assertTrue(status["update_ready"])
 
     def test_invalid_operation_is_rejected_without_creating_a_handle(self) -> None:
         with self.assertRaises(HTTPError) as caught:
@@ -782,6 +978,23 @@ class ServerCLITests(unittest.TestCase):
         self.assertEqual(plan["operands"]["timerange"], "2026-07-17:2026-07-20")
         self.assertEqual(self.request("GET", "/v1/tasks")["items"], before)
 
+    def test_dataset_complete_defaults_symbols_to_all(self) -> None:
+        code, rendered = self.run_cli(
+            "--format",
+            "json",
+            "dataset",
+            "complete",
+            "findata-plugins/tushare_daily_basic",
+            "--from",
+            "2026-07-17",
+            "--to",
+            "2026-07-20",
+            "--dry-run",
+        )
+
+        self.assertEqual(code, 0, rendered)
+        self.assertEqual(json.loads(rendered)["operands"]["symbols"], ["all"])
+
     def test_retry_and_explain_use_retained_normalized_request(self) -> None:
         submitted = self.request(
             "POST",
@@ -936,6 +1149,7 @@ class ServerCLITests(unittest.TestCase):
         self.assertEqual(job["expression"], "30 6 * * 1")
         self.assertEqual(job["timezone"], "UTC")
         self.assertEqual(job["source"], "override")
+        self.assertEqual(job["operation"], "update")
 
         self.run_cli("--format", "json", "cron", "enable", "findata-plugins/tushare_trade_cal")
         self.run_cli("--format", "json", "cron", "reset", "findata-plugins/tushare_trade_cal")

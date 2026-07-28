@@ -35,18 +35,26 @@ import {
   StateDot,
 } from "../components/common";
 import { useLiveData } from "../hooks";
-import { EMPTY_FIELD, buildOperands, fieldsForOperation, type FieldState } from "../operationForm";
+import { DatasetDataWorkspace } from "./DatasetData";
+import {
+  EMPTY_FIELD,
+  buildOperands,
+  defaultFieldValues,
+  fieldsForOperation,
+  type FieldState,
+} from "../operationForm";
 import { updateBlockedReason } from "../readiness";
 
-const TABS = ["overview", "run", "settings", "activity", "danger"] as const;
+const TABS = ["overview", "data", "run", "settings", "activity", "danger"] as const;
 type Tab = (typeof TABS)[number];
 
 const TAB_LABELS: Record<Tab, string> = {
   overview: "Overview",
+  data: "Data",
   run: "Run",
   settings: "Settings",
   activity: "Activity",
-  danger: "Danger zone",
+  danger: "Reset",
 };
 
 interface DetailData {
@@ -66,6 +74,14 @@ function readinessFacts(dataset: DatasetDescription, status: DatasetStatus | nul
       .filter((s) => s.required && !s.configured)
       .map((s) => s.key),
   };
+}
+
+function datasetLabel(name: string): string {
+  return name.slice(name.lastIndexOf("/") + 1).replace(/_/g, " ");
+}
+
+function fieldLabel(name: string): string {
+  return name.replace(/[_-]/g, " ");
 }
 
 export default function DatasetDetailPage() {
@@ -104,37 +120,33 @@ export default function DatasetDetailPage() {
       <ConnectionWarning error={live.error} />
       {data && facts && (
         <>
-          <div className="page-head">
-            <div className="page-head-main">
-              <h1>
-                <span className="mono">{data.dataset.name}</span>{" "}
+          <header className="dataset-detail-header">
+            <div className="dataset-detail-identity">
+              <Link to="/datasets" className="dataset-detail-back">← Datasets</Link>
+              <div className="dataset-detail-title-row">
+                <div>
+                  <h1>{datasetLabel(data.dataset.name)}</h1>
+                  <span className="mono dataset-detail-identifier">{data.dataset.name}</span>
+                </div>
                 <DatasetFreshness state={data.dataset.state} tasks={data.tasks} />
-              </h1>
+              </div>
               <DatasetDotStatus provider={data.dataset.provider} facts={facts} />
             </div>
-            <div className="page-head-actions">
-              <Link
-                className="btn"
-                to={`/events?dataset=${encodeURIComponent(data.dataset.name)}`}
-              >
-                Events
-              </Link>
-              <Link
-                className="btn"
-                to={`/cron?dataset=${encodeURIComponent(data.dataset.name)}`}
-              >
-                Cron
-              </Link>
-              <FreshnessNote lastUpdated={live.lastUpdated} />
+            <div className="dataset-detail-actions">
               <RunUpdateButton
                 dataset={data.dataset.name}
                 disabled={blocked !== null}
                 disabledReason={blocked ?? undefined}
               />
+              <span className="dataset-detail-secondary-actions">
+                <Link to={`/events?dataset=${encodeURIComponent(data.dataset.name)}`}>Events</Link>
+                <Link to={`/cron?dataset=${encodeURIComponent(data.dataset.name)}`}>Schedule</Link>
+                <FreshnessNote lastUpdated={live.lastUpdated} />
+              </span>
             </div>
-          </div>
+          </header>
 
-          <div className="tabs">
+          <div className="tabs dataset-detail-tabs">
             {TABS.map((key) => (
               <button
                 key={key}
@@ -152,6 +164,12 @@ export default function DatasetDetailPage() {
               status={data.status}
               allStatuses={data.allStatuses}
               tasks={data.tasks}
+            />
+          )}
+          {tab === "data" && (
+            <DatasetDataWorkspace
+              name={data.dataset.name}
+              preferredFormat={searchParams.get("format") === "parquet" ? "parquet" : "csv"}
             />
           )}
           {tab === "run" && <RunTab dataset={data.dataset} />}
@@ -184,35 +202,24 @@ function OverviewTab({
   tasks: TaskHandle[];
 }) {
   return (
-    <div>
-      <div className="panel">
-        <h3>Coverage</h3>
-        <p>
+    <div className="dataset-overview-grid">
+      <div className="panel dataset-overview-data">
+        <div className="dataset-overview-heading"><div><p className="eyebrow">Your data</p><h2>Availability</h2></div><Link to={`/datasets/${encodeURIComponent(dataset.name)}?tab=data`}>Explore data →</Link></div>
+        <div className="dataset-overview-coverage">
           <DatasetCoverage
             capabilities={dataset.capabilities}
             publicationId={dataset.publication_id}
             status={status}
             tasks={tasks}
           />
-        </p>
-        <dl className="kv">
-          <dt>storage</dt>
-          <dd className="mono">{dataset.storage}</dd>
-          <dt>publication</dt>
-          <dd>
-            {dataset.publication_id ? (
-              <CopyableId id={dataset.publication_id} />
-            ) : (
-              <span className="muted">—</span>
-            )}
-          </dd>
-        </dl>
+        </div>
+        <details className="dataset-overview-technical"><summary>Technical data details</summary><dl className="kv"><dt>storage</dt><dd className="mono">{dataset.storage}</dd><dt>publication</dt><dd>{dataset.publication_id ? <CopyableId id={dataset.publication_id} /> : <span className="muted">—</span>}</dd></dl></details>
       </div>
 
       <div className="panel">
-        <h3>Dependencies</h3>
+        <div className="dataset-overview-heading"><div><p className="eyebrow">Before you run</p><h2>Dependencies</h2></div></div>
         {dataset.dependencies.length === 0 ? (
-          <p className="muted">This dataset has no dependencies.</p>
+          <p className="muted">This dataset can run independently.</p>
         ) : (
           <div className="chips">
             {dataset.dependencies.map((dep) => {
@@ -228,8 +235,10 @@ function OverviewTab({
         )}
       </div>
 
-      <div className="panel">
-        <h3>Capabilities</h3>
+      <details className="panel details-panel dataset-capabilities">
+        <summary>
+          Technical capabilities <span>{Object.keys(dataset.capabilities).length}</span>
+        </summary>
         {Object.keys(dataset.capabilities).length === 0 ? (
           <p className="muted">This dataset declares no capabilities.</p>
         ) : (
@@ -240,7 +249,7 @@ function OverviewTab({
           </dl>
         )}
         <JsonBlock value={dataset.capabilities} label="capabilities JSON" />
-      </div>
+      </details>
     </div>
   );
 }
@@ -295,10 +304,10 @@ function RunTab({ dataset }: { dataset: DatasetDescription }) {
   const [confirming, setConfirming] = useState(false);
 
   useEffect(() => {
-    setValues({});
+    setValues(defaultFieldValues(fields));
     setPlan(null);
     setError(null);
-  }, [opName]);
+  }, [fields, opName]);
 
   const fieldState = (name: string): FieldState => values[name] ?? EMPTY_FIELD;
   const patchField = (name: string, patch: Partial<FieldState>): void =>
@@ -348,7 +357,7 @@ function RunTab({ dataset }: { dataset: DatasetDescription }) {
     <div>
       <div className="panel">
         <label className="field">
-          <span className="field-label">operation</span>
+          <span className="field-label">Choose an operation</span>
           <select value={opName} onChange={(e) => setOpName(e.target.value)}>
             {ops.map((o) => (
               <option key={o.name} value={o.name}>
@@ -363,17 +372,22 @@ function RunTab({ dataset }: { dataset: DatasetDescription }) {
         {fields.map((field) => (
           <label key={field.name} className="field">
             <span className="field-label">
-              {field.name} {field.required && <span className="req">*</span>}{" "}
-              <span className="muted">({field.kind})</span>
+              {fieldLabel(field.name)} {field.required && <span className="req">*</span>}
             </span>
             {field.help && (
               <span className="muted" style={{ display: "block", fontSize: 12, marginBottom: 3 }}>
                 {field.help}
               </span>
             )}
+            {field.kind === "date-range" && field.default === undefined && (
+              <span className="operation-default">default: year to date (including today)</span>
+            )}
+            {field.default !== undefined && (
+              <span className="operation-default">default: {JSON.stringify(field.default)}</span>
+            )}
             {field.kind === "array" && (
               <textarea
-                placeholder="one value per line"
+                placeholder="One value per line"
                 value={fieldState(field.name).text}
                 onChange={(e) => patchField(field.name, { text: e.target.value })}
               />
@@ -406,21 +420,21 @@ function RunTab({ dataset }: { dataset: DatasetDescription }) {
         <ErrorBanner error={error} />
         <div className="form-row">
           <button className="btn" disabled={busy !== null || !op} onClick={() => void dryRun()}>
-            {busy === "dry" ? "Planning…" : "Dry run"}
+            {busy === "dry" ? "Preparing preview…" : "Preview plan"}
           </button>
           <button
             className="btn btn-primary"
             disabled={busy !== null || !op}
             onClick={() => setConfirming(true)}
           >
-            Submit task
+            Run operation
           </button>
         </div>
       </div>
 
       {plan && (
         <div className="panel">
-          <h3>Plan</h3>
+          <h3>What will run</h3>
           <dl className="kv">
             {"strategy" in plan && (
               <>
@@ -474,14 +488,14 @@ function RunTab({ dataset }: { dataset: DatasetDescription }) {
 
       <ConfirmDialog
         open={confirming}
-        title="Submit task"
+        title="Run operation"
         message={
           <>
-            Submit <span className="mono">{opName}</span> on{" "}
+            Run <span className="mono">{opName}</span> on{" "}
             <span className="mono">{dataset.name}</span>?
           </>
         }
-        confirmLabel="Submit"
+        confirmLabel="Run operation"
         cliCommand={cliPreview}
         busy={busy === "submit"}
         onConfirm={() => void submit()}

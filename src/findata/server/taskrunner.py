@@ -588,7 +588,16 @@ class TaskRunner:
                 if isinstance(item.get("time"), (int, float)):
                     record["time"] = item["time"]
                 result.append(record)
-        return result
+            return result
+
+    def active_datasets(self) -> set[str]:
+        """Return datasets with queued, waiting, or running executions."""
+        with self._condition:
+            return {
+                execution.dataset
+                for execution in self._executions.values()
+                if execution.status in ACTIVE_STATES
+            }
 
     def retained_request(self, handle_id: str) -> dict[str, Any]:
         """Return the immutable normalized request behind a retained handle."""

@@ -303,7 +303,7 @@ gate regardless of elapsed time.
 ## Package-boundary checks
 
 Automated import checks reject dependencies from core modules to `findata.toolkit` or any plugin
-distribution (for example `findata_plugins.shared`). They also reject toolkit imports of concrete
+distribution (for example `findata_plugins.tushare.shared`). They also reject toolkit imports of concrete
 plugins and plugin-subpackage imports of another plugin subpackage or retired core plugin paths.
 Positive
 fixtures prove provider-then-dataset entry-point discovery and that a dataset plugin can use public

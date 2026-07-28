@@ -16,12 +16,12 @@ dependencies = [
 ]
 
 [project.entry-points."findata.datasets"]
-tushare_fund_daily = "findata_plugins.plugins.datasets.tushare_fund_daily:fund_daily_plugin"
+tushare_fund_daily = "findata_plugins.tushare.plugins.datasets.etf.fund_daily:fund_daily_plugin"
 
 [tool.hatch.build.targets.wheel]
-only-include = ["src/findata_plugins/plugins/datasets/tushare_fund_daily"]
+only-include = ["src/findata_plugins"]
 sources = ["src"]
 
 [tool.hatch.build.targets.sdist]
-only-include = ["src/findata_plugins/plugins/datasets/tushare_fund_daily"]
+only-include = ["src/findata_plugins"]
 sources = ["src"]

@@ -14,5 +14,5 @@ dependencies = [
 ]
 
 [tool.hatch.build.targets.wheel]
-only-include = ["src/findata_plugins/shared"]
+only-include = ["src/findata_plugins"]
 sources = ["src"]

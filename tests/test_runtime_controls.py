@@ -10,11 +10,11 @@ from findata.server.cron import CronManager, CronSchedule
 from findata.server.events import EventStore
 from findata.sdk.toolkit.rate_limit import FileRateLimiter
 from findata.storage import Workspace
-from findata_plugins.plugins.datasets.tushare_daily_basic import daily_basic_plugin
-from findata_plugins.plugins.datasets.tushare_index_basic import index_basic_plugin
-from findata_plugins.plugins.datasets.tushare_index_weight import index_weight_plugin
-from findata_plugins.plugins.datasets.tushare_stock_basic import stock_basic_plugin
-from findata_plugins.plugins.datasets.tushare_trade_cal import trade_cal_plugin
+from findata_plugins.tushare.plugins.datasets.stock.daily_basic import daily_basic_plugin
+from findata_plugins.tushare.plugins.datasets.index.index_basic import index_basic_plugin
+from findata_plugins.tushare.plugins.datasets.index.index_weight import index_weight_plugin
+from findata_plugins.tushare.plugins.datasets.stock.stock_basic import stock_basic_plugin
+from findata_plugins.tushare.plugins.datasets.stock.trade_cal import trade_cal_plugin
 
 
 def _suggested_schedules() -> dict[str, tuple[str, str]]:
@@ -122,6 +122,7 @@ class CronManagerTests(unittest.TestCase):
         jobs = self.manager.list_jobs(now=datetime(2026, 7, 20, 0, 0, tzinfo=UTC))
         self.assertEqual(len(jobs), 4)
         self.assertTrue(all(not job.enabled for job in jobs))
+        self.assertTrue(all(job.operation == "update" for job in jobs))
         self.manager.enable(
             "findata-plugins/tushare_daily_basic", now=datetime(2026, 7, 20, 0, 0, tzinfo=UTC)
         )

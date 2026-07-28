@@ -16,8 +16,8 @@ dependencies = [
 ]
 
 [project.entry-points."findata.datasets"]
-tushare_trade_cal = "findata_plugins.plugins.datasets.tushare_trade_cal:trade_cal_plugin"
+tushare_trade_cal = "findata_plugins.tushare.plugins.datasets.stock.trade_cal:trade_cal_plugin"
 
 [tool.hatch.build.targets.wheel]
-only-include = ["src/findata_plugins/plugins/datasets/tushare_trade_cal"]
+only-include = ["src/findata_plugins"]
 sources = ["src"]

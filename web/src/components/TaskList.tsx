@@ -8,6 +8,14 @@ export function ownerLabel(owner: string): string {
   return owner.startsWith("trigger:") ? "triggered" : owner;
 }
 
+function datasetLabel(name: string): string {
+  return name.slice(name.lastIndexOf("/") + 1).replace(/_/g, " ");
+}
+
+function operationLabel(operation: string): string {
+  return operation.replace(/[_-]/g, " ");
+}
+
 function DiagnosticBadges({ task }: { task: TaskHandle }) {
   const counts = task.diagnostic_counts;
   if (!counts || (counts.warning === 0 && counts.error === 0)) return null;
@@ -24,9 +32,7 @@ function DiagnosticBadges({ task }: { task: TaskHandle }) {
 }
 
 /**
- * Shared task table used by the Tasks page and the dataset Activity tab.
- * Rows offer inline actions: Cancel for active tasks, Retry and Explain for
- * failed/canceled ones.
+ * Shared task cards used by the Tasks page and the dataset Activity tab.
  */
 export function TaskList({
   items,
@@ -38,68 +44,55 @@ export function TaskList({
   showDataset?: boolean;
 }) {
   return (
-    <table>
-      <thead>
-        <tr>
-          <th>id</th>
-          {showDataset && <th>dataset</th>}
-          <th>operation</th>
-          <th>owner</th>
-          <th>status</th>
-          <th>progress</th>
-          <th>updated</th>
-          <th>actions</th>
-        </tr>
-      </thead>
-      <tbody>
-        {items.map((t) => {
+    <div className="task-list">
+      {items.map((t) => {
           const active = !TERMINAL_STATUSES.has(t.status);
           const retriable = t.status === "failed" || t.status === "canceled";
           return (
-            <tr key={t.handle_id}>
-              <td>
-                <Link to={`/tasks/${encodeURIComponent(t.handle_id)}`}>
-                  <CopyableId id={t.handle_id} />
-                </Link>
-              </td>
-              {showDataset && (
-                <td>
-                  <Link to={`/datasets/${encodeURIComponent(t.dataset)}`} className="mono">
-                    {t.dataset}
+            <article key={t.handle_id} className={`task-card status-${t.status}`}>
+              <div className="task-card-heading">
+                <div>
+                  <Link to={`/tasks/${encodeURIComponent(t.handle_id)}`} className="task-card-title">
+                    {operationLabel(t.operation)} {showDataset ? datasetLabel(t.dataset) : "task"}
                   </Link>
-                </td>
+                  {showDataset && (
+                    <div className="task-card-context">
+                      Dataset: <Link to={`/datasets/${encodeURIComponent(t.dataset)}`}>{datasetLabel(t.dataset)}</Link>
+                      <span className="mono">{t.dataset}</span>
+                    </div>
+                  )}
+                </div>
+                <span><StatusBadge status={t.status} /> <DiagnosticBadges task={t} /></span>
+              </div>
+              {active && (
+                <div className="task-card-progress">
+                  {t.progress ? (
+                    <ProgressBar progress={t.progress} />
+                  ) : (
+                    <span className="muted">{t.stage ?? t.reason ?? "Preparing task…"}</span>
+                  )}
+                  {t.progress && (t.stage || t.reason) && (
+                    <div className="muted progress-sub">{t.stage ?? t.reason}</div>
+                  )}
+                </div>
               )}
-              <td>{t.operation}</td>
-              <td className="muted">{ownerLabel(t.owner)}</td>
-              <td>
-                <StatusBadge status={t.status} /> <DiagnosticBadges task={t} />
-              </td>
-              <td>
-                {t.progress ? (
-                  <ProgressBar progress={t.progress} />
-                ) : (
-                  <span className="muted">{t.stage ?? t.reason ?? "—"}</span>
-                )}
-                {t.progress && (t.stage || t.reason) && (
-                  <div className="muted progress-sub">{t.stage ?? t.reason}</div>
-                )}
-              </td>
-              <td>
-                <Time unix={t.updated_at} />
-              </td>
-              <td className="row-actions">
+              {!active && t.reason && <p className="task-card-outcome">{t.reason}</p>}
+              <footer className="task-card-footer">
+                <span className="muted">Started by {ownerLabel(t.owner)} · updated <Time unix={t.updated_at} /></span>
+                <span className="task-card-actions">
                 {active && <CancelTaskButton task={t} onChanged={onChanged} />}
                 {retriable && (
                   <>
                     <RetryTaskButton task={t} />{" "}
-                    <Link to={`/tasks/${encodeURIComponent(t.handle_id)}`}>Explain</Link>
                   </>
                 )}
-              </td>
-            </tr>
+                <Link to={`/tasks/${encodeURIComponent(t.handle_id)}`}>{retriable ? "Review failure" : "View details"}</Link>
+                <CopyableId id={t.handle_id} />
+                </span>
+              </footer>
+            </article>
           );
-        })}
-      </tbody>
-    </table>
+      })}
+    </div>
   );
 }

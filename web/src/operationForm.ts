@@ -13,6 +13,7 @@ export interface FieldModel {
   kind: FieldKind;
   required: boolean;
   help?: string;
+  default?: unknown;
 }
 
 /** Raw per-field input state. `text` is used for array/text fields,
@@ -31,6 +32,7 @@ export function fieldsForOperation(op: OperationDescription): FieldModel[] {
     name,
     required: required.has(name),
     help: schema.help,
+    default: schema.default,
     kind:
       schema.type === "array"
         ? "array"
@@ -38,6 +40,36 @@ export function fieldsForOperation(op: OperationDescription): FieldModel[] {
           ? "date-range"
           : "text",
   }));
+}
+
+/** Converts schema defaults into the same state used by editable fields. */
+export function defaultFieldValues(
+  fields: FieldModel[],
+  now: Date = new Date(),
+): Record<string, FieldState> {
+  const formatDate = (value: Date): string => {
+    const year = value.getFullYear();
+    const month = String(value.getMonth() + 1).padStart(2, "0");
+    const day = String(value.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  };
+  const tomorrow = new Date(now);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+
+  return Object.fromEntries(
+    fields.flatMap((field) => {
+      if (field.kind === "array" && Array.isArray(field.default)) {
+        return [[field.name, { ...EMPTY_FIELD, text: field.default.map(String).join("\n") }]];
+      }
+      if (field.kind === "text" && typeof field.default === "string") {
+        return [[field.name, { ...EMPTY_FIELD, text: field.default }]];
+      }
+      if (field.kind === "date-range") {
+        return [[field.name, { ...EMPTY_FIELD, from: `${now.getFullYear()}-01-01`, to: formatDate(tomorrow) }]];
+      }
+      return [];
+    }),
+  );
 }
 
 /**

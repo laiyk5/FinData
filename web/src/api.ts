@@ -1,12 +1,13 @@
 /**
  * Typed client for the findata JSON HTTP API (base path /v1).
  *
- * Auth: every request sends `Authorization: Bearer <token>` read from
- * sessionStorage. Any 401 response clears the token and notifies the app
- * (via the `findata:unauthorized` window event) so it can redirect to login.
+ * Auth: requests use a bearer token from sessionStorage when present, or the
+ * HttpOnly browser session created by `findata web open`. Any 401 clears local
+ * auth hints and notifies the app so it can redirect to login.
  */
 
 export const TOKEN_KEY = "findata.token";
+export const COOKIE_SESSION_KEY = "findata.cookie-session";
 export const UNAUTHORIZED_EVENT = "findata:unauthorized";
 
 export class ApiError extends Error {
@@ -34,8 +35,26 @@ export function setToken(token: string): void {
 export function clearToken(): void {
   try {
     sessionStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(COOKIE_SESSION_KEY);
   } catch {
     // sessionStorage unavailable (e.g. privacy mode) — nothing to clear
+  }
+}
+
+export function setCookieSession(): void {
+  try {
+    localStorage.setItem(COOKIE_SESSION_KEY, "1");
+  } catch {
+    // Browser storage is unavailable — the HttpOnly cookie still authenticates requests.
+  }
+}
+
+export function hasStoredAuth(): boolean {
+  if (getToken()) return true;
+  try {
+    return localStorage.getItem(COOKIE_SESSION_KEY) === "1";
+  } catch {
+    return false;
   }
 }
 
@@ -149,6 +168,7 @@ export interface OperationPropertySchema {
   minItems?: number;
   format?: string;
   help?: string;
+  default?: unknown;
 }
 
 export interface OperationDescription {
@@ -177,7 +197,39 @@ export interface DatasetDescription {
   storage: string;
   state: "uninitialized" | "ready" | string;
   publication_id: string | null;
+  family?: string[];
   operations: OperationDescription[];
+}
+
+export interface DatasetDataSchema {
+  fields: { name: string; type: string; nullable: boolean }[];
+  primary_key: string[];
+  partition_key: string | null;
+  time_field: string | null;
+}
+
+export interface DatasetDataPreview {
+  dataset: string;
+  publication_id: string;
+  schema: DatasetDataSchema;
+  limit: number;
+  items: Record<string, unknown>[];
+}
+
+export interface DatasetSqlPreview {
+  dataset: string;
+  publication_id: string;
+  limit: number;
+  columns: { name: string; type: string }[];
+  items: Record<string, unknown>[];
+}
+
+export interface DatasetDataQuery {
+  keys?: string[];
+  start?: string;
+  end?: string;
+  columns?: string[];
+  limit?: number;
 }
 
 export interface DatasetStatus {
@@ -212,6 +264,7 @@ export interface Provider {
   configured?: boolean;
   mode: "mock" | "real";
   secret_fields?: string[];
+  family?: string[];
 }
 
 export interface ProviderCheck {
@@ -221,8 +274,16 @@ export interface ProviderCheck {
   mode: string;
 }
 
+export interface PluginRegistry {
+  providers: { name: string; family: string[] }[];
+  datasets: { name: string; family: string[] }[];
+  blocked: string[];
+  removed?: string[];
+}
+
 export interface CronJob {
   dataset: string;
+  operation: string;
   expression: string;
   timezone: string;
   enabled: boolean;
@@ -269,7 +330,7 @@ async function request<T>(
   const token = getToken();
   if (token) headers["Authorization"] = `Bearer ${token}`;
 
-  const init: RequestInit = { method, headers };
+  const init: RequestInit = { method, headers, credentials: "same-origin" };
   if (body !== undefined) {
     headers["Content-Type"] = "application/json";
     init.body = JSON.stringify(body);
@@ -297,6 +358,26 @@ async function request<T>(
     throw new ApiError(resp.status, message);
   }
   return data as T;
+}
+
+export async function exchangeWebSession(code: string): Promise<void> {
+  const response = await fetch("/v1/web/session/exchange", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({ code }),
+  });
+  if (!response.ok) {
+    let message = `HTTP ${response.status}`;
+    try {
+      const body = (await response.json()) as { error?: unknown };
+      if (typeof body.error === "string") message = body.error;
+    } catch {
+      // Keep the status fallback for non-JSON error bodies.
+    }
+    throw new ApiError(response.status, message);
+  }
+  setCookieSession();
 }
 
 /** Encode a URL path segment but preserve slashes so dataset names like
@@ -395,6 +476,103 @@ export function resetDataset(
   return request("POST", `/datasets/${enc(name)}/reset`, { confirm: true });
 }
 
+function datasetDataSearch(query: DatasetDataQuery & { format?: "csv" | "parquet" }): string {
+  const params = new URLSearchParams();
+  for (const key of query.keys ?? []) params.append("key", key);
+  for (const column of query.columns ?? []) params.append("column", column);
+  if (query.start) params.set("start", query.start);
+  if (query.end) params.set("end", query.end);
+  if (query.limit) params.set("limit", String(query.limit));
+  if (query.format) params.set("format", query.format);
+  const search = params.toString();
+  return search ? `?${search}` : "";
+}
+
+export function getDatasetData(name: string, query: DatasetDataQuery = {}): Promise<DatasetDataPreview> {
+  return request("GET", `/datasets/${enc(name)}/data${datasetDataSearch(query)}`);
+}
+
+export function queryDatasetSql(
+  name: string,
+  sql: string,
+  limit: number,
+): Promise<DatasetSqlPreview> {
+  return request("POST", `/datasets/${enc(name)}/data/query`, { sql, limit });
+}
+
+export async function exportDatasetSql(
+  name: string,
+  sql: string,
+  format: "csv" | "parquet",
+): Promise<void> {
+  const token = getToken();
+  const response = await fetch(`/v1/datasets/${enc(name)}/data/export`, {
+    method: "POST",
+    credentials: "same-origin",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ sql, format }),
+  });
+  if (!response.ok) {
+    if (response.status === 401) handleUnauthorized();
+    let message = `HTTP ${response.status}`;
+    try {
+      const body = (await response.json()) as { error?: unknown };
+      if (typeof body.error === "string") message = body.error;
+    } catch {
+      // Keep the status fallback for non-JSON error bodies.
+    }
+    throw new ApiError(response.status, message);
+  }
+  const filename =
+    response.headers.get("Content-Disposition")?.match(/filename="?([^";]+)"?/)?.[1] ??
+    `${name.replace(/\//g, "-")}-query.${format}`;
+  const url = URL.createObjectURL(await response.blob());
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
+export async function downloadDataset(
+  name: string,
+  format: "csv" | "parquet",
+  query: DatasetDataQuery = {},
+): Promise<void> {
+  const token = getToken();
+  const response = await fetch(`/v1/datasets/${enc(name)}/download${datasetDataSearch({ ...query, format })}`, {
+    credentials: "same-origin",
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!response.ok) {
+    if (response.status === 401) handleUnauthorized();
+    let message = `HTTP ${response.status}`;
+    try {
+      const body = (await response.json()) as { error?: unknown };
+      if (typeof body.error === "string") message = body.error;
+    } catch {
+      // Keep the status fallback for non-JSON error bodies.
+    }
+    throw new ApiError(response.status, message);
+  }
+  const filename =
+    response.headers.get("Content-Disposition")?.match(/filename="?([^";]+)"?/)?.[1] ??
+    `${name.replace(/\//g, "-")}.${format}`;
+  const url = URL.createObjectURL(await response.blob());
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
 export function listProviders(): Promise<{ items: Provider[] }> {
   return request("GET", "/providers");
 }
@@ -407,6 +585,22 @@ export function getProvider(
 
 export function checkProvider(name: string): Promise<ProviderCheck> {
   return request("GET", `/providers/${enc(name)}/check`);
+}
+
+export function getPlugins(): Promise<PluginRegistry> {
+  return request("GET", "/plugins");
+}
+
+export function reloadPlugins(): Promise<PluginRegistry> {
+  return request("POST", "/plugins/reload");
+}
+
+export function removePlugin(name: string): Promise<PluginRegistry> {
+  return request("DELETE", `/plugins/${enc(name)}`);
+}
+
+export function restorePlugin(name: string): Promise<PluginRegistry> {
+  return request("POST", `/plugins/${enc(name)}/restore`);
 }
 
 export function listCron(): Promise<{ items: CronJob[] }> {

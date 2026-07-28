@@ -20,6 +20,12 @@ plugin, opens a write connection, submits maintenance, or infers that missing co
 downloaded. File exports use a sibling temporary file and atomic rename, while stdout exports keep
 stdout data-only and send diagnostics to stderr.
 
+`findata web open` is a convenience login command, not a second authentication model: it reads the
+workspace token locally, asks the authenticated server for a one-time browser code, and opens the
+local WebUI. `findata-server status`, `stop`, and `restart` are workspace lifecycle commands. They
+verify the server descriptor with an authenticated request before reporting state or requesting
+graceful shutdown; they never search for or blindly signal a process.
+
 Coverage presentation preserves the stored half-open start and end dates. An optional requested
 half-open interval is compared with the same central coverage record to expose completeness and
 exact gaps without initiating maintenance. The human renderer treats dates as first-class table

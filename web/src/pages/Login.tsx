@@ -1,13 +1,42 @@
-import { useState, type FormEvent } from "react";
-import { useNavigate } from "react-router";
-import { ApiError, clearToken, errorMessage, getSystemStatus, setToken } from "../api";
+import { useEffect, useState, type FormEvent } from "react";
+import { useLocation, useNavigate } from "react-router";
+import {
+  ApiError,
+  clearToken,
+  errorMessage,
+  exchangeWebSession,
+  getSystemStatus,
+  setToken,
+} from "../api";
 import { BrandIcon } from "../components/icons";
 
 export default function LoginPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [token, setTokenInput] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    const code = new URLSearchParams(location.search).get("code");
+    if (!code) return;
+    let active = true;
+    setBusy(true);
+    setError(null);
+    void exchangeWebSession(code)
+      .then(() => {
+        if (active) navigate("/", { replace: true });
+      })
+      .catch((err: unknown) => {
+        if (active) setError(errorMessage(err));
+      })
+      .finally(() => {
+        if (active) setBusy(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [location.search, navigate]);
 
   const submit = async (e: FormEvent): Promise<void> => {
     e.preventDefault();
@@ -40,10 +69,14 @@ export default function LoginPage() {
           </span>
           findata
         </h1>
-        <p className="muted">Paste the workspace token to continue.</p>
         <p className="muted">
-          Find it with <code>findata-server token &lt;workspace&gt;</code> or in the{" "}
-          <code>token</code> file inside the workspace directory.
+          {busy && new URLSearchParams(location.search).has("code")
+            ? "Signing you in…"
+            : "Paste the workspace token to continue."}
+        </p>
+        <p className="muted">
+          Run <code>findata web open</code> to sign in automatically, or find the token with{" "}
+          <code>findata-server token &lt;workspace&gt;</code>.
         </p>
         {error && <div className="error-banner">{error}</div>}
         <input

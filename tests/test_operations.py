@@ -12,24 +12,24 @@ from findata import DataLoader
 from findata.sdk.contracts import OperandError
 from findata.sdk.plugins import register_plugins
 from findata.storage import Workspace
-from findata_plugins.plugins.datasets.tushare_daily_basic import (
+from findata_plugins.tushare.plugins.datasets.stock.daily_basic import (
     DAILY_BASIC_SPEC,
     daily_basic_plugin,
 )
-from findata_plugins.plugins.datasets.tushare_daily_basic.operations import DailyBasicDatasetService
-from findata_plugins.plugins.datasets.tushare_index_basic import index_basic_plugin
-from findata_plugins.plugins.datasets.tushare_index_basic.operations import IndexBasicDatasetService
-from findata_plugins.plugins.datasets.tushare_index_weight import index_weight_plugin
-from findata_plugins.plugins.datasets.tushare_index_weight.operations import (
+from findata_plugins.tushare.plugins.datasets.stock.daily_basic.operations import DailyBasicDatasetService
+from findata_plugins.tushare.plugins.datasets.index.index_basic import index_basic_plugin
+from findata_plugins.tushare.plugins.datasets.index.index_basic.operations import IndexBasicDatasetService
+from findata_plugins.tushare.plugins.datasets.index.index_weight import index_weight_plugin
+from findata_plugins.tushare.plugins.datasets.index.index_weight.operations import (
     IndexWeightDatasetService,
 )
-from findata_plugins.plugins.providers.tushare.provider import tushare_provider_plugin
-from findata_plugins.shared.engine import TushareClient
-from findata_plugins.shared.testing import MockTushareTransport
-from findata_plugins.plugins.datasets.tushare_stock_basic import stock_basic_plugin
-from findata_plugins.plugins.datasets.tushare_stock_basic.operations import StockBasicDatasetService
-from findata_plugins.plugins.datasets.tushare_trade_cal import trade_cal_plugin
-from findata_plugins.plugins.datasets.tushare_trade_cal.operations import TradeCalDatasetService
+from findata_plugins.tushare.plugins.providers.tushare.provider import tushare_provider_plugin
+from findata_plugins.tushare.shared.engine import TushareClient
+from findata_plugins.tushare.shared.testing import MockTushareTransport
+from findata_plugins.tushare.plugins.datasets.stock.stock_basic import stock_basic_plugin
+from findata_plugins.tushare.plugins.datasets.stock.stock_basic.operations import StockBasicDatasetService
+from findata_plugins.tushare.plugins.datasets.stock.trade_cal import trade_cal_plugin
+from findata_plugins.tushare.plugins.datasets.stock.trade_cal.operations import TradeCalDatasetService
 
 
 def register_v1_datasets(workspace: Workspace) -> None:
@@ -369,6 +369,59 @@ class DatasetOperationTests(unittest.TestCase):
             set(coverage.column("key").to_pylist()), {"000001.SZ", "600000.SH", "600519.SH"}
         )
 
+    def test_daily_update_defaults_to_stored_symbols(self) -> None:
+        self.service.run(
+            "findata-plugins/tushare_daily_basic",
+            "complete",
+            {"symbols": ["000001.SZ"], "timerange": "2026-07-17:2026-07-20"},
+        )
+
+        next_day = DatasetService(
+            self.workspace,
+            TushareClient(token="test-token", transport=self.transport),
+            today=date(2026, 7, 21),
+        )
+        next_day.run("findata-plugins/tushare_daily_basic", "update", {})
+
+        requests = [
+            item["params"]
+            for item in self.transport.requests
+            if item["api_name"] == "daily_basic"
+        ]
+        self.assertIn(
+            {"ts_code": "000001.SZ", "start_date": "20260720", "end_date": "20260721"},
+            requests,
+        )
+
+    def test_daily_update_with_no_stored_symbols_is_a_noop(self) -> None:
+        result = self.service.run("findata-plugins/tushare_daily_basic", "update", {})
+
+        self.assertEqual(result.fetched_requests, 0)
+        self.assertIsNone(result.publication_id)
+        self.assertEqual(self.transport.requests, [])
+
+    def test_index_weight_update_defaults_to_stored_indexes(self) -> None:
+        self.service.run(
+            "findata-plugins/tushare_index_basic", "complete", {"indexes": ["tushare:000300.SH"]}
+        )
+        self.service.run(
+            "findata-plugins/tushare_index_weight",
+            "complete",
+            {"indexes": ["tushare:000300.SH"], "timerange": "2026-06-01:2026-07-01"},
+        )
+
+        self.service.run("findata-plugins/tushare_index_weight", "update", {})
+
+        requests = [
+            item["params"]
+            for item in self.transport.requests
+            if item["api_name"] == "index_weight"
+        ]
+        self.assertIn(
+            {"index_code": "000300.SH", "start_date": "20260701", "end_date": "20260731"},
+            requests,
+        )
+
     def test_mid_backfill_failure_keeps_checkpoints_and_rerun_fetches_only_missing_work(
         self,
     ) -> None:
@@ -487,6 +540,23 @@ class DatasetOperationTests(unittest.TestCase):
                 "000001.SZ": (date(2026, 7, 20), date(2026, 7, 21)),
                 "600000.SH": (date(2026, 7, 20), date(2026, 7, 21)),
             },
+        )
+
+    def test_complete_defaults_to_all_and_commits_the_full_market_snapshot(self) -> None:
+        self.service.run(
+            "findata-plugins/tushare_daily_basic",
+            "complete",
+            {"timerange": "2026-07-20:2026-07-21"},
+        )
+
+        requests = [
+            item["params"] for item in self.transport.requests if item["api_name"] == "daily_basic"
+        ]
+        self.assertEqual(requests, [{"trade_date": "20260720"}])
+        daily = DataLoader(self.root).dataset("findata-plugins/tushare_daily_basic").query()
+        self.assertEqual(
+            set(daily.column("ts_code").to_pylist()),
+            {"000001.SZ", "600000.SH", "600519.SH"},
         )
 
     def test_per_symbol_shape_when_few_symbols_cover_many_dates(self) -> None:

@@ -20,9 +20,10 @@ calendar month; a month with no row means that no new snapshot superseded the pr
 - **observation domain**: dated provider snapshots; monthly intervals are request and logical query
   buckets, not assertions that every month must contain a new snapshot
 - **settings**:
-  - `dataset.findata-plugins/tushare_index_weight.update_indexes`: required nonempty array for `update`; the plugin
-    accepts unsuffixed, metadata-validated `tushare:<ts_code>` references, preserves the exact
-    Tushare code, and owns all parsing and validation
+  - `dataset.findata-plugins/tushare_index_weight.update_indexes`: optional nonempty array for `update`, defaulting
+    to `['stored']`, which selects the indexes already represented by committed coverage. The plugin accepts
+    unsuffixed, metadata-validated `tushare:<ts_code>` references, preserves the exact Tushare code, and owns all
+    parsing and validation
 - **publication timing**: future months are before-window; the current month is mutable and is
   re-fetched whenever an operation needs it; earlier queried months are final
 - **suggested schedule**: cron `0 18 * * 1`, `Asia/Shanghai`
@@ -36,8 +37,8 @@ calendar month; a month with no row means that no new snapshot superseded the pr
   reference to its exact materialized `ts_code`, expands the half-open range to intersecting calendar
   months plus one predecessor month, and maps missing query coverage to `complete`
 - **operations**:
-  - `update()` — extend every configured `update_indexes` entry through the current month and
-    re-fetch that mutable month; a missing or empty setting is rejected
+  - `update()` — extend every coverage-selected index through the current month and re-fetch that mutable month; an
+    explicit `update_indexes` setting overrides the default selector
   - `complete(indexes, timerange)` — fetch every intersecting historical or current calendar month
     for the requested unsuffixed `tushare:<ts_code>` references while preserving continuous monthly
     coverage
@@ -50,8 +51,8 @@ calendar month; a month with no row means that no new snapshot superseded the pr
 - **status fields**: resolved month range and constituent count per index
 
 No operation infers an index from `findata-plugins/tushare_index_basic` metadata. `complete` and dependency
-fulfillment process only their explicit references and never add them to `update_indexes`; only a
-user configuration mutation changes the maintained set.
+fulfillment process only their explicit references and never add them to an explicit `update_indexes` setting; the
+default `stored` selector follows only this dataset's committed coverage.
 
 The constituent-set resolver uses `trade_date`, never `effective_month`, for point-in-time meaning.
 `<reference>@YYYYMM` selects the latest snapshot effective by that month-end. `<reference>@latest`

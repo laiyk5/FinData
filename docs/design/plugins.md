@@ -33,15 +33,15 @@ which the namespace owner controls and the framework validates at discovery.
 
 - Full-name shape: `<namespace>/<local>` with `[a-z0-9_-]+` components.
 - The namespace of a plugin is derived, not declared: an entry point's module path
-  determines its top-level package (e.g. `findata_plugins.plugins.datasets.foo` →
+  determines its top-level package (e.g. `findata_plugins.tushare.plugins.datasets.stock.foo` →
   `findata-plugins`), and validation requires the plugin's full name to match
   `<that namespace>/<leaf name>`. A plugin can never impersonate another namespace —
   it physically cannot live there.
 - Official example: namespace `findata_plugins`; provider `findata-plugins/tushare`
-  at `findata_plugins.plugins.providers.tushare`; datasets
+  at `findata_plugins.tushare.plugins.providers.tushare`; stock datasets such as
   `findata-plugins/tushare_daily_basic` at
-  `findata_plugins.plugins.datasets.tushare_daily_basic`; shared machinery at
-  `findata_plugins.shared`. Third parties mirror the layout under their own namespace.
+  `findata_plugins.tushare.plugins.datasets.stock.daily_basic`; shared machinery at
+  `findata_plugins.tushare.shared`. Third parties choose their own repository and family segments.
 - The framework's own top-level package (`findata`) is a regular package and is never
   a plugin namespace.
 
@@ -79,11 +79,12 @@ place. The three granularities are independent:
 - the family repository adds an umbrella distribution (metadata only, no entry points)
   for users who *want* the whole namespace in one install.
 
-Within a namespace, plugin code follows one layout convention: provider plugins under
-`<ns>.plugins.providers`, dataset plugins under `<ns>.plugins.datasets`, shared
-machinery under `<ns>.shared`. The convention makes any namespace's anatomy
-predictable; the framework only requires the namespace/full-name coherence described
-under *Naming*.
+Within a namespace, plugin code follows the layout `<ns>.<repository>.plugins.providers`
+and `<ns>.<repository>.plugins.datasets.<family>`, with shared machinery at
+`<ns>.<repository>.shared`. Repository and family segments are publisher-owned and may have any
+depth; they classify packages without changing plugin IDs. The framework only requires the
+namespace/full-name coherence described under *Naming*. Plugins expose the same family path as
+metadata so clients can group them without parsing package imports.
 
 ## Dependency model: the relations, kept apart
 
@@ -219,7 +220,9 @@ plugin's full name must match its module's namespace — for official and third-
 plugins alike; there is no distribution-name prefix convention beyond that coherence
 check. Installed plugins **mount automatically**: discovery → namespace validation →
 dependency validation → storage registration, with no configuration required, and
-unmount on uninstall.
+unmount on uninstall. A running server can reload discovery or remove and restore a mounted plugin
+without a process restart. Reload and removal are rejected while affected datasets have active work;
+every successful change atomically replaces the live registry and refreshes suggested schedules.
 
 A workspace may block plugins via the `plugins.blocked` configuration key (dataset or
 provider full names). A blocked plugin does not register and is invisible to routing
@@ -228,9 +231,10 @@ a declared data dependency or a mounted dataset's provider — and every repair 
 unknown entry) logs a warning. Registration, server discovery, and the task-process
 dispatcher apply the same filter.
 
-!!! note "Server restart required"
-    The blocklist is read at server startup only. Changing ``plugins.blocked`` while
-    the server is running has no effect until the next ``findata-server start``.
+The blocklist remains persistent workspace policy. Plugin removal adds the selected plugin and its
+mounted dependents to that blocklist; restoration removes the requested block and rediscovery
+repairs any required dependency closure before mounting. Hot changes never delete dataset data,
+configuration, or task history.
 
 ## Official plugins
 
@@ -238,16 +242,27 @@ The official Tushare family is the reference implementation and lives in one fam
 repository (`plugins/` in this workspace **only while the contracts stabilize**, then
 its own repository), all contributing to the `findata_plugins` namespace package:
 
-- `findata-plugins-providers-tushare` → `findata_plugins.plugins.providers.tushare`:
+- `findata-plugins-providers-tushare` → `findata_plugins.tushare.plugins.providers.tushare`:
   the provider plugin (`findata-plugins/tushare`) with its configuration schema and
   readiness probe; the client and transport adapter it uses live in shared so dataset
   engines never import the provider leaf;
-- `findata-plugins-shared` → `findata_plugins.shared`: the client/transport adapter,
+- `findata-plugins-shared` → `findata_plugins.tushare.shared`: the client/transport adapter,
   publication timing, mock transport, shared operation engine;
-- `findata-plugins-datasets-tushare-*` → `findata_plugins.plugins.datasets.tushare_*`:
-  five dataset plugins (`findata-plugins/tushare_<name>`), each an independent
+- `findata-plugins-datasets-tushare-*` → `findata_plugins.tushare.plugins.datasets.<family>.<name>`:
+  dataset plugins (`findata-plugins/tushare_<name>`), each an independent
   distribution pulling exactly its own data-dependency chain;
 - `findata-plugins` → metadata-only umbrella for the whole namespace.
+
+The official family paths are classification metadata as well as import structure:
+
+- `stock`: trade calendar, stock basic, and daily basic datasets;
+- `etf`: ETF basic, ETF index, and fund daily datasets;
+- `fund`: fund basic and fund factor datasets; and
+- `index`: index basic, index weight, and index daily-basic datasets.
+
+The `findata_plugins.tushare` family is the umbrella for all of the preceding provider and dataset
+plugins. These paths are publisher-owned labels: another repository can use a different hierarchy
+without changing plugin IDs, storage names, or core discovery.
 
 ## Invariants enforced by tests
 

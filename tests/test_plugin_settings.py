@@ -8,15 +8,15 @@ from pathlib import Path
 
 from findata.sdk.plugins import register_plugins
 from findata.storage import Workspace
-from findata_plugins.plugins.datasets.tushare_daily_basic import daily_basic_plugin
-from findata_plugins.plugins.datasets.tushare_index_basic import index_basic_plugin
-from findata_plugins.plugins.datasets.tushare_index_basic.operations import IndexBasicDatasetService
-from findata_plugins.plugins.datasets.tushare_index_weight import index_weight_plugin
-from findata_plugins.plugins.providers.tushare.provider import tushare_provider_plugin
-from findata_plugins.shared.engine import TushareClient
-from findata_plugins.shared.testing import MockTushareTransport
-from findata_plugins.plugins.datasets.tushare_stock_basic import stock_basic_plugin
-from findata_plugins.plugins.datasets.tushare_trade_cal import trade_cal_plugin
+from findata_plugins.tushare.plugins.datasets.stock.daily_basic import daily_basic_plugin
+from findata_plugins.tushare.plugins.datasets.index.index_basic import index_basic_plugin
+from findata_plugins.tushare.plugins.datasets.index.index_basic.operations import IndexBasicDatasetService
+from findata_plugins.tushare.plugins.datasets.index.index_weight import index_weight_plugin
+from findata_plugins.tushare.plugins.providers.tushare.provider import tushare_provider_plugin
+from findata_plugins.tushare.shared.engine import TushareClient
+from findata_plugins.tushare.shared.testing import MockTushareTransport
+from findata_plugins.tushare.plugins.datasets.stock.stock_basic import stock_basic_plugin
+from findata_plugins.tushare.plugins.datasets.stock.trade_cal import trade_cal_plugin
 
 
 def register_v1_datasets(workspace: Workspace) -> None:

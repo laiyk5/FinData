@@ -12,12 +12,12 @@ from findata.sdk.plugins import (
 )
 from findata.server.server import initialize_workspace
 from findata.storage import Workspace
-from findata_plugins.plugins.datasets.tushare_daily_basic import daily_basic_plugin
-from findata_plugins.plugins.datasets.tushare_index_basic import index_basic_plugin
-from findata_plugins.plugins.datasets.tushare_index_weight import index_weight_plugin
-from findata_plugins.plugins.providers.tushare.provider import tushare_provider_plugin
-from findata_plugins.plugins.datasets.tushare_stock_basic import stock_basic_plugin
-from findata_plugins.plugins.datasets.tushare_trade_cal import trade_cal_plugin
+from findata_plugins.tushare.plugins.datasets.stock.daily_basic import daily_basic_plugin
+from findata_plugins.tushare.plugins.datasets.index.index_basic import index_basic_plugin
+from findata_plugins.tushare.plugins.datasets.index.index_weight import index_weight_plugin
+from findata_plugins.tushare.plugins.providers.tushare.provider import tushare_provider_plugin
+from findata_plugins.tushare.plugins.datasets.stock.stock_basic import stock_basic_plugin
+from findata_plugins.tushare.plugins.datasets.stock.trade_cal import trade_cal_plugin
 
 
 def builtin_plugins():

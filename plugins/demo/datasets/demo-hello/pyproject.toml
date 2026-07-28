@@ -15,12 +15,12 @@ dependencies = [
 ]
 
 [project.entry-points."findata.datasets"]
-demo_hello = "findata_test.plugins.datasets.demo_hello:demo_hello_plugin"
+demo_hello = "findata_test.demo.plugins.datasets.examples.hello:demo_hello_plugin"
 
 [tool.hatch.build.targets.wheel]
-only-include = ["src/findata_test/plugins/datasets/demo_hello"]
+only-include = ["src/findata_test"]
 sources = ["src"]
 
 [tool.hatch.build.targets.sdist]
-only-include = ["src/findata_test/plugins/datasets/demo_hello"]
+only-include = ["src/findata_test"]
 sources = ["src"]

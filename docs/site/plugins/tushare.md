@@ -20,6 +20,19 @@ See [Installation](../get-started/installation.md).
 
 ## Datasets
 
+The official packages are classified into families in the WebUI catalog while retaining their stable
+dataset IDs:
+
+| Family | Datasets |
+|---|---|
+| Stock | Trade calendar, stock basic, daily basic |
+| ETF | ETF basic, ETF index, fund daily |
+| Fund | Fund basic, fund factor |
+| Index | Index basic, index weight, index daily-basic |
+
+The `findata_plugins.tushare` namespace is the umbrella for all of these datasets and the Tushare
+provider. Other publishers can define their own family hierarchy without changing plugin IDs.
+
 | Dataset | Contents | Operations | Settings |
 |---|---|---|---|
 | `findata-plugins/tushare_trade_cal` | Exchange trade calendars (SSE, SZSE) | `update`, `complete` | — |
@@ -28,6 +41,11 @@ See [Installation](../get-started/installation.md).
 | `findata-plugins/tushare_index_weight` | Monthly index constituent weights | `update`, `complete` | `update_indexes` |
 | `findata-plugins/tushare_daily_basic` | Daily valuation metrics (PE, PB, turnover, …) | `update`, `complete`, `refresh` | `update_symbols` |
 | `findata-plugins/tushare_fund_daily` | ETF daily market data (open, close, high, low, volume, …) | `update`, `complete`, `refresh` | `update_symbols` |
+
+For the three symbol- or index-scoped datasets, `update_symbols` and `update_indexes` default to `['stored']`.
+After a `complete` seeds coverage, scheduled `update` runs maintain exactly those stored keys without further
+configuration. Before coverage exists, that default is a successful no-op, so its suggested cron job can still be
+enabled. Set an explicit selector only to maintain a different or broader set.
 
 ## Provider
 

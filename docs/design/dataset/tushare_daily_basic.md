@@ -22,9 +22,9 @@ Per-symbol daily valuation, share, and market-value indicators.
 - **keys**: primary key `(ts_code, trade_date)`; partition key `ts_code`; time field `trade_date`
 - **observation domain**: SSE/SZSE open trading dates from `findata-plugins/tushare_trade_cal`; a suspension can resolve without a row
 - **settings**:
-  - `dataset.findata-plugins/tushare_daily_basic.update_symbols`: required nonempty array for `update`; the plugin
-    accepts direct Tushare security codes or its own `tushare:<ts_code>[@<selection>]`
-    constituent-set selector syntax
+  - `dataset.findata-plugins/tushare_daily_basic.update_symbols`: optional nonempty array for `update`, defaulting
+    to `['stored']`, which selects the symbols already represented by committed coverage. The plugin accepts direct
+    Tushare security codes or its own `tushare:<ts_code>[@<selection>]` constituent-set selector syntax
   - `tushare:000300.SH@latest` resolves the membership month containing each update's latest due
     trading date and requires that month to be covered
   - the setting is unrelated to explicit `complete` operands and changing it never removes
@@ -39,7 +39,9 @@ Per-symbol daily valuation, share, and market-value indicators.
     reference metadata
   - `findata-plugins/tushare_index_weight` with requirement `{indexes, timerange}` for symbolic constituent selectors
 - **operations**:
-  - `update()` — resolve the configured `update_symbols` for the latest due trading date and extend those symbols through the next civil-date endpoint; a newly selected symbol begins at that latest due date
+  - `update()` — extend the coverage-selected symbols through the latest due trading date and the next civil-date
+    endpoint; an explicit `update_symbols` setting overrides the default selector, and a newly selected symbol begins
+    at that latest due date
   - `complete(symbols, timerange)` — backfill or extend the requested canonical symbols and constituent selectors; a disjoint range is extended toward existing coverage until the intervals abut
   - `refresh(symbols, timerange)` — re-fetch the explicit symbols strictly inside their existing resolved coverage; both operands are required and symbolic selectors use the same range-based semantics as `complete`
 - **backfill visibility**: `complete` logs requested versus fetched ranges and warns per symbol when continuity causes the fetched span to exceed twice the requested span

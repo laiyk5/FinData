@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from contextlib import AbstractContextManager
 from datetime import date
+import re
 from pathlib import Path
 from typing import Any
 
@@ -154,6 +155,31 @@ class DatasetReader:
                     limit=limit,
                     require_coverage=require_coverage,
                 )
+            finally:
+                connection.close()
+
+    def query_sql(self, sql: str, *, limit: int | None = None) -> pa.Table:
+        """Run one guarded read-only SQL query against this dataset's ``data`` relation.
+
+        The query executes through the same locked, read-only DataLoader connection
+        as :meth:`query`. It accepts one ``SELECT`` statement whose only source
+        relation is the dataset's public ``data`` table.
+        """
+        statement = _guard_dataset_sql(sql)
+        if limit is not None:
+            if not isinstance(limit, int) or isinstance(limit, bool) or not 0 < limit <= 1_000:
+                raise QueryError("limit must be an integer between 1 and 1000")
+            statement = f"select * from ({statement}) as findata_query limit ?"
+            parameters: list[Any] = [limit]
+        else:
+            parameters = []
+        with self._shared_gate():
+            connection = self._connect()
+            try:
+                self._ready_metadata(connection)
+                return connection.execute(statement, parameters).to_arrow_table().combine_chunks()
+            except duckdb.Error as exc:
+                raise QueryError(f"dataset SQL query failed: {exc}") from exc
             finally:
                 connection.close()
 
@@ -464,3 +490,30 @@ def _in_clause(field: str, values: Sequence[Any], *, negate: bool) -> str:
 
 def _quote_identifier(value: str) -> str:
     return '"' + value.replace('"', '""') + '"'
+
+
+def _guard_dataset_sql(sql: str) -> str:
+    """Permit one read-only SELECT over the public ``data`` relation only."""
+    if not isinstance(sql, str) or not sql.strip():
+        raise QueryError("SQL query must be a nonempty string")
+    statement = sql.strip()
+    normalized = statement.lower()
+    if ";" in normalized or "--" in normalized or "/*" in normalized:
+        raise QueryError("SQL query must contain one statement without comments")
+    if not normalized.startswith("select"):
+        raise QueryError("SQL query must start with SELECT")
+    if len(re.findall(r"\bselect\b", normalized)) != 1:
+        raise QueryError("SQL subqueries are not supported")
+    if re.search(r"\b(join|union|intersect|except)\b", normalized):
+        raise QueryError("SQL joins and set operations are not supported")
+    if re.search(
+        r"\b(read_[a-z_]*|parquet_scan|csv_scan|sqlite_scan|postgres_scan|httpfs|glob|query_table|pragma_[a-z_]*)\b",
+        normalized,
+    ):
+        raise QueryError("SQL query may only read the dataset data relation")
+    source = re.search(r'\bfrom\s+("data"|data)\b', normalized)
+    if source is None:
+        raise QueryError("SQL query must read from the dataset data relation")
+    if re.match(r"\s*,", normalized[source.end() :]):
+        raise QueryError("SQL query may only use one source relation")
+    return statement

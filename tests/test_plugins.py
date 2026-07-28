@@ -19,22 +19,22 @@ from findata.sdk.plugins import (
 )
 from findata.storage import Workspace
 from findata.server.taskrunner import TaskContext
-from findata_plugins.plugins.datasets.tushare_daily_basic import daily_basic_plugin
-from findata_plugins.plugins.datasets.tushare_daily_basic.operations import DailyBasicDatasetRuntime
-from findata_plugins.plugins.datasets.tushare_index_basic import index_basic_plugin
-from findata_plugins.plugins.datasets.tushare_index_basic.operations import IndexBasicDatasetRuntime
-from findata_plugins.plugins.datasets.tushare_index_weight import index_weight_plugin
-from findata_plugins.plugins.datasets.tushare_index_weight.operations import (
+from findata_plugins.tushare.plugins.datasets.stock.daily_basic import daily_basic_plugin
+from findata_plugins.tushare.plugins.datasets.stock.daily_basic.operations import DailyBasicDatasetRuntime
+from findata_plugins.tushare.plugins.datasets.index.index_basic import index_basic_plugin
+from findata_plugins.tushare.plugins.datasets.index.index_basic.operations import IndexBasicDatasetRuntime
+from findata_plugins.tushare.plugins.datasets.index.index_weight import index_weight_plugin
+from findata_plugins.tushare.plugins.datasets.index.index_weight.operations import (
     IndexWeightDatasetRuntime,
 )
-from findata_plugins.plugins.providers.tushare.provider import (
+from findata_plugins.tushare.plugins.providers.tushare.provider import (
     TushareProviderRuntime,
     tushare_provider_plugin,
 )
-from findata_plugins.plugins.datasets.tushare_stock_basic import stock_basic_plugin
-from findata_plugins.plugins.datasets.tushare_stock_basic.operations import StockBasicDatasetRuntime
-from findata_plugins.plugins.datasets.tushare_trade_cal import trade_cal_plugin
-from findata_plugins.plugins.datasets.tushare_trade_cal.operations import TradeCalDatasetRuntime
+from findata_plugins.tushare.plugins.datasets.stock.stock_basic import stock_basic_plugin
+from findata_plugins.tushare.plugins.datasets.stock.stock_basic.operations import StockBasicDatasetRuntime
+from findata_plugins.tushare.plugins.datasets.stock.trade_cal import trade_cal_plugin
+from findata_plugins.tushare.plugins.datasets.stock.trade_cal.operations import TradeCalDatasetRuntime
 
 
 def tushare_dataset_plugins():
@@ -62,6 +62,14 @@ class PluginRegistryTests(unittest.TestCase):
                 },
                 {plugin.name for plugin in plugins},
             )
+
+    def test_plugin_families_follow_the_published_namespace_taxonomy(self) -> None:
+        self.assertEqual(tushare_provider_plugin().family, ("tushare",))
+        self.assertEqual(trade_cal_plugin().family, ("tushare", "stock"))
+        self.assertEqual(stock_basic_plugin().family, ("tushare", "stock"))
+        self.assertEqual(daily_basic_plugin().family, ("tushare", "stock"))
+        self.assertEqual(index_basic_plugin().family, ("tushare", "index"))
+        self.assertEqual(index_weight_plugin().family, ("tushare", "index"))
 
     def test_registration_rejects_missing_update_and_dependency_cycles(self) -> None:
         first, second, *_ = tushare_dataset_plugins()
@@ -112,19 +120,16 @@ class PluginRegistryTests(unittest.TestCase):
     def test_plugin_distributions_never_import_another_plugin(self) -> None:
         # Shared may import only findata.* and third-party libraries; the
         # provider and dataset leaves may additionally import
-        # findata_plugins.shared. No leaf may import another leaf.
-        shared = "findata_plugins.shared"
-        provider_leaf = "findata_plugins.plugins.providers.tushare"
+        # findata_plugins.tushare.shared. No leaf may import another leaf.
+        shared = "findata_plugins.tushare.shared"
+        provider_leaf = "findata_plugins.tushare.plugins.providers.tushare"
         dataset_leaves = {
-            f"findata_plugins.plugins.datasets.tushare_{name}"
-            for name in (
-                "trade_cal",
-                "stock_basic",
-                "index_basic",
-                "index_weight",
-                "daily_basic",
-                "fund_daily",
-            )
+            "findata_plugins.tushare.plugins.datasets.stock.trade_cal",
+            "findata_plugins.tushare.plugins.datasets.stock.stock_basic",
+            "findata_plugins.tushare.plugins.datasets.stock.daily_basic",
+            "findata_plugins.tushare.plugins.datasets.etf.fund_daily",
+            "findata_plugins.tushare.plugins.datasets.index.index_basic",
+            "findata_plugins.tushare.plugins.datasets.index.index_weight",
         }
         retired_core_paths = (
             "from findata.datasets.",
@@ -133,18 +138,18 @@ class PluginRegistryTests(unittest.TestCase):
         )
         plugin_root = Path(__file__).parents[1] / "plugins" / "tushare"
         leaves: dict[str, Path] = {}
-        for init in plugin_root.glob("*/src/findata_plugins/**/__init__.py"):
+        for init in plugin_root.glob("*/src/findata_plugins/tushare/**/__init__.py"):
             package = init.parent
             src = next(parent for parent in package.parents if parent.name == "src")
             leaves[str(package.relative_to(src)).replace("/", ".")] = package
         self.assertEqual(set(leaves), {shared, provider_leaf} | dataset_leaves)
         for name, package in leaves.items():
             if name == shared:
-                forbidden = ("findata_plugins.plugins",)
+                forbidden = ("findata_plugins.tushare.plugins",)
             elif name == provider_leaf:
-                forbidden = ("findata_plugins.plugins.datasets",)
+                forbidden = ("findata_plugins.tushare.plugins.datasets",)
             else:
-                forbidden = ("findata_plugins.plugins.providers",) + tuple(
+                forbidden = ("findata_plugins.tushare.plugins.providers",) + tuple(
                     sorted(dataset_leaves - {name})
                 )
             for path in package.rglob("*.py"):

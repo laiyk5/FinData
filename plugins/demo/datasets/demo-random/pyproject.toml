@@ -15,12 +15,12 @@ dependencies = [
 ]
 
 [project.entry-points."findata.datasets"]
-demo_random = "findata_test.plugins.datasets.demo_random:demo_random_plugin"
+demo_random = "findata_test.demo.plugins.datasets.synthetic.random:demo_random_plugin"
 
 [tool.hatch.build.targets.wheel]
-only-include = ["src/findata_test/plugins/datasets/demo_random"]
+only-include = ["src/findata_test"]
 sources = ["src"]
 
 [tool.hatch.build.targets.sdist]
-only-include = ["src/findata_test/plugins/datasets/demo_random"]
+only-include = ["src/findata_test"]
 sources = ["src"]

@@ -12,9 +12,9 @@ import duckdb
 import pyarrow as pa
 
 from findata import DataLoader
-from findata_plugins.plugins.datasets.tushare_daily_basic import DAILY_BASIC_SPEC
-from findata_plugins.plugins.datasets.tushare_index_basic import INDEX_BASIC_SPEC
-from findata_plugins.plugins.datasets.tushare_index_weight import INDEX_WEIGHT_SPEC
+from findata_plugins.tushare.plugins.datasets.stock.daily_basic import DAILY_BASIC_SPEC
+from findata_plugins.tushare.plugins.datasets.index.index_basic import INDEX_BASIC_SPEC
+from findata_plugins.tushare.plugins.datasets.index.index_weight import INDEX_WEIGHT_SPEC
 from findata.sdk.loader import (
     CoverageError,
     DatasetNotFoundError,
@@ -22,11 +22,11 @@ from findata.sdk.loader import (
     IncompatibleDatasetError,
     UnsupportedCoverageError,
 )
-from findata_plugins.shared.engine import TushareClient
+from findata_plugins.tushare.shared.engine import TushareClient
 from findata.storage import Coverage, DataMutation, DatasetGate, StorageError, Workspace
-from findata_plugins.shared.testing import MockTushareTransport
-from findata_plugins.plugins.datasets.tushare_stock_basic import STOCK_BASIC_SPEC
-from findata_plugins.plugins.datasets.tushare_trade_cal import TRADE_CAL_SPEC
+from findata_plugins.tushare.shared.testing import MockTushareTransport
+from findata_plugins.tushare.plugins.datasets.stock.stock_basic import STOCK_BASIC_SPEC
+from findata_plugins.tushare.plugins.datasets.stock.trade_cal import TRADE_CAL_SPEC
 
 TUSHARE_DATASETS = {
     spec.name: spec

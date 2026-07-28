@@ -6,6 +6,7 @@ import json
 import os
 import sys
 import time
+import webbrowser
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, TextIO
@@ -374,6 +375,15 @@ def _execute(
         return client.request(
             "POST", "/v1/events/ack", {"all": args.all, "event_id": args.event_id}
         )
+    if args.group == "web" and args.action == "open":
+        issued = client.request("POST", "/v1/web/sessions", {})
+        code = issued.get("code")
+        if not isinstance(code, str):
+            raise RuntimeError("server returned an invalid web login code")
+        url = f"{client.base_url}/#/login?{urlencode({'code': code})}"
+        if not webbrowser.open(url):
+            raise RuntimeError(f"could not open a browser; open this URL manually: {url}")
+        return {"url": client.base_url, "login_expires_in": issued.get("expires_in", 60)}
     if args.group == "system" and args.action == "status":
         return client.request("GET", "/v1/system/status")
     if args.group == "system" and args.action == "health":

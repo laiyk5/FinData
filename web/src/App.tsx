@@ -1,11 +1,12 @@
 import { useEffect, type ReactElement } from "react";
 import { HashRouter, Navigate, Route, Routes, useNavigate } from "react-router";
-import { UNAUTHORIZED_EVENT, getToken } from "./api";
+import { UNAUTHORIZED_EVENT, hasStoredAuth } from "./api";
 import Layout from "./components/Layout";
 import ConfigPage from "./pages/Config";
 import CronPage from "./pages/Cron";
 import DashboardPage from "./pages/Dashboard";
 import DatasetDetailPage from "./pages/DatasetDetail";
+import DatasetDataPage from "./pages/DatasetData";
 import DatasetsPage from "./pages/Datasets";
 import EventsPage from "./pages/Events";
 import LoginPage from "./pages/Login";
@@ -16,7 +17,7 @@ import TaskDetailPage from "./pages/TaskDetail";
 import TasksPage from "./pages/Tasks";
 
 function RequireAuth({ children }: { children: ReactElement }) {
-  if (!getToken()) return <Navigate to="/login" replace />;
+  if (!hasStoredAuth()) return <Navigate to="/login" replace />;
   return children;
 }
 
@@ -48,6 +49,7 @@ export default function App() {
         >
           <Route index element={<DashboardPage />} />
           <Route path="datasets" element={<DatasetsPage />} />
+          <Route path="datasets/:name/data" element={<DatasetDataPage />} />
           <Route path="datasets/:name" element={<DatasetDetailPage />} />
           <Route path="tasks" element={<TasksPage />} />
           <Route path="tasks/:id" element={<TaskDetailPage />} />

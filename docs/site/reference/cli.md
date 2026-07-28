@@ -81,6 +81,14 @@ Provider commands never display credentials.
   `warning`, or `error`; `DURATION` looks like `30m`, `12h`, or `7d`.
 - `events ack <id>` / `events ack --all`
 
+## Web and server lifecycle
+
+- `web open` — open the workspace WebUI and sign in through a one-time local browser session.
+- `findata-server status <workspace>` — verify and describe that workspace's running server.
+- `findata-server stop <workspace>` — request authenticated graceful shutdown.
+- `findata-server restart <workspace> [--host HOST] [--port PORT] [--provider-mode real|mock]` —
+  stop the verified server, then run a foreground replacement.
+
 ## Configuration
 
 - `config ls` / `config get [key]` — secret values are always redacted.

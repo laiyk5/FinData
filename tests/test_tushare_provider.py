@@ -8,17 +8,17 @@ from typing import Any
 import pyarrow as pa
 from urllib.error import URLError
 
-from findata_plugins.plugins.datasets.tushare_daily_basic import DAILY_BASIC_SPEC
-from findata_plugins.plugins.datasets.tushare_index_basic import INDEX_BASIC_SPEC
-from findata_plugins.plugins.datasets.tushare_index_weight import INDEX_WEIGHT_SPEC
-from findata_plugins.shared.engine import (
+from findata_plugins.tushare.plugins.datasets.stock.daily_basic import DAILY_BASIC_SPEC
+from findata_plugins.tushare.plugins.datasets.index.index_basic import INDEX_BASIC_SPEC
+from findata_plugins.tushare.plugins.datasets.index.index_weight import INDEX_WEIGHT_SPEC
+from findata_plugins.tushare.shared.engine import (
     ProviderProtocolError,
     TushareAPIError,
     TushareClient,
 )
-from findata_plugins.shared.testing import MockTushareTransport
-from findata_plugins.plugins.datasets.tushare_stock_basic import STOCK_BASIC_SPEC
-from findata_plugins.plugins.datasets.tushare_trade_cal import TRADE_CAL_SPEC
+from findata_plugins.tushare.shared.testing import MockTushareTransport
+from findata_plugins.tushare.plugins.datasets.stock.stock_basic import STOCK_BASIC_SPEC
+from findata_plugins.tushare.plugins.datasets.stock.trade_cal import TRADE_CAL_SPEC
 
 TUSHARE_DATASETS = {
     spec.name: spec

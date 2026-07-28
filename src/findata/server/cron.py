@@ -13,6 +13,7 @@ from findata.storage import Workspace
 @dataclass(frozen=True, slots=True)
 class CronJob:
     dataset: str
+    operation: str
     expression: str
     timezone: str
     enabled: bool
@@ -102,6 +103,10 @@ class CronManager:
         self.submit = submit
         self.provider_ready = provider_ready
         self.update_ready = update_ready
+        self.suggested = dict(suggested)
+
+    def set_suggested(self, suggested: Mapping[str, tuple[str, str]]) -> None:
+        """Replace suggested jobs after the live plugin registry changes."""
         self.suggested = dict(suggested)
 
     def list_jobs(self, *, now: datetime | None = None) -> list[CronJob]:
@@ -277,6 +282,7 @@ class CronManager:
             next_run = CronSchedule(expression, timezone).next_after(now).isoformat()
         return CronJob(
             dataset=dataset,
+            operation="update",
             expression=expression,
             timezone=timezone,
             enabled=enabled,

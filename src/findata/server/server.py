@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import fcntl
 import hmac
+import importlib
 import json
 import logging
 import os
@@ -11,12 +12,18 @@ from collections.abc import Mapping
 from dataclasses import asdict
 from datetime import UTC, date, datetime, time
 from http import HTTPStatus
+from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.metadata import PackageNotFoundError, version as package_version
 from pathlib import Path
 from typing import Any, Iterable
 from urllib.parse import parse_qs, unquote, urlparse
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from time import monotonic
+
+import pyarrow as pa
+import pyarrow.csv as pacsv
+import pyarrow.parquet as pq
 
 from findata.server.cron import CronManager
 from findata.server.events import EventStore
@@ -125,6 +132,7 @@ class FindataServer:
         )
         self.providers = {item.provider_id: item for item in discovered_providers}
         self.plugins = {item.name: item for item in discovered_datasets}
+        self._plugin_lock = threading.RLock()
         self._secret_keys = secret_config_keys(self.providers.values())
         self.host = host
         self.port = port
@@ -136,6 +144,9 @@ class FindataServer:
             else datetime.now(ZoneInfo("Asia/Shanghai"))
         )
         self.token = (self.root / "token").read_text(encoding="utf-8").strip()
+        self._web_auth_lock = threading.RLock()
+        self._web_codes: dict[str, float] = {}
+        self._web_sessions: dict[str, float] = {}
         self._lock_file: Any = None
         self._httpd: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
@@ -226,6 +237,10 @@ class FindataServer:
         (self.root / "server.json").unlink(missing_ok=True)
         self._release_lock()
 
+    def request_shutdown(self) -> None:
+        """Begin graceful shutdown after an API response has been sent."""
+        threading.Thread(target=self.shutdown, daemon=True).start()
+
     def _cron_loop(self) -> None:
         while not self._cron_stop.wait(1.0):
             try:
@@ -237,6 +252,145 @@ class FindataServer:
         runtime = self.providers[provider_id].runtime
         assert runtime is not None
         return bool(runtime.ready(self.workspace, self.provider_mode))
+
+    def issue_web_login_code(self) -> dict[str, object]:
+        """Issue one short-lived code that a local browser can exchange for a session."""
+        expires_at = monotonic() + 60
+        code = secrets.token_urlsafe(32)
+        with self._web_auth_lock:
+            self._discard_expired_web_auth()
+            self._web_codes[code] = expires_at
+        return {"code": code, "expires_in": 60}
+
+    def exchange_web_login_code(self, code: str) -> str | None:
+        """Consume a login code and return a new browser session token."""
+        with self._web_auth_lock:
+            self._discard_expired_web_auth()
+            if self._web_codes.pop(code, None) is None:
+                return None
+            session = secrets.token_urlsafe(32)
+            self._web_sessions[session] = monotonic() + 12 * 60 * 60
+            return session
+
+    def web_session_authenticated(self, session: str | None) -> bool:
+        if not session:
+            return False
+        with self._web_auth_lock:
+            self._discard_expired_web_auth()
+            return session in self._web_sessions
+
+    def _discard_expired_web_auth(self) -> None:
+        now = monotonic()
+        self._web_codes = {code: expires for code, expires in self._web_codes.items() if expires > now}
+        self._web_sessions = {
+            session: expires for session, expires in self._web_sessions.items() if expires > now
+        }
+
+    def plugin_summary(self) -> dict[str, object]:
+        """Return the current mounted registry and persisted blocklist."""
+        with self._plugin_lock:
+            return {
+                "providers": [
+                    {"name": provider.provider_id, "family": list(provider.family)}
+                    for provider in self.providers.values()
+                ],
+                "datasets": [
+                    {"name": plugin.name, "family": list(plugin.family)}
+                    for plugin in self.plugins.values()
+                ],
+                "blocked": plugin_blocklist(self.workspace),
+            }
+
+    def reload_plugins(self) -> dict[str, object]:
+        """Discover installed entry points and atomically replace the live registry."""
+        with self._plugin_lock:
+            active = self.taskrunner.active_datasets()
+            if active:
+                raise ValueError(
+                    "cannot reload plugins while tasks are active for "
+                    + ", ".join(sorted(active))
+                )
+            importlib.invalidate_caches()
+            providers = discover_provider_plugins_safe()
+            plugins = discover_dataset_plugins_safe(providers=providers)
+            _log_plugin_load_errors()
+            plugins, providers = apply_plugin_blocklist(
+                plugins,
+                providers,
+                plugin_blocklist(self.workspace),
+                warn=logger.warning,
+            )
+            register_plugins(self.workspace, plugins, providers=providers)
+            self.providers = {item.provider_id: item for item in providers}
+            self.plugins = {item.name: item for item in plugins}
+            self._secret_keys = secret_config_keys(self.providers.values())
+            self.cron.set_suggested(
+                {
+                    name: plugin.schedule
+                    for name, plugin in self.plugins.items()
+                    if plugin.schedule is not None
+                }
+            )
+            self.events.record(
+                "plugins_reloaded",
+                "info",
+                f"mounted {len(self.providers)} providers and {len(self.plugins)} datasets",
+            )
+            return self.plugin_summary()
+
+    def remove_plugin(self, name: str) -> dict[str, object]:
+        """Persistently unmount a plugin and every mounted dependent."""
+        with self._plugin_lock:
+            if name not in self.plugins and name not in self.providers:
+                raise ValueError(f"unknown mounted plugin {name!r}")
+            removed = self._plugin_removal_closure(name)
+            active = self.taskrunner.active_datasets() & removed
+            if active:
+                raise ValueError(
+                    "cannot remove plugins while tasks are active for "
+                    + ", ".join(sorted(active))
+                )
+            blocked = set(plugin_blocklist(self.workspace))
+            blocked.update(removed)
+            self.workspace.set_config("plugins.blocked", sorted(blocked))
+            summary = self.reload_plugins()
+            self.events.record(
+                "plugins_removed",
+                "info",
+                f"unmounted {', '.join(sorted(removed))}",
+                plugins=sorted(removed),
+            )
+            summary["removed"] = sorted(removed)
+            return summary
+
+    def restore_plugin(self, name: str) -> dict[str, object]:
+        """Remove a persisted block and rediscover the corresponding entry point."""
+        with self._plugin_lock:
+            blocked = set(plugin_blocklist(self.workspace))
+            if name not in blocked:
+                raise ValueError(f"plugin {name!r} is not removed")
+            blocked.remove(name)
+            self.workspace.set_config("plugins.blocked", sorted(blocked))
+            summary = self.reload_plugins()
+            self.events.record("plugins_restored", "info", f"restored {name}", plugin=name)
+            return summary
+
+    def _plugin_removal_closure(self, name: str) -> set[str]:
+        removed: set[str] = {name}
+        if name in self.providers:
+            removed.update(
+                plugin.name for plugin in self.plugins.values() if plugin.provider == name
+            )
+        changed = True
+        while changed:
+            changed = False
+            for plugin in self.plugins.values():
+                if plugin.name not in removed and any(
+                    dependency in removed for dependency in plugin.dependencies
+                ):
+                    removed.add(plugin.name)
+                    changed = True
+        return removed
 
     def _provider_is_mock(self, provider_id: str) -> bool:
         runtime = self.providers[provider_id].runtime
@@ -290,6 +444,15 @@ class FindataServer:
         elif coverage is not None:
             status["covered_keys"] = 0
         return status
+
+    def _dataset_description(self, dataset: str) -> dict[str, Any]:
+        plugin = self.plugins[dataset]
+        description = plugin.runtime.dataset_description(
+            self.workspace,
+            provider_ready=self._provider_ready(plugin.provider),
+        )
+        description["family"] = list(plugin.family)
+        return description
 
     def _update_ready(self, dataset: str) -> bool:
         return bool(self._runtime_for_dataset(dataset).update_ready(self.workspace))
@@ -377,17 +540,40 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                 else:
                     self._send(HTTPStatus.NOT_FOUND, {"error": "not_found"})
                 return
+            parts = [unquote(part) for part in parsed.path.split("/") if part]
+            if method == "POST" and parts == ["v1", "web", "session", "exchange"]:
+                self._exchange_web_session()
+                return
             if not self._authenticated():
                 self._send(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
                 return
-            parts = [unquote(part) for part in parsed.path.split("/") if part]
             query = parse_qs(parsed.query)
             try:
+                if method == "POST" and parts == ["v1", "web", "sessions"]:
+                    self._send(HTTPStatus.CREATED, app.issue_web_login_code())
+                    return
                 if method == "GET" and parts == ["v1", "system", "health"]:
                     self._send(
                         HTTPStatus.OK,
                         _system_health(app),
                     )
+                elif method == "GET" and parts == ["v1", "plugins"]:
+                    self._send(HTTPStatus.OK, app.plugin_summary())
+                    return
+                elif method == "POST" and parts == ["v1", "plugins", "reload"]:
+                    self._send(HTTPStatus.OK, app.reload_plugins())
+                    return
+                elif (
+                    method == "POST"
+                    and len(parts) >= 4
+                    and parts[:2] == ["v1", "plugins"]
+                    and parts[-1] == "restore"
+                ):
+                    self._send(HTTPStatus.OK, app.restore_plugin("/".join(parts[2:-1])))
+                    return
+                elif method == "DELETE" and len(parts) >= 3 and parts[:2] == ["v1", "plugins"]:
+                    self._send(HTTPStatus.OK, app.remove_plugin("/".join(parts[2:])))
+                    return
                 elif method == "GET" and parts == ["v1", "system", "status"]:
                     runtime = app.taskrunner.runtime_status()
                     self._send(
@@ -403,6 +589,10 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                             **runtime,
                         },
                     )
+                    return
+                elif method == "POST" and parts == ["v1", "system", "stop"]:
+                    self._send(HTTPStatus.ACCEPTED, {"status": "stopping", "pid": os.getpid()})
+                    app.request_shutdown()
                     return
                 if method == "POST" and parts == ["v1", "tasks"]:
                     body = self._body()
@@ -637,6 +827,7 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                                         else "real"
                                     ),
                                     "secret_fields": list(provider.secret_fields),
+                                    "family": list(provider.family),
                                 }
                                 for provider_id, provider in app.providers.items()
                             ]
@@ -682,6 +873,7 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                                     if runtime.is_mock(app.workspace, app.provider_mode)
                                     else "real"
                                 ),
+                                "family": list(provider.family),
                             },
                         )
                         return
@@ -690,10 +882,7 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                         HTTPStatus.OK,
                         {
                             "items": [
-                                app._runtime_for_dataset(name).dataset_description(
-                                    app.workspace,
-                                    provider_ready=app._provider_ready(app.plugins[name].provider),
-                                )
+                                app._dataset_description(name)
                                 for name in app.plugins
                             ]
                         },
@@ -705,6 +894,41 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                 dataset_match = (
                     app._match_dataset(dataset_route) if dataset_route is not None else None
                 )
+                if (
+                    method == "POST"
+                    and dataset_match is not None
+                    and dataset_match[1] in (["data", "query"], ["data", "export"])
+                ):
+                    dataset, tail = dataset_match
+                    if app._dataset_status(dataset)["state"] != "ready":
+                        raise ValueError(f"dataset {dataset!r} has no committed data to query")
+                    body = self._body()
+                    sql = body.get("sql")
+                    if not isinstance(sql, str):
+                        raise ValueError("data SQL query requires a string sql field")
+                    reader = DataLoader(app.workspace.root).dataset(dataset)
+                    if tail == ["data", "query"]:
+                        limit = _sql_query_limit(body.get("limit", 100))
+                        table = reader.query_sql(sql, limit=limit)
+                        self._send(
+                            HTTPStatus.OK,
+                            {
+                                "dataset": dataset,
+                                "publication_id": reader.publication_id,
+                                "limit": limit,
+                                "columns": [
+                                    {"name": field.name, "type": str(field.type)}
+                                    for field in table.schema
+                                ],
+                                "items": table.to_pylist(),
+                            },
+                        )
+                        return
+                    output_format = body.get("format", "csv")
+                    if not isinstance(output_format, str):
+                        raise ValueError("export format must be csv or parquet")
+                    self._send_dataset_sql_download(dataset, output_format, reader.query_sql(sql))
+                    return
                 if method == "POST" and dataset_match is not None and dataset_match[1] == ["reset"]:
                     body = self._body()
                     if body.get("confirm") is not True:
@@ -729,20 +953,42 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                     if not tail:
                         self._send(
                             HTTPStatus.OK,
-                            app._runtime_for_dataset(dataset).dataset_description(
-                                app.workspace,
-                                provider_ready=app._provider_ready(app.plugins[dataset].provider),
-                            ),
+                            app._dataset_description(dataset),
                         )
                         return
                     if tail == ["status"]:
                         self._send(HTTPStatus.OK, app._dataset_status(dataset))
                         return
-                    if tail == ["operations"]:
-                        description = app._runtime_for_dataset(dataset).dataset_description(
-                            app.workspace,
-                            provider_ready=app._provider_ready(app.plugins[dataset].provider),
+                    if tail == ["download"]:
+                        if app._dataset_status(dataset)["state"] != "ready":
+                            raise ValueError(f"dataset {dataset!r} has no committed data to download")
+                        output_format = _query_one(query, "format") or "csv"
+                        self._send_dataset_download(dataset, output_format, query)
+                        return
+                    if tail == ["data"]:
+                        if app._dataset_status(dataset)["state"] != "ready":
+                            raise ValueError(f"dataset {dataset!r} has no committed data to query")
+                        reader = DataLoader(app.workspace.root).dataset(dataset)
+                        description = reader.describe()
+                        query_options = _dataset_query_options(
+                            description,
+                            query,
+                            default_limit=100,
                         )
+                        table = reader.query(**query_options)
+                        self._send(
+                            HTTPStatus.OK,
+                            {
+                                "dataset": dataset,
+                                "publication_id": reader.publication_id,
+                                "schema": description,
+                                "limit": query_options["limit"],
+                                "items": table.to_pylist(),
+                            },
+                        )
+                        return
+                    if tail == ["operations"]:
+                        description = app._dataset_description(dataset)
                         self._send(HTTPStatus.OK, {"items": description["operations"]})
                         return
                     if len(tail) == 2 and tail[0] == "operations":
@@ -833,7 +1079,40 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
         def _authenticated(self) -> bool:
             expected = f"Bearer {app.token}"
             provided = self.headers.get("Authorization", "")
-            return hmac.compare_digest(provided, expected)
+            if hmac.compare_digest(provided, expected):
+                return True
+            cookie = SimpleCookie()
+            cookie.load(self.headers.get("Cookie", ""))
+            session = cookie.get("findata_session")
+            return app.web_session_authenticated(session.value if session else None)
+
+        def _exchange_web_session(self) -> None:
+            if not self._is_loopback_client():
+                self._send(HTTPStatus.FORBIDDEN, {"error": "local browser required"})
+                return
+            try:
+                code = self._body().get("code")
+                if not isinstance(code, str) or not code:
+                    raise ValueError("code is required")
+                session = app.exchange_web_login_code(code)
+                if session is None:
+                    self._send(HTTPStatus.UNAUTHORIZED, {"error": "invalid or expired login code"})
+                    return
+                payload = json.dumps({"authenticated": True}).encode("utf-8")
+                self.send_response(HTTPStatus.OK.value)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.send_header(
+                    "Set-Cookie",
+                    f"findata_session={session}; HttpOnly; SameSite=Strict; Path=/; Max-Age=43200",
+                )
+                self.end_headers()
+                self.wfile.write(payload)
+            except (json.JSONDecodeError, TypeError, ValueError) as exc:
+                self._send(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+
+        def _is_loopback_client(self) -> bool:
+            return self.client_address[0] in {"127.0.0.1", "::1"}
 
         def _body(self) -> dict[str, Any]:
             length = int(self.headers.get("Content-Length", "0"))
@@ -874,6 +1153,56 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
             payload = json.dumps(value, separators=(",", ":"), default=str).encode("utf-8")
             self.send_response(status.value)
             self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def _send_dataset_download(
+            self,
+            dataset: str,
+            output_format: str,
+            query: dict[str, list[str]],
+        ) -> None:
+            if output_format not in {"csv", "parquet"}:
+                raise ValueError("download format must be csv or parquet")
+            reader = DataLoader(app.workspace.root).dataset(dataset)
+            table = reader.query(**_dataset_query_options(reader.describe(), query))
+            sink = pa.BufferOutputStream()
+            if output_format == "csv":
+                pacsv.write_csv(table, sink)
+                content_type = "text/csv; charset=utf-8"
+            else:
+                pq.write_table(table, sink)
+                content_type = "application/vnd.apache.parquet"
+            payload = sink.getvalue().to_pybytes()
+            filename = f"{dataset.replace('/', '-')}.{output_format}"
+            self.send_response(HTTPStatus.OK.value)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def _send_dataset_sql_download(
+            self,
+            dataset: str,
+            output_format: str,
+            table: pa.Table,
+        ) -> None:
+            if output_format not in {"csv", "parquet"}:
+                raise ValueError("download format must be csv or parquet")
+            sink = pa.BufferOutputStream()
+            if output_format == "csv":
+                pacsv.write_csv(table, sink)
+                content_type = "text/csv; charset=utf-8"
+            else:
+                pq.write_table(table, sink)
+                content_type = "application/vnd.apache.parquet"
+            payload = sink.getvalue().to_pybytes()
+            filename = f"{dataset.replace('/', '-')}-query.{output_format}"
+            self.send_response(HTTPStatus.OK.value)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
             self.wfile.write(payload)
@@ -1058,6 +1387,8 @@ def _declared_config_keys(app: FindataServer) -> list[dict[str, Any]]:
         for key, setting in sorted(plugin.settings.items()):
             entry = item(key, setting.help, setting.schema, secret=False)
             entry["required"] = setting.required
+            if setting.default is not None:
+                entry["default"] = setting.default
             items.append(entry)
     return items
 
@@ -1077,6 +1408,60 @@ def _redact(key: str, value: Any, secret_keys: frozenset[str] = frozenset()) -> 
 def _query_one(query: dict[str, list[str]], key: str) -> str | None:
     values = query.get(key)
     return values[0] if values else None
+
+
+def _dataset_query_options(
+    description: dict[str, Any],
+    query: dict[str, list[str]],
+    *,
+    default_limit: int | None = None,
+) -> dict[str, Any]:
+    """Validate the narrow query surface exposed by the dataset data view."""
+    field_names = [str(field["name"]) for field in description["fields"]]
+    keys = [value for value in query.get("key", []) if value]
+    columns = [value for value in query.get("column", []) if value]
+    unknown_columns = sorted(set(columns).difference(field_names))
+    if unknown_columns:
+        raise ValueError(f"unknown dataset column(s): {', '.join(unknown_columns)}")
+    start = _query_one(query, "start")
+    end = _query_one(query, "end")
+    if bool(start) != bool(end):
+        raise ValueError("start and end must be supplied together")
+    if start and end:
+        try:
+            start_date = date.fromisoformat(start)
+            end_date = date.fromisoformat(end)
+        except ValueError as exc:
+            raise ValueError("start and end must be ISO dates (YYYY-MM-DD)") from exc
+        if start_date >= end_date:
+            raise ValueError("start must be earlier than end")
+        time_range: tuple[str, str] | None = (start, end)
+    else:
+        time_range = None
+    limit = default_limit
+    limit_text = _query_one(query, "limit")
+    if limit_text is not None:
+        try:
+            limit = int(limit_text)
+        except ValueError as exc:
+            raise ValueError("limit must be a positive integer") from exc
+        if limit <= 0 or limit > 1_000:
+            raise ValueError("limit must be between 1 and 1000")
+    selected = columns or field_names
+    primary_key = [str(value) for value in description.get("primary_key", [])]
+    return {
+        "keys": keys or None,
+        "time_range": time_range,
+        "columns": columns or None,
+        "order_by": [key for key in primary_key if key in selected],
+        "limit": limit,
+    }
+
+
+def _sql_query_limit(value: Any) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or not 0 < value <= 1_000:
+        raise ValueError("query limit must be an integer between 1 and 1000")
+    return value
 
 
 def _write_json(path: Path, value: dict[str, Any], *, mode: int) -> None:

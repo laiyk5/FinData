@@ -24,20 +24,31 @@ export function DatasetDotStatus({
 }) {
   const short = updateBlockedShort(facts);
   return (
-    <div className="dataset-card-status muted">
-      <span className={`dot ${facts.providerReady ? "dot-ok" : "dot-warn"}`} />
-      <Link to={`/providers/${encodeURIComponent(provider)}`} className="mono">
-        {provider}
-      </Link>{" "}
-      {providerConfigLabel(facts.providerReady)}
-      <span className="dataset-card-sep">·</span>
-      <span className={`dot ${facts.updateReady ? "dot-ok" : "dot-warn"}`} />
-      <span>
-        {updateReadinessLabel(facts.updateReady)}
-        {short !== null && <span className="text-faint"> ({short})</span>}
-      </span>
+    <div className="dataset-card-readiness">
+      <Link
+        to={`/providers/${encodeURIComponent(provider)}`}
+        className="dataset-card-readiness-item"
+      >
+        <span className={`dot ${facts.providerReady ? "dot-ok" : "dot-warn"}`} />
+        <span>
+          <span className="dataset-card-readiness-label">Provider</span>
+          <strong>{providerConfigLabel(facts.providerReady)}</strong>
+        </span>
+      </Link>
+      <div className="dataset-card-readiness-item">
+        <span className={`dot ${facts.updateReady ? "dot-ok" : "dot-warn"}`} />
+        <span>
+          <span className="dataset-card-readiness-label">Update</span>
+          <strong>{updateReadinessLabel(facts.updateReady)}</strong>
+          {short !== null && <span className="text-faint"> · {short}</span>}
+        </span>
+      </div>
     </div>
   );
+}
+
+function datasetLabel(name: string): string {
+  return name.slice(name.lastIndexOf("/") + 1).replace(/_/g, " ");
 }
 
 /**
@@ -75,9 +86,12 @@ export function DatasetCard({
   return (
     <div className="card dataset-card">
       <div className="dataset-card-head">
-        <Link to={detailPath} className="mono dataset-card-name">
-          {name}
-        </Link>
+        <div className="dataset-card-identity">
+          <Link to={detailPath} className="dataset-card-name">
+            {datasetLabel(name)}
+          </Link>
+          <span className="mono dataset-card-identifier">{name}</span>
+        </div>
         <DatasetFreshness state={state} tasks={tasks} />
       </div>
 
@@ -97,6 +111,7 @@ export function DatasetCard({
       )}
 
       <div className="dataset-card-facts">
+        <span className="dataset-card-facts-label">Data</span>
         <DatasetCoverage
           capabilities={capabilities}
           publicationId={publicationId}

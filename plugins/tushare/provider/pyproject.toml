@@ -14,8 +14,8 @@ dependencies = [
 ]
 
 [project.entry-points."findata.providers"]
-tushare = "findata_plugins.plugins.providers.tushare:tushare_provider_plugin"
+tushare = "findata_plugins.tushare.plugins.providers.tushare:tushare_provider_plugin"
 
 [tool.hatch.build.targets.wheel]
-only-include = ["src/findata_plugins/plugins/providers/tushare"]
+only-include = ["src/findata_plugins"]
 sources = ["src"]

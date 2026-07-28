@@ -6,11 +6,11 @@ from datetime import date
 import pyarrow as pa
 
 from findata.sdk.contracts import DateRange, OperandError
-from findata_plugins.plugins.datasets.tushare_daily_basic import DAILY_BASIC_SPEC
-from findata_plugins.plugins.datasets.tushare_index_basic import INDEX_BASIC_SPEC
-from findata_plugins.plugins.datasets.tushare_index_weight import INDEX_WEIGHT_SPEC
-from findata_plugins.plugins.datasets.tushare_stock_basic import STOCK_BASIC_SPEC
-from findata_plugins.plugins.datasets.tushare_trade_cal import TRADE_CAL_SPEC
+from findata_plugins.tushare.plugins.datasets.stock.daily_basic import DAILY_BASIC_SPEC
+from findata_plugins.tushare.plugins.datasets.index.index_basic import INDEX_BASIC_SPEC
+from findata_plugins.tushare.plugins.datasets.index.index_weight import INDEX_WEIGHT_SPEC
+from findata_plugins.tushare.plugins.datasets.stock.stock_basic import STOCK_BASIC_SPEC
+from findata_plugins.tushare.plugins.datasets.stock.trade_cal import TRADE_CAL_SPEC
 
 TUSHARE_DATASETS = {
     spec.name: spec

@@ -1,26 +1,22 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 import { Link } from "react-router";
 import {
   TERMINAL_STATUSES,
   ackEvent,
   getSystemStatus,
-  listDatasets,
   listDatasetsStatus,
   listEvents,
   listProviders,
   listTasks,
-  type DatasetDescription,
   type DatasetStatus,
   type EventRecord,
   type Provider,
   type SystemStatus,
   type TaskHandle,
 } from "../api";
-import { DatasetCard } from "../components/DatasetCard";
 import { RetryTaskButton } from "../components/TaskActions";
 import {
   ConnectionWarning,
-  EmptyState,
   FreshnessNote,
   Loading,
   ProgressBar,
@@ -36,36 +32,110 @@ interface HomeData {
   unreadEvents: EventRecord[];
   tasks: TaskHandle[];
   datasets: DatasetStatus[];
-  descriptions: Record<string, DatasetDescription>;
 }
+
+type AttentionItem =
+  | { type: "task"; value: TaskHandle }
+  | { type: "event"; value: EventRecord }
+  | { type: "cron"; value: EventRecord }
+  | { type: "provider"; value: Provider }
+  | { type: "dataset"; value: DatasetStatus };
+
+const MAX_HOME_ITEMS = 4;
 
 function isActive(task: TaskHandle): boolean {
   return !TERMINAL_STATUSES.has(task.status);
 }
 
 async function loadHome(): Promise<HomeData> {
-  const [status, providers, events, tasks, datasets, descriptions] = await Promise.all([
+  const [status, providers, events, tasks, datasets] = await Promise.all([
     getSystemStatus(),
     listProviders(),
     listEvents({ unread: true }),
     listTasks(),
     listDatasetsStatus(),
-    listDatasets(),
   ]);
   return {
     status,
     providers: providers.items,
-    unreadEvents: events.items.filter((e) => !e.acknowledged),
+    unreadEvents: events.items.filter((event) => !event.acknowledged),
     tasks: tasks.items,
     datasets: datasets.items,
-    descriptions: Object.fromEntries(descriptions.items.map((d) => [d.name, d])),
   };
 }
 
-const MAX_ATTENTION_ITEMS = 20;
+function AttentionRow({
+  item,
+  acknowledge,
+  dismiss,
+}: {
+  item: AttentionItem;
+  acknowledge: (eventId: string) => void;
+  dismiss: (eventId: string) => void;
+}) {
+  if (item.type === "task") {
+    const task = item.value;
+    return (
+      <div className="attention-row">
+        <span className="badge severity-error">Failed task</span>
+        <span className="attention-message">
+          <Link to={`/tasks/${encodeURIComponent(task.handle_id)}`} className="mono">
+            {task.dataset} {task.operation}
+          </Link>{" "}
+          <span className="muted">{task.reason ?? task.error ?? ""}</span>
+        </span>
+        <span className="row-actions">
+          <Link to={`/tasks/${encodeURIComponent(task.handle_id)}`}>Explain</Link>
+          <RetryTaskButton task={task} />
+        </span>
+      </div>
+    );
+  }
+
+  if (item.type === "provider") {
+    const provider = item.value;
+    return (
+      <div className="attention-row">
+        <span className="badge severity-warning">Provider</span>
+        <span className="attention-message">
+          <span className="mono">{provider.name}</span> <span className="muted">needs configuration</span>
+        </span>
+        <Link to="/providers">Fix provider</Link>
+      </div>
+    );
+  }
+
+  if (item.type === "dataset") {
+    const dataset = item.value;
+    return (
+      <div className="attention-row">
+        <span className="badge severity-warning">Dataset</span>
+        <span className="attention-message">
+          <span className="mono">{dataset.name}</span> <span className="muted">has data but update is blocked</span>
+        </span>
+        <Link to={`/datasets/${encodeURIComponent(dataset.name)}?tab=settings`}>Open settings</Link>
+      </div>
+    );
+  }
+
+  const event = item.value;
+  const isCron = item.type === "cron";
+  return (
+    <div className="attention-row">
+      {isCron ? <span className="badge severity-warning">Missed cron</span> : <SeverityBadge severity={event.severity} />}
+      <span className="attention-message">
+        {event.message} {!isCron && <span className="muted"><Time unix={event.timestamp} /></span>}
+      </span>
+      <span className="row-actions">
+        <button className="link-button" onClick={() => acknowledge(event.event_id)}>Acknowledge</button>
+        <button className="link-button" onClick={() => dismiss(event.event_id)}>Dismiss</button>
+        {isCron && <Link to="/cron">Open cron</Link>}
+      </span>
+    </div>
+  );
+}
 
 export default function HomePage() {
-  // Adaptive cadence: medium while any task is active, slow when idle.
   const [hasActive, setHasActive] = useState(false);
   const [dismissedEvents, setDismissedEvents] = useState<Set<string>>(new Set());
   const loader = useCallback(async () => {
@@ -74,42 +144,42 @@ export default function HomePage() {
     return data;
   }, []);
   const live = useLiveData(loader, hasActive ? 2_500 : 12_000);
-  const { data, refresh } = live;
+  const { data } = live;
 
-  const handleAck = useCallback(async (eventId: string) => {
-    await ackEvent({ event_id: eventId });
-    setDismissedEvents((prev) => new Set(prev).add(eventId));
+  const acknowledge = useCallback((eventId: string) => {
+    void ackEvent({ event_id: eventId });
+    setDismissedEvents((previous) => new Set(previous).add(eventId));
   }, []);
-
-  const handleDismiss = useCallback((eventId: string) => {
-    setDismissedEvents((prev) => new Set(prev).add(eventId));
+  const dismiss = useCallback((eventId: string) => {
+    setDismissedEvents((previous) => new Set(previous).add(eventId));
   }, []);
 
   if (!data && !live.error) return <Loading />;
 
-  const failed = (data?.tasks.filter((t) => t.status === "failed") ?? []).slice(0, MAX_ATTENTION_ITEMS);
+  const failed = data?.tasks.filter((task) => task.status === "failed") ?? [];
   const problemEvents =
-    (data?.unreadEvents.filter(
-      (e) => (e.severity === "warning" || e.severity === "error") && e.kind !== "cron_missed",
-    ) ?? []).filter((e) => !dismissedEvents.has(e.event_id));
+    data?.unreadEvents.filter(
+      (event) =>
+        !dismissedEvents.has(event.event_id) &&
+        (event.severity === "warning" || event.severity === "error") &&
+        event.kind !== "cron_missed",
+    ) ?? [];
   const cronMissed =
-    (data?.unreadEvents.filter((e) => e.kind === "cron_missed") ?? [])
-      .filter((e) => !dismissedEvents.has(e.event_id));
-  const badProviders =
-    data?.providers.filter((p) => !p.ready || p.configured === false) ?? [];
-  const staleDatasets =
-    data?.datasets.filter((d) => d.state === "ready" && !d.update_ready) ?? [];
-  const allItems = [
-    ...failed.map((t) => ({ kind: "task" as const, id: `task-${t.handle_id}` })),
-    ...problemEvents.map((e) => ({ kind: "event" as const, id: `event-${e.event_id}` })),
-    ...cronMissed.map((e) => ({ kind: "cron" as const, id: `cron-${e.event_id}` })),
-    ...badProviders.map((p) => ({ kind: "provider" as const, id: `provider-${p.name}` })),
-    ...staleDatasets.map((d) => ({ kind: "dataset" as const, id: `dataset-${d.name}` })),
+    data?.unreadEvents.filter(
+      (event) => !dismissedEvents.has(event.event_id) && event.kind === "cron_missed",
+    ) ?? [];
+  const badProviders = data?.providers.filter((provider) => !provider.ready || provider.configured === false) ?? [];
+  const staleDatasets = data?.datasets.filter((dataset) => dataset.state === "ready" && !dataset.update_ready) ?? [];
+  const attention = [
+    ...failed.map((value): AttentionItem => ({ type: "task", value })),
+    ...problemEvents.map((value): AttentionItem => ({ type: "event", value })),
+    ...cronMissed.map((value): AttentionItem => ({ type: "cron", value })),
+    ...badProviders.map((value): AttentionItem => ({ type: "provider", value })),
+    ...staleDatasets.map((value): AttentionItem => ({ type: "dataset", value })),
   ];
-  const visibleItems = allItems.slice(0, MAX_ATTENTION_ITEMS);
-  const needsAttention = allItems.length;
-
   const liveTasks = data?.tasks.filter(isActive) ?? [];
+  const initialized = data?.datasets.filter((dataset) => dataset.state === "ready").length ?? 0;
+  const runnable = data?.datasets.filter((dataset) => dataset.update_ready).length ?? 0;
 
   return (
     <div>
@@ -122,152 +192,58 @@ export default function HomePage() {
 
       {data && (
         <>
-          <h2>Needs attention</h2>
-          {needsAttention === 0 ? (
-            <EmptyState>Nothing needs attention — no failed tasks, unread warnings, unready providers, missed cron jobs, or stalled datasets.</EmptyState>
-          ) : (
-            <div className="attention-list">
-              {failed.slice(0, MAX_ATTENTION_ITEMS).map((t) => (
-                <div key={`task-${t.handle_id}`} className="attention-row">
-                  <span className="badge severity-error">failed task</span>
-                  <span>
-                    <Link to={`/tasks/${encodeURIComponent(t.handle_id)}`} className="mono">
-                      {t.dataset} {t.operation}
-                    </Link>{" "}
-                    <span className="muted">{t.reason ?? t.error ?? ""}</span>
-                  </span>
-                  <span className="row-actions">
-                    <Link to={`/tasks/${encodeURIComponent(t.handle_id)}`}>Explain</Link>
-                    <RetryTaskButton task={t} />
-                  </span>
-                </div>
-              ))}
-              {problemEvents.slice(0, MAX_ATTENTION_ITEMS).map((e) => (
-                <div key={`event-${e.event_id}`} className="attention-row">
-                  <SeverityBadge severity={e.severity} />
-                  <span className="attention-message">
-                    {e.message}{" "}
-                    <span className="muted">
-                      <Time unix={e.timestamp} />
-                    </span>
-                  </span>
-                  <span className="row-actions">
-                    <button className="link-button" onClick={() => handleAck(e.event_id)}>Acknowledge</button>
-                    <button className="link-button" onClick={() => handleDismiss(e.event_id)}>Dismiss</button>
-                  </span>
-                </div>
-              ))}
-              {cronMissed.slice(0, MAX_ATTENTION_ITEMS).map((e) => (
-                <div key={`cron-${e.event_id}`} className="attention-row">
-                  <span className="badge severity-warning">missed cron</span>
-                  <span className="attention-message">{e.message}</span>
-                  <span className="row-actions">
-                    <button className="link-button" onClick={() => handleAck(e.event_id)}>Acknowledge</button>
-                    <button className="link-button" onClick={() => handleDismiss(e.event_id)}>Dismiss</button>
-                    <Link to="/cron">Open cron</Link>
-                  </span>
-                </div>
-              ))}
-              {badProviders.map((p) => (
-                <div key={`provider-${p.name}`} className="attention-row">
-                  <span className="badge severity-warning">provider</span>
-                  <span>
-                    <span className="mono">{p.name}</span>{" "}
-                    <span className="muted">needs configuration</span>
-                  </span>
-                  <span className="row-actions">
-                    <Link to="/providers">Fix provider</Link>
-                  </span>
-                </div>
-              ))}
-              {staleDatasets.map((d) => (
-                <div key={`dataset-${d.name}`} className="attention-row">
-                  <span className="badge severity-warning">dataset</span>
-                  <span>
-                    <span className="mono">{d.name}</span>{" "}
-                    <span className="muted">has data but update is blocked</span>
-                  </span>
-                  <span className="row-actions">
-                    <Link to={`/datasets/${encodeURIComponent(d.name)}?tab=settings`}>
-                      Open settings
-                    </Link>
-                  </span>
-                </div>
-              ))}
-              {allItems.length > MAX_ATTENTION_ITEMS && (
-                <div className="attention-row muted">
-                  … and {allItems.length - MAX_ATTENTION_ITEMS} more item{(allItems.length - MAX_ATTENTION_ITEMS) > 1 ? "s" : ""}.{" "}
-                  <Link to="/events">View all events</Link>
-                </div>
-              )}
+          <section className="home-overview">
+            <div className="home-overview-copy">
+              <p className="home-eyebrow">Workspace overview</p>
+              <h2>{attention.length === 0 ? "Everything is on track" : "A few things need attention"}</h2>
+              <p className="muted">
+                {attention.length === 0
+                  ? "Your providers and datasets are ready for their next update."
+                  : "Resolve the items below, or browse datasets to run an update."}
+              </p>
+              <div className="home-overview-actions">
+                <Link className="btn btn-primary" to="/datasets">Browse datasets</Link>
+                <Link className="btn btn-secondary" to="/cron">View schedules</Link>
+              </div>
             </div>
+            <div className="home-metrics">
+              <Link to="/datasets" className="home-metric"><strong>{data.datasets.length}</strong><span>datasets</span></Link>
+              <Link to="/datasets" className="home-metric"><strong>{runnable}</strong><span>ready to update</span></Link>
+              <Link to={attention.length > 0 ? "/events" : "/datasets"} className="home-metric"><strong>{attention.length}</strong><span>need attention</span></Link>
+              <Link to="/datasets" className="home-metric"><strong>{initialized}</strong><span>with data</span></Link>
+            </div>
+          </section>
+
+          {attention.length > 0 && (
+            <section className="home-section">
+              <div className="home-section-head"><h2>Needs attention</h2><Link to="/events">View all</Link></div>
+              <div className="attention-list">
+                {attention.slice(0, MAX_HOME_ITEMS).map((item, index) => (
+                  <AttentionRow key={`${item.type}-${index}`} item={item} acknowledge={acknowledge} dismiss={dismiss} />
+                ))}
+              </div>
+            </section>
           )}
 
-          <h2>Live now</h2>
-          {liveTasks.length === 0 ? (
-            <EmptyState>No live work right now.</EmptyState>
-          ) : (
-            <div className="live-list">
-              {liveTasks.map((t) => (
-                <div key={t.handle_id} className="live-row">
-                  <StatusBadge status={t.status} />
-                  <Link to={`/tasks/${encodeURIComponent(t.handle_id)}`} className="mono">
-                    {t.dataset} {t.operation}
-                  </Link>
-                  {t.stage && <span className="muted">{t.stage}</span>}
-                  <ProgressBar progress={t.progress} />
-                </div>
-              ))}
-            </div>
+          {liveTasks.length > 0 && (
+            <section className="home-section">
+              <div className="home-section-head"><h2>Running now</h2><Link to="/tasks">View tasks</Link></div>
+              <div className="live-list">
+                {liveTasks.slice(0, MAX_HOME_ITEMS).map((task) => (
+                  <div key={task.handle_id} className="live-row">
+                    <StatusBadge status={task.status} />
+                    <Link to={`/tasks/${encodeURIComponent(task.handle_id)}`} className="mono">{task.dataset} {task.operation}</Link>
+                    {task.stage && <span className="muted">{task.stage}</span>}
+                    <ProgressBar progress={task.progress} />
+                  </div>
+                ))}
+              </div>
+            </section>
           )}
 
-          <h2>Dataset health</h2>
-          {data.datasets.length === 0 ? (
-            <EmptyState>No datasets registered.</EmptyState>
-          ) : (
-            <div className="health-grid">
-              {data.datasets.map((d) => {
-                const desc = data.descriptions[d.name];
-                return (
-                  <DatasetCard
-                    key={d.name}
-                    name={d.name}
-                    state={d.state}
-                    provider={d.provider}
-                    providerReady={d.provider_ready}
-                    updateReady={d.update_ready}
-                    missingRequired={
-                      desc?.settings
-                        .filter((s) => s.required && !s.configured)
-                        .map((s) => s.key) ?? []
-                    }
-                    capabilities={desc?.capabilities ?? {}}
-                    publicationId={d.publication_id}
-                    status={d}
-                    tasks={data.tasks.filter((t) => t.dataset === d.name)}
-                  />
-                );
-              })}
-            </div>
-          )}
-
-          <footer className="server-footer muted">
-            <Link to="/server">server</Link> {data.status.status} · pid {data.status.pid} ·{" "}
-            {data.status.tasks} handles ·{" "}
-            <span className="mono workspace-path" title={data.status.workspace}>
-              {data.status.workspace}
-            </span>
-            {Object.keys(data.status.queue_lengths).length > 0 && (
-              <>
-                {" "}
-                · queues:{" "}
-                {Object.entries(data.status.queue_lengths)
-                  .map(([name, n]) => `${name} ${n}`)
-                  .join(", ")}
-              </>
-            )}{" "}
-            · <Link to="/server">details →</Link>
-          </footer>
+          <div className="home-server-link muted">
+            Server is {data.status.status}. <Link to="/server">View server details →</Link>
+          </div>
         </>
       )}
     </div>

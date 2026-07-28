@@ -10,30 +10,30 @@ from datetime import date
 from findata import DataLoader
 from findata.sdk.plugins import register_plugins
 from findata.storage import Workspace
-from findata_plugins.plugins.datasets.tushare_daily_basic import (
+from findata_plugins.tushare.plugins.datasets.stock.daily_basic import (
     DAILY_BASIC_SPEC,
     daily_basic_plugin,
 )
-from findata_plugins.plugins.datasets.tushare_index_basic import (
+from findata_plugins.tushare.plugins.datasets.index.index_basic import (
     INDEX_BASIC_SPEC,
     index_basic_plugin,
 )
-from findata_plugins.plugins.datasets.tushare_index_basic.operations import IndexBasicDatasetService
-from findata_plugins.plugins.datasets.tushare_index_weight import (
+from findata_plugins.tushare.plugins.datasets.index.index_basic.operations import IndexBasicDatasetService
+from findata_plugins.tushare.plugins.datasets.index.index_weight import (
     INDEX_WEIGHT_SPEC,
     index_weight_plugin,
 )
-from findata_plugins.plugins.datasets.tushare_index_weight.operations import (
+from findata_plugins.tushare.plugins.datasets.index.index_weight.operations import (
     IndexWeightDatasetService,
 )
-from findata_plugins.plugins.providers.tushare.provider import tushare_provider_plugin
-from findata_plugins.shared.engine import TushareClient, TushareHTTPTransport
-from findata_plugins.plugins.datasets.tushare_stock_basic import (
+from findata_plugins.tushare.plugins.providers.tushare.provider import tushare_provider_plugin
+from findata_plugins.tushare.shared.engine import TushareClient, TushareHTTPTransport
+from findata_plugins.tushare.plugins.datasets.stock.stock_basic import (
     STOCK_BASIC_SPEC,
     stock_basic_plugin,
 )
-from findata_plugins.plugins.datasets.tushare_trade_cal import TRADE_CAL_SPEC, trade_cal_plugin
-from findata_plugins.plugins.datasets.tushare_trade_cal.operations import TradeCalDatasetService
+from findata_plugins.tushare.plugins.datasets.stock.trade_cal import TRADE_CAL_SPEC, trade_cal_plugin
+from findata_plugins.tushare.plugins.datasets.stock.trade_cal.operations import TradeCalDatasetService
 
 TUSHARE_DATASETS = {
     spec.name: spec

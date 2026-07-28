@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { OperationDescription } from "./api";
-import { buildOperands, fieldsForOperation } from "./operationForm";
+import { buildOperands, defaultFieldValues, fieldsForOperation } from "./operationForm";
 
 const OP: OperationDescription = {
   name: "fetch",
@@ -12,6 +12,7 @@ const OP: OperationDescription = {
       items: { type: "string" },
       minItems: 1,
       help: "Security codes or selectors, one per line",
+      default: ["all"],
     },
     range: { type: "string", format: "half-open-date-range" },
     note: { type: "string" },
@@ -27,6 +28,19 @@ describe("fieldsForOperation", () => {
       kind: "array",
       required: true,
       help: "Security codes or selectors, one per line",
+      default: ["all"],
+    });
+  });
+
+  it("maps schema defaults into editable field values", () => {
+    expect(defaultFieldValues(fieldsForOperation(OP))).toMatchObject({
+      symbols: { text: "all", from: "", to: "" },
+    });
+  });
+
+  it("defaults date ranges to the current year through today", () => {
+    expect(defaultFieldValues(fieldsForOperation(OP), new Date(2026, 6, 20))).toMatchObject({
+      range: { text: "", from: "2026-01-01", to: "2026-07-21" },
     });
   });
 

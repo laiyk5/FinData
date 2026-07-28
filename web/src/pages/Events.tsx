@@ -8,7 +8,6 @@ import {
   EmptyState,
   FreshnessNote,
   JsonBlock,
-  KvChips,
   Loading,
   Time,
 } from "../components/common";
@@ -32,6 +31,7 @@ export default function EventsPage() {
   const [severity, setSeverity] = useState("");
   const [kind, setKind] = useState("");
   const [since, setSince] = useState("");
+  const [query, setQuery] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [hasUnread, setHasUnread] = useState(false);
 
@@ -66,11 +66,22 @@ export default function EventsPage() {
   const items = live.data ?? [];
   const kinds = [...new Set(items.map((e) => e.kind))].sort();
   const visible = items.filter(
-    (e) =>
-      (!severity || e.severity === severity) &&
-      (!kind || e.kind === kind) &&
-      (!unreadOnly || !e.acknowledged) &&
-      (!datasetFilter || e.context?.dataset === datasetFilter),
+    (event) => {
+      const searchable = [
+        event.message,
+        event.kind,
+        typeof event.context?.dataset === "string" ? event.context.dataset : "",
+      ]
+        .join(" ")
+        .toLowerCase();
+      return (
+        (!severity || event.severity === severity) &&
+        (!kind || event.kind === kind) &&
+        (!unreadOnly || !event.acknowledged) &&
+        (!datasetFilter || event.context?.dataset === datasetFilter) &&
+        (!query.trim() || searchable.includes(query.trim().toLowerCase()))
+      );
+    },
   );
   const unreadCount = items.filter((e) => !e.acknowledged).length;
 
@@ -86,65 +97,93 @@ export default function EventsPage() {
         <h1>Events</h1>
         <FreshnessNote lastUpdated={live.lastUpdated} />
       </div>
-      <div className="filters">
+      <section className="events-toolbar" aria-label="Filter events">
+        <div className="events-search-row">
+          <label className="events-search">
+            <span>Find events</span>
+            <input
+              type="search"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Message, dataset, or event type"
+            />
+          </label>
+          <span className="events-result-count">
+            {visible.length} event{visible.length === 1 ? "" : "s"} · {unreadCount} open
+          </span>
+          <button
+            className="btn btn-primary"
+            disabled={busy !== null || unreadCount === 0}
+            onClick={() => void ack({ all: true }, "all")}
+          >
+            {busy === "all" ? "Acknowledging…" : "Acknowledge all"}
+          </button>
+        </div>
+        <div className="events-filter-row">
+          <div className="filter-chips" aria-label="Event state filter">
+            <button
+              type="button"
+              className={`filter-chip ${!unreadOnly ? "active" : ""}`}
+              onClick={() => setUnreadOnly(false)}
+            >
+              All events
+            </button>
+            <button
+              type="button"
+              className={`filter-chip ${unreadOnly ? "active" : ""}`}
+              onClick={() => setUnreadOnly(true)}
+            >
+              Open {unreadCount > 0 && `(${unreadCount})`}
+            </button>
+          </div>
+          <div className="filter-chips" aria-label="Event severity filter">
+            <button
+              type="button"
+              className={`filter-chip ${severity === "" ? "active" : ""}`}
+              onClick={() => setSeverity("")}
+            >
+              All severities
+            </button>
+            {SEVERITIES.map((value) => (
+              <button
+                key={value}
+                type="button"
+                className={`filter-chip ${severity === value ? "active" : ""}`}
+                onClick={() => setSeverity(value)}
+              >
+                {value}
+              </button>
+            ))}
+          </div>
+          <label className="events-select">
+            <span>Type</span>
+            <select value={kind} onChange={(event) => setKind(event.target.value)}>
+              <option value="">all</option>
+              {kinds.map((value) => (
+                <option key={value} value={value}>{value}</option>
+              ))}
+            </select>
+          </label>
+          <label className="events-select">
+            <span>Time</span>
+            <select value={since} onChange={(event) => setSince(event.target.value)}>
+              {SINCE_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </label>
+        </div>
         {datasetFilter && (
-          <>
+          <div className="events-dataset-filter">
             <span className="chip">
               dataset: <span className="mono">{datasetFilter}</span>
             </span>
             <button className="btn btn-xs" onClick={clearDatasetFilter}>
               Clear filter
             </button>
-          </>
+          </div>
         )}
-        <label>
-          <input
-            type="checkbox"
-            checked={unreadOnly}
-            onChange={(e) => setUnreadOnly(e.target.checked)}
-          />
-          unread only
-        </label>
-        <label>
-          severity
-          <select value={severity} onChange={(e) => setSeverity(e.target.value)}>
-            <option value="">all</option>
-            {SEVERITIES.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          kind
-          <select value={kind} onChange={(e) => setKind(e.target.value)}>
-            <option value="">all</option>
-            {kinds.map((k) => (
-              <option key={k} value={k}>
-                {k}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          since
-          <select value={since} onChange={(e) => setSince(e.target.value)}>
-            {SINCE_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <button
-          className="btn"
-          disabled={busy !== null || unreadCount === 0}
-          onClick={() => void ack({ all: true }, "all")}
-        >
-          {busy === "all" ? "Acking…" : "Ack all"}
-        </button>
-      </div>
+      </section>
       <ConnectionWarning error={live.error} />
       {visible.length === 0 && (
         <EmptyState>
@@ -154,7 +193,10 @@ export default function EventsPage() {
       )}
       {visible.length > 0 && (
         <div className="event-list">
-          {visible.map((e) => (
+          {visible
+            .slice()
+            .sort((left, right) => Number(left.acknowledged) - Number(right.acknowledged))
+            .map((e) => (
             <div
               key={e.event_id}
               className={`event-row event-severity-${e.severity} ${e.acknowledged ? "event-acked" : ""}`}
@@ -166,11 +208,19 @@ export default function EventsPage() {
                 <div className="event-message">{e.message}</div>
                 <div className="event-meta">
                   <span className="chip chip-kind mono">{e.kind}</span>
+                  {typeof e.context?.dataset === "string" && (
+                    <Link
+                      to={`/datasets/${encodeURIComponent(e.context.dataset)}`}
+                      className="chip mono"
+                    >
+                      {e.context.dataset}
+                    </Link>
+                  )}
                   {Object.keys(e.context ?? {}).length > 0 && (
-                    <>
-                      <KvChips value={e.context} />
+                    <details className="event-context">
+                      <summary>details</summary>
                       <JsonBlock value={e.context} label="raw context" />
-                    </>
+                    </details>
                   )}
                 </div>
               </div>
@@ -196,7 +246,7 @@ export default function EventsPage() {
                 </span>
               </div>
             </div>
-          ))}
+            ))}
         </div>
       )}
     </div>

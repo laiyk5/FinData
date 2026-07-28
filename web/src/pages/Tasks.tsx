@@ -19,6 +19,14 @@ function matches(task: TaskHandle, filter: StatusFilter): boolean {
   return task.status === filter;
 }
 
+function statusCount(items: TaskHandle[], filter: StatusFilter): number {
+  return items.filter((task) => matches(task, filter)).length;
+}
+
+function datasetLabel(name: string): string {
+  return name.slice(name.lastIndexOf("/") + 1).replace(/_/g, " ");
+}
+
 export default function TasksPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const statusParam = searchParams.get("status");
@@ -61,47 +69,66 @@ export default function TasksPage() {
 
   if (!live.data && !live.error) return <Loading />;
 
-  const visible = (live.data ?? []).filter((t) => matches(t, filter));
+  const taskItems = live.data ?? [];
+  const visible = taskItems.filter((t) => matches(t, filter));
 
   return (
     <div>
-      <div className="page-head">
-        <h1>Tasks</h1>
+      <header className="tasks-page-header">
+        <div>
+          <h1>Tasks</h1>
+          <p>Follow data operations, review outcomes, and retry work that needs attention.</p>
+        </div>
         <FreshnessNote lastUpdated={live.lastUpdated} />
-      </div>
-      <div className="filters">
-        <span className="filter-chips">
+      </header>
+      {live.data && (
+        <div className="task-status-summary">
+          {(["active", "failed", "succeeded", "canceled"] as const).map((status) => (
+            <button
+              key={status}
+              className={`task-status-stat ${filter === status ? "active" : ""}`}
+              onClick={() => setFilter(status)}
+            >
+              <strong>{statusCount(taskItems, status)}</strong>
+              <span>{status === "active" ? "in progress" : status}</span>
+            </button>
+          ))}
+        </div>
+      )}
+      <div className="task-filter-bar">
+        <div className="task-filter-group">
+          <span className="task-filter-label">Show</span>
           {STATUS_FILTERS.map((f) => (
             <button
               key={f}
               className={`chip filter-chip ${filter === f ? "active" : ""}`}
               onClick={() => setFilter(f)}
             >
-              {f}
+              {f === "active" ? "in progress" : f}
             </button>
           ))}
-        </span>
-        <label>
-          dataset
+        </div>
+        <label className="task-dataset-filter">
+          <span className="task-filter-label">Dataset</span>
           <select value={dataset} onChange={(e) => setDataset(e.target.value)}>
-            <option value="">all</option>
+            <option value="">All datasets</option>
             {datasets.map((d) => (
               <option key={d} value={d}>
-                {d}
+                {datasetLabel(d)} — {d}
               </option>
             ))}
           </select>
         </label>
-        <label>
+        <label className="task-history-toggle">
           <input type="checkbox" checked={all} onChange={(e) => setAll(e.target.checked)} />
-          show all retained
+          Include full retained history
         </label>
       </div>
       <ConnectionWarning error={live.error} />
       {live.data && visible.length === 0 && (
         <EmptyState>
           No {filter === "all" ? "" : `${filter} `}tasks
-          {dataset ? ` for ${dataset}` : ""} — submitted tasks appear here.
+          {dataset ? ` for ${datasetLabel(dataset)}` : ""}. Submitted tasks appear here.
         </EmptyState>
       )}
       {visible.length > 0 && (

@@ -12,19 +12,19 @@ from typing import Any
 from findata.sdk.contracts import DatasetSpec, OperandError, OperationReporter
 from findata.sdk.plugins import register_plugins
 from findata.storage import Workspace
-from findata_plugins.plugins.datasets.tushare_fund_daily import (
+from findata_plugins.tushare.plugins.datasets.etf.fund_daily import (
     FUND_DAILY_FIELDS,
     FUND_DAILY_SPEC,
     fund_daily_plugin,
 )
-from findata_plugins.plugins.datasets.tushare_fund_daily import FUND_DAILY_FLOAT_FIELDS
-from findata_plugins.plugins.providers.tushare.provider import tushare_provider_plugin
-from findata_plugins.plugins.datasets.tushare_fund_daily.operations import (
+from findata_plugins.tushare.plugins.datasets.etf.fund_daily import FUND_DAILY_FLOAT_FIELDS
+from findata_plugins.tushare.plugins.providers.tushare.provider import tushare_provider_plugin
+from findata_plugins.tushare.plugins.datasets.etf.fund_daily.operations import (
     FundDailyDatasetRuntime,
     normalize_operation,
 )
-from findata_plugins.plugins.providers.tushare.provider import tushare_provider_plugin
-from findata_plugins.shared.testing import MockTushareTransport
+from findata_plugins.tushare.plugins.providers.tushare.provider import tushare_provider_plugin
+from findata_plugins.tushare.shared.testing import MockTushareTransport
 
 
 class FundDailySpecTests(unittest.TestCase):
@@ -61,10 +61,10 @@ class FundDailyMockOperationTests(unittest.TestCase):
         )
 
     def _service(self, transport: Any, *, today: date | None = None) -> Any:
-        from findata_plugins.plugins.datasets.tushare_fund_daily.operations import (
+        from findata_plugins.tushare.plugins.datasets.etf.fund_daily.operations import (
             FundDailyDatasetService,
         )
-        from findata_plugins.shared.engine import TushareClient
+        from findata_plugins.tushare.shared.engine import TushareClient
 
         today = today or date(2026, 7, 20)
         client = TushareClient(
@@ -94,6 +94,27 @@ class FundDailyMockOperationTests(unittest.TestCase):
         )
         self.assertGreater(table.num_rows, 0)
 
+    def test_complete_defaults_to_all_funds(self) -> None:
+        transport = MockTushareTransport(today=date(2026, 7, 20))
+        self._service(transport).run("complete", {"timerange": "2026-07-20:2026-07-21"})
+
+        requests = [item["params"] for item in transport.requests if item["api_name"] == "fund_daily"]
+        self.assertEqual(requests, [{"trade_date": "20260720"}])
+
+    def test_update_defaults_to_stored_fund_codes(self) -> None:
+        transport = MockTushareTransport(today=date(2026, 7, 20))
+        self._service(transport, today=date(2026, 7, 15)).run(
+            "complete", {"symbols": ["159919.SZ"], "timerange": "2026-07-01:2026-07-10"}
+        )
+
+        self._service(transport).run("update", {})
+
+        requests = [item["params"] for item in transport.requests if item["api_name"] == "fund_daily"]
+        self.assertIn(
+            {"ts_code": "159919.SZ", "start_date": "20260710", "end_date": "20260720"},
+            requests,
+        )
+
     def test_unknown_operation_rejected(self) -> None:
         transport = MockTushareTransport(today=date(2026, 7, 20))
         service = self._service(transport)
@@ -102,9 +123,17 @@ class FundDailyMockOperationTests(unittest.TestCase):
 
 
 class FundDailyNormalizationTests(unittest.TestCase):
-    def test_normalize_complete_requires_symbols_and_timerange(self) -> None:
+    def test_normalize_complete_requires_timerange(self) -> None:
         with self.assertRaises(OperandError):
             normalize_operation("complete", {}, today=date(2026, 7, 20))
+
+    def test_normalize_complete_defaults_symbols_to_all(self) -> None:
+        result = normalize_operation(
+            "complete",
+            {"timerange": "2026-07-01:2026-07-10"},
+            today=date(2026, 7, 20),
+        )
+        self.assertEqual(result["symbols"], ["all"])
 
     def test_normalize_complete_deduplicates_symbols(self) -> None:
         result = normalize_operation(

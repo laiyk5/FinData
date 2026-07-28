@@ -36,6 +36,25 @@ table = dataset.query(
 )
 ```
 
+For interactive exploration, `query_sql` runs one guarded read-only `SELECT`
+against the dataset's public `data` relation through the same DataLoader lock and
+ready-state checks:
+
+```python
+table = dataset.query_sql(
+    "SELECT ticker, trade_date, close FROM data "
+    "WHERE close > 100 ORDER BY trade_date DESC",
+    limit=100,
+)
+```
+
+The SQL surface permits one query over `data`; joins, subqueries, external files,
+and multiple statements are rejected.
+
+The WebUI's dataset **Data** tab uses this same guarded server-side query path. It shows a bounded
+preview and exports only the current query result as CSV or Parquet; it does not download an
+implicit whole-dataset copy.
+
 `query` returns a `pyarrow.Table`. `keys` addresses the dataset's declared partition key,
 and `time_range` is half-open `[start, end)` over its declared time field.
 

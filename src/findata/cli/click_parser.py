@@ -36,6 +36,7 @@ GROUP_HELP = {
     "task": "Submit and inspect asynchronous dataset work.",
     "cron": "Manage dataset update schedules.",
     "events": "Inspect and acknowledge retained operational events.",
+    "web": "Open the local WebUI without copying a token.",
     "system": "Inspect the local findata service.",
     "plugin": "List, diagnose, and scaffold plugin distributions.",
 }
@@ -77,6 +78,7 @@ COMMAND_HELP = {
     ("cron", "set"): "Set one dataset's cron expression and timezone.",
     ("events", "ls"): "List retained operational events.",
     ("events", "ack"): "Acknowledge one event or every matching event.",
+    ("web", "open"): "Open the local WebUI in your default browser.",
     ("system", "status"): "Show server identity and runtime health.",
     ("system", "health"): "Aggregate health check — plugins, providers, datasets.",
     ("plugin", "ls"): "List installed plugin distributions with entry points and versions.",
@@ -436,6 +438,10 @@ def command_tree(*, version: str) -> click.Group:
             click.Option(["--all"], is_flag=True),
         ],
     )
+
+    web = DocumentedGroup("web", help=GROUP_HELP["web"])
+    root.add_command(web)
+    attach(web, "web", "open", [])
 
     system = DocumentedGroup("system", help=GROUP_HELP["system"])
     root.add_command(system)

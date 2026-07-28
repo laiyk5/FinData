@@ -22,7 +22,7 @@ Datasets:
   each committed dataset revision. A missing declared provider field is an error; undeclared extra
   provider fields are ignored until intentionally added by a data-layout version.
 - Operation `timerange` values are nonempty half-open `[start, end)` civil-date ranges. The CLI spelling is `YYYY-MM-DD:YYYY-MM-DD`; `today` is resolved once, in the dataset timezone, to the current date used as an exclusive endpoint. Inclusive provider endpoints are an adapter detail.
-- `symbols`, `indexes`, and `exchanges` are nonempty arrays of strings, deduplicated after canonicalization. A single CLI scalar is coerced to a one-element array.
+- `symbols`, `indexes`, and `exchanges` are nonempty arrays of strings, deduplicated after canonicalization. A single CLI scalar is coerced to a one-element array. A dataset may additionally declare the selector literal `all` only when its provider can fetch the whole market for a date without explicit symbols.
 - `update` is always parameterless. Its dataset plugin alone interprets any settings needed to
   select work. A one-time `complete` or `refresh` never changes plugin settings.
 - Each declared plugin setting is classified as `required` or optional. A required setting gates
@@ -30,4 +30,13 @@ Datasets:
   (CLI, WebUI) must warn only about unconfigured required settings. Optional settings never
   produce warnings. The classification is part of the plugin's declared setting specification and
   is exposed through dataset descriptions and the configuration-keys API.
+- A setting may declare an effective default without writing user configuration. The plugin applies
+  that default when it interprets its settings, and the configuration-keys API reports it so clients
+  can distinguish an unset key from an undefined behavior.
+- A setting selecting existing symbols or indexes defaults to the committed coverage set (`stored`);
+  coverage is the authoritative local inventory. A WebUI date range operand defaults to the start
+  of the current year through today when its operation schema does not declare a narrower default.
+- A parameterless `update` with an empty resolved target is a successful no-op. It records no
+  publication and may still be scheduled, so an empty initial dataset does not make its suggested
+  cron job ineligible.
 - Built-in `complete` and `refresh` operations declare their fully normalized operands as a stable coalescing identity. `update` never coalesces because its target depends on submission time, committed dataset state, and the plugin-settings revision.

@@ -8,14 +8,17 @@ confirmation policies. Architectural rules shared by the whole system live in
 ## Thin-client boundary
 
 The WebUI is a second thin client over the same versioned localhost HTTP API used by the CLI. It
-is a static single-page application served by the server itself; it holds the workspace token in
-the browser session, renders only server-reported semantics, and follows live work by polling. It
-adds no endpoints, lifecycle states, or policy of its own. The server is a task service; the WebUI
-is the app that connects the user to that service — every piece of meaning (states, readiness,
-reasons, progress) comes from the server, and every mutation maps to a documented CLI command.
+is a static single-page application served by the server itself; it renders only server-reported
+semantics and follows live work by polling. `findata web open` uses the workspace token locally to
+obtain a one-time login code; the page exchanges that loopback-only code for an `HttpOnly`,
+`SameSite=Strict` session cookie. The workspace token is never placed in a URL or browser storage.
+Manual bearer-token login remains available for direct browser access. The UI adds no lifecycle
+states or policy of its own: every piece of meaning (states, readiness, reasons, progress) comes
+from the server, and every mutation maps to a documented CLI command.
 
-Reading committed data (schema, preview, coverage, export) remains a CLI and DataLoader workflow
-and is intentionally not part of the WebUI. Client-side polling is the liveness contract; adding
+The dataset Data tab is the one browser read surface: it sends guarded read-only SQL to the server,
+which executes it through the standard DataLoader contract. It previews a bounded result and exports
+only that exact query result as CSV or Parquet. Client-side polling is the liveness contract; adding
 push channels such as websockets requires an architectural revision.
 
 ## Static-asset serving
@@ -103,12 +106,12 @@ A read-only status page under *System* answering "what exactly is this server?":
 
 ### Datasets
 
-A card grid, not a bare table. Each card shows, from the generic status/description fields:
-name, state badge, provider readiness, update readiness, coverage (`N keys, [start → end)`),
-unconfigured required settings as a warning chip, and the primary action (Run update / Configure
-settings) plus a link to detail. The page polls slowly so cards stay fresh after operations run.
-An empty registry states how datasets get registered (install a dataset plugin) instead of
-showing a blank table.
+The page is a hierarchical card index, not a bare table. It groups cards by each plugin's declared
+family path and lets users collapse or scan a family before reading individual datasets. A card
+shows only its findability and operational facts: name, provider, state, coverage, update readiness,
+and one primary action. Configuration warnings are visible but do not compete with the name. The
+page polls slowly so cards stay fresh after operations run. An empty registry states how datasets
+get registered (install a dataset plugin) instead of showing a blank table.
 
 ### Dataset detail
 
@@ -124,7 +127,9 @@ server-reported reason when not eligible), and a link to the dataset's cron job
 - **Run** — the schema-driven operation form (select operation, typed operand fields, per-field
   help from the server schema). Dry-run renders the plan in human shape — strategy, estimated
   request count, and dependency states as linked chips — with raw plan JSON behind a disclosure.
-  Submit requires a confirmation that shows the equivalent CLI command.
+  Date ranges default from the start of the current year through today unless the operation declares
+  a narrower default. Selector fields surface the plugin's `all` or coverage-backed `stored` default
+  as an explicit choice. Submit requires a confirmation that shows the equivalent CLI command.
 - **Settings** — one typed editor per declared setting, driven by its JSON schema (arrays as
   line/tag editors, booleans as switches, numbers as number inputs, strings as text), with the
   server-provided help text. Every setting carries its server-declared classification: required
@@ -132,6 +137,9 @@ server-reported reason when not eligible), and a link to the dataset's cron job
   "optional" marker and never warn. Values never require the user to write raw JSON. Unset
   requires confirmation.
 - **Activity** — the shared task-list component pre-filtered to this dataset.
+- **Data** — a SQL editor with a bounded preview, schema facts, and one export action whose format
+  choice is CSV or Parquet. It queries through the server's DataLoader route; it never exports the
+  whole dataset implicitly.
 - **Danger zone** — reset with a typed-name confirmation, stating that published data is replaced
   and showing the equivalent CLI command.
 
@@ -141,10 +149,10 @@ The list is built for scanning and acting:
 
 - Status filter chips (active / succeeded / failed / canceled / all) plus dataset filter and the
   retained-history toggle.
-- Each row: short ID (click-to-copy full), dataset link, operation, owner (trigger owners shown
-  as "triggered"), status badge, an inline progress bar showing processed vs checkpointed,
-  diagnostic-count badges when nonzero, relative updated time, and inline actions — Cancel for
-  active rows, Retry and Explain for failed/canceled rows.
+- Each row leads with its task ID, operation, and state; the dataset is a clearly secondary linked
+  fact so opening task detail never accidentally navigates to the dataset. Progress appears only
+  while work is active. Failed and canceled rows offer one explanatory action, not duplicate links.
+  Owner, diagnostic counts, and relative update time remain scannable facts.
 - The list polls fast while any row is active and slowly otherwise.
 
 ### Task detail
@@ -161,9 +169,9 @@ The list is built for scanning and acting:
 
 ### Cron
 
-- Each job row shows a human-readable schedule summary alongside the raw expression, the
-  timezone, enabled state, source (suggested/override), last run, and next run as a relative
-  countdown in the job's timezone.
+- Each job row leads with its dataset and triggered operation, with enabled state and source
+  (suggested/override) alongside. It then shows a human-readable schedule summary alongside the
+  raw expression, timezone, last run, and next run as a relative countdown in the job's timezone.
 - Missed-during-downtime jobs (from `cron_missed` events) surface as a banner offering the
   corresponding update submission — never auto-submitted.
 - Schedule editing is guided, not free text: a structured editor offers presets (daily, weekdays,

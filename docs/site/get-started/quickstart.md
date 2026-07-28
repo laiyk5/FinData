@@ -35,8 +35,8 @@ findata-server start ~/market-data --provider-mode mock
 `init` creates the workspace directory and an API credential. `start` runs the server
 in the foreground with mock responses — no token needed.
 
-Open your browser to **http://127.0.0.1:8765** and paste the token from
-`~/market-data/token`. The Web UI shows the server status, the demo provider
+Run `findata --workspace ~/market-data web open` to open and sign in to the Web UI. The
+Web UI shows the server status, the demo provider
 (`findata-test/demo`), and two demo datasets (`demo_hello` and `demo_random`).
 
 Leave the server running; the Web UI polls for live updates.

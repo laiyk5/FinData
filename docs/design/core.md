@@ -23,7 +23,11 @@ One server controls one workspace. It acquires a non-blocking `flock` on a works
 
 v1 supports Linux and macOS on local POSIX filesystems providing `flock`, signals, permissions, directory flushing, and same-filesystem atomic rename. Network filesystems and Windows are outside the v1 contract.
 
-The server exposes a versioned localhost HTTP API on `127.0.0.1`. `findata-server init` creates the workspace with `0700` permissions and a cryptographically random bearer token in a `0600` file. Every API request, including streams, requires the token in the `Authorization` header. Tokens never appear in URLs or logs.
+The server exposes a versioned localhost HTTP API on `127.0.0.1`. `findata-server init` creates the workspace with `0700` permissions and a cryptographically random bearer token in a `0600` file. API clients authenticate with that token in the `Authorization` header. The WebUI may instead exchange a one-time, loopback-only login code issued by the local CLI for a short-lived `HttpOnly`, `SameSite=Strict` session cookie. The token never appears in URLs, browser storage, or logs.
+
+`findata-server status <workspace>` reads the workspace descriptor and verifies the authenticated
+server response. `stop` requests graceful shutdown only from that verified server; it never hunts
+for or blindly signals a PID. `restart` performs that stop, then starts a foreground replacement.
 
 The server also serves the WebUI's static assets for non-API paths under the contract defined in
 [ux/webui.md](ux/webui.md).
@@ -120,9 +124,14 @@ Time-accumulating datasets using `strict` or `accept-empty` keep one continuous 
 
 Each plugin defines how parameterless `update` selects its work. A complete-replacement dataset may
 need no settings; another dataset may require plugin-defined symbols, selectors, or other values.
-The plugin reports update readiness from its settings and committed state and returns an actionable
-validation error when required configuration or tracked state is missing. One-time operations use
-their explicit operands and never mutate plugin settings implicitly.
+For a selector whose natural meaning is "what we already have", the default is the symbol or key
+set represented by that dataset's committed coverage; the coverage table, not a duplicated plugin
+inventory, is authoritative. A plugin whose provider supports date-only full-market retrieval may
+instead declare `all` as its default selector. The plugin reports update readiness from its settings
+and committed state and returns an actionable validation error when required configuration or
+tracked state is missing. Resolving an update selector to no targets is a successful no-op, not a
+readiness failure or a reason to reject cron. One-time operations use their explicit operands and
+never mutate plugin settings implicitly.
 
 ## Transactional dataset storage
 
