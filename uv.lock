@@ -9,6 +9,7 @@ members = [
     "findata-plugins-datasets-tushare-daily-basic",
     "findata-plugins-datasets-tushare-fund-daily",
     "findata-plugins-datasets-tushare-index-basic",
+    "findata-plugins-datasets-tushare-index-daily",
     "findata-plugins-datasets-tushare-index-weight",
     "findata-plugins-datasets-tushare-stock-basic",
     "findata-plugins-datasets-tushare-trade-cal",
@@ -252,6 +253,7 @@ dev = [
     { name = "findata-plugins-datasets-tushare-daily-basic" },
     { name = "findata-plugins-datasets-tushare-fund-daily" },
     { name = "findata-plugins-datasets-tushare-index-basic" },
+    { name = "findata-plugins-datasets-tushare-index-daily" },
     { name = "findata-plugins-datasets-tushare-index-weight" },
     { name = "findata-plugins-datasets-tushare-stock-basic" },
     { name = "findata-plugins-datasets-tushare-trade-cal" },
@@ -280,6 +282,7 @@ requires-dist = [
     { name = "findata-plugins-datasets-tushare-daily-basic", marker = "extra == 'dev'", editable = "plugins/tushare/daily-basic" },
     { name = "findata-plugins-datasets-tushare-fund-daily", marker = "extra == 'dev'", editable = "plugins/tushare/fund-daily" },
     { name = "findata-plugins-datasets-tushare-index-basic", marker = "extra == 'dev'", editable = "plugins/tushare/index-basic" },
+    { name = "findata-plugins-datasets-tushare-index-daily", marker = "extra == 'dev'", editable = "plugins/tushare/index-daily" },
     { name = "findata-plugins-datasets-tushare-index-weight", marker = "extra == 'dev'", editable = "plugins/tushare/index-weight" },
     { name = "findata-plugins-datasets-tushare-stock-basic", marker = "extra == 'dev'", editable = "plugins/tushare/stock-basic" },
     { name = "findata-plugins-datasets-tushare-trade-cal", marker = "extra == 'dev'", editable = "plugins/tushare/trade-cal" },
@@ -309,6 +312,7 @@ dependencies = [
     { name = "findata-plugins-datasets-tushare-daily-basic" },
     { name = "findata-plugins-datasets-tushare-fund-daily" },
     { name = "findata-plugins-datasets-tushare-index-basic" },
+    { name = "findata-plugins-datasets-tushare-index-daily" },
     { name = "findata-plugins-datasets-tushare-index-weight" },
     { name = "findata-plugins-datasets-tushare-stock-basic" },
     { name = "findata-plugins-datasets-tushare-trade-cal" },
@@ -321,6 +325,7 @@ requires-dist = [
     { name = "findata-plugins-datasets-tushare-daily-basic", editable = "plugins/tushare/daily-basic" },
     { name = "findata-plugins-datasets-tushare-fund-daily", editable = "plugins/tushare/fund-daily" },
     { name = "findata-plugins-datasets-tushare-index-basic", editable = "plugins/tushare/index-basic" },
+    { name = "findata-plugins-datasets-tushare-index-daily", editable = "plugins/tushare/index-daily" },
     { name = "findata-plugins-datasets-tushare-index-weight", editable = "plugins/tushare/index-weight" },
     { name = "findata-plugins-datasets-tushare-stock-basic", editable = "plugins/tushare/stock-basic" },
     { name = "findata-plugins-datasets-tushare-trade-cal", editable = "plugins/tushare/trade-cal" },
@@ -386,6 +391,29 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "findata", editable = "." },
+    { name = "findata-plugins-providers-tushare", editable = "plugins/tushare/provider" },
+    { name = "findata-plugins-shared", editable = "plugins/tushare/shared" },
+    { name = "pyarrow", specifier = ">=15" },
+]
+
+[[package]]
+name = "findata-plugins-datasets-tushare-index-daily"
+version = "0.4.0"
+source = { editable = "plugins/tushare/index-daily" }
+dependencies = [
+    { name = "findata" },
+    { name = "findata-plugins-datasets-tushare-index-basic" },
+    { name = "findata-plugins-datasets-tushare-trade-cal" },
+    { name = "findata-plugins-providers-tushare" },
+    { name = "findata-plugins-shared" },
+    { name = "pyarrow" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "findata", editable = "." },
+    { name = "findata-plugins-datasets-tushare-index-basic", editable = "plugins/tushare/index-basic" },
+    { name = "findata-plugins-datasets-tushare-trade-cal", editable = "plugins/tushare/trade-cal" },
     { name = "findata-plugins-providers-tushare", editable = "plugins/tushare/provider" },
     { name = "findata-plugins-shared", editable = "plugins/tushare/shared" },
     { name = "pyarrow", specifier = ">=15" },

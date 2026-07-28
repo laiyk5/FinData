@@ -12,6 +12,7 @@ dependencies = [
   "findata-plugins-datasets-tushare-daily-basic==0.4.0",
   "findata-plugins-datasets-tushare-fund-daily==0.4.0",
   "findata-plugins-datasets-tushare-index-basic==0.4.0",
+  "findata-plugins-datasets-tushare-index-daily==0.4.0",
   "findata-plugins-datasets-tushare-index-weight==0.4.0",
   "findata-plugins-datasets-tushare-stock-basic==0.4.0",
   "findata-plugins-datasets-tushare-trade-cal==0.4.0",

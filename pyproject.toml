@@ -40,6 +40,7 @@ dev = [
   "findata-plugins-datasets-tushare-daily-basic==0.4.0",
   "findata-plugins-datasets-tushare-fund-daily==0.4.0",
   "findata-plugins-datasets-tushare-index-basic==0.4.0",
+  "findata-plugins-datasets-tushare-index-daily==0.4.0",
   "findata-plugins-datasets-tushare-index-weight==0.4.0",
   "findata-plugins-datasets-tushare-stock-basic==0.4.0",
   "findata-plugins-datasets-tushare-trade-cal==0.4.0",
@@ -68,6 +69,7 @@ members = [
   "plugins/tushare/trade-cal",
   "plugins/tushare/stock-basic",
   "plugins/tushare/index-basic",
+  "plugins/tushare/index-daily",
   "plugins/tushare/index-weight",
   "plugins/tushare/daily-basic",
   "plugins/tushare/fund-daily",
@@ -85,6 +87,7 @@ findata-plugins-providers-tushare = { workspace = true }
 findata-plugins-datasets-tushare-trade-cal = { workspace = true }
 findata-plugins-datasets-tushare-stock-basic = { workspace = true }
 findata-plugins-datasets-tushare-index-basic = { workspace = true }
+findata-plugins-datasets-tushare-index-daily = { workspace = true }
 findata-plugins-datasets-tushare-index-weight = { workspace = true }
 findata-plugins-datasets-tushare-daily-basic = { workspace = true }
 findata-plugins-datasets-tushare-fund-daily = { workspace = true }

@@ -38,6 +38,7 @@ provider. Other publishers can define their own family hierarchy without changin
 | `findata-plugins/tushare_trade_cal` | Exchange trade calendars (SSE, SZSE) | `update`, `complete` | — |
 | `findata-plugins/tushare_stock_basic` | Listed-stock master data | `update` | — |
 | `findata-plugins/tushare_index_basic` | Index metadata | `update`, `complete` | — |
+| `findata-plugins/tushare_index_daily` | Daily index OHLCV market data | `update`, `complete`, `refresh` | `update_indexes` |
 | `findata-plugins/tushare_index_weight` | Monthly index constituent weights | `update`, `complete` | `update_indexes` |
 | `findata-plugins/tushare_daily_basic` | Daily valuation metrics (PE, PB, turnover, …) | `update`, `complete`, `refresh` | `update_symbols` |
 | `findata-plugins/tushare_fund_daily` | ETF daily market data (open, close, high, low, volume, …) | `update`, `complete`, `refresh` | `update_symbols` |

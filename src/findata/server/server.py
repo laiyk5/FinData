@@ -3,6 +3,7 @@ from __future__ import annotations
 import fcntl
 import hmac
 import importlib
+import importlib.metadata
 import json
 import logging
 import os
@@ -311,6 +312,7 @@ class FindataServer:
                     + ", ".join(sorted(active))
                 )
             importlib.invalidate_caches()
+            importlib.metadata.FastPath.__new__.cache_clear()
             providers = discover_provider_plugins_safe()
             plugins = discover_dataset_plugins_safe(providers=providers)
             _log_plugin_load_errors()

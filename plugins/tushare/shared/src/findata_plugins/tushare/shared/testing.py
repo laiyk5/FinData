@@ -130,6 +130,7 @@ class MockTushareTransport:
             "trade_cal": self._trade_cal,
             "stock_basic": self._stock_basic,
             "index_basic": self._index_basic,
+            "index_daily": self._index_daily,
             "index_weight": self._index_weight,
             "daily_basic": self._daily_basic,
             "fund_daily": self._fund_daily,
@@ -247,6 +248,26 @@ class MockTushareTransport:
                     result.append(row)
             cursor += timedelta(days=1)
         return result
+
+    def _index_daily(self, params: Mapping[str, Any]) -> list[dict[str, Any]]:
+        code = str(params.get("ts_code") or "000300.SH")
+        start = _provider_date(params.get("start_date"), fallback=self.today)
+        end = _provider_date(params.get("end_date"), fallback=start)
+        rows: list[dict[str, Any]] = []
+        cursor = start
+        while cursor <= end:
+            if cursor.weekday() < 5:
+                seed = sum(ord(char) for char in code) + cursor.toordinal()
+                rows.append({
+                    "ts_code": code, "trade_date": _format_date(cursor),
+                    "close": float(seed % 5000), "open": float(seed % 4900),
+                    "high": float(seed % 5100), "low": float(seed % 4800),
+                    "pre_close": float(seed % 4700), "change": float(seed % 100),
+                    "pct_chg": float(seed % 1000) / 100, "vol": float(seed % 100000),
+                    "amount": float(seed % 1000000),
+                })
+            cursor += timedelta(days=1)
+        return rows
 
     def _fund_daily(self, params: Mapping[str, Any]) -> list[dict[str, Any]]:
         symbols = (

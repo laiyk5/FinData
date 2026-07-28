@@ -12,6 +12,7 @@ PLUGIN_DISTRIBUTIONS = (
     "plugins/tushare/trade-cal",
     "plugins/tushare/stock-basic",
     "plugins/tushare/index-basic",
+    "plugins/tushare/index-daily",
     "plugins/tushare/index-weight",
     "plugins/tushare/daily-basic",
     "plugins/tushare/fund-daily",

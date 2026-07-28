@@ -23,6 +23,8 @@ from findata_plugins.tushare.plugins.datasets.stock.daily_basic import daily_bas
 from findata_plugins.tushare.plugins.datasets.stock.daily_basic.operations import DailyBasicDatasetRuntime
 from findata_plugins.tushare.plugins.datasets.index.index_basic import index_basic_plugin
 from findata_plugins.tushare.plugins.datasets.index.index_basic.operations import IndexBasicDatasetRuntime
+from findata_plugins.tushare.plugins.datasets.index.index_daily import index_daily_plugin
+from findata_plugins.tushare.plugins.datasets.index.index_daily.operations import IndexDailyDatasetRuntime
 from findata_plugins.tushare.plugins.datasets.index.index_weight import index_weight_plugin
 from findata_plugins.tushare.plugins.datasets.index.index_weight.operations import (
     IndexWeightDatasetRuntime,
@@ -42,6 +44,7 @@ def tushare_dataset_plugins():
         trade_cal_plugin(),
         stock_basic_plugin(),
         index_basic_plugin(),
+        index_daily_plugin(),
         index_weight_plugin(),
         daily_basic_plugin(),
     ]
@@ -50,7 +53,7 @@ def tushare_dataset_plugins():
 class PluginRegistryTests(unittest.TestCase):
     def test_builtin_plugins_validate_and_register_all_v1_datasets(self) -> None:
         plugins = tushare_dataset_plugins()
-        self.assertEqual(len(plugins), 5)
+        self.assertEqual(len(plugins), 6)
         validate_plugins(plugins, providers=[tushare_provider_plugin()])
         with tempfile.TemporaryDirectory() as directory:
             workspace = Workspace.init(Path(directory))
@@ -69,6 +72,7 @@ class PluginRegistryTests(unittest.TestCase):
         self.assertEqual(stock_basic_plugin().family, ("tushare", "stock"))
         self.assertEqual(daily_basic_plugin().family, ("tushare", "stock"))
         self.assertEqual(index_basic_plugin().family, ("tushare", "index"))
+        self.assertEqual(index_daily_plugin().family, ("tushare", "index"))
         self.assertEqual(index_weight_plugin().family, ("tushare", "index"))
 
     def test_registration_rejects_missing_update_and_dependency_cycles(self) -> None:
@@ -129,6 +133,7 @@ class PluginRegistryTests(unittest.TestCase):
             "findata_plugins.tushare.plugins.datasets.stock.daily_basic",
             "findata_plugins.tushare.plugins.datasets.etf.fund_daily",
             "findata_plugins.tushare.plugins.datasets.index.index_basic",
+            "findata_plugins.tushare.plugins.datasets.index.index_daily",
             "findata_plugins.tushare.plugins.datasets.index.index_weight",
         }
         retired_core_paths = (
