@@ -721,7 +721,9 @@ def _wait_for_task(
     try:
         while True:
             if follow:
-                logs = client.request("GET", f"/v1/tasks/{handle}/logs")["items"]
+                logs = client.request("GET", f"/v1/tasks/{handle}/logs").get("items") or []
+                if not isinstance(logs, list):
+                    raise RuntimeError("server returned invalid task logs")
                 for message in logs[emitted_logs:]:
                     _render_task_log(output, message, handle_id=handle)
                 emitted_logs = len(logs)

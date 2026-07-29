@@ -24,7 +24,6 @@ from findata_plugins.tushare.plugins.datasets.stock.daily_basic.operations impor
 from findata_plugins.tushare.plugins.datasets.index.index_basic import index_basic_plugin
 from findata_plugins.tushare.plugins.datasets.index.index_basic.operations import IndexBasicDatasetRuntime
 from findata_plugins.tushare.plugins.datasets.index.index_daily import index_daily_plugin
-from findata_plugins.tushare.plugins.datasets.index.index_daily.operations import IndexDailyDatasetRuntime
 from findata_plugins.tushare.plugins.datasets.index.index_weight import index_weight_plugin
 from findata_plugins.tushare.plugins.datasets.index.index_weight.operations import (
     IndexWeightDatasetRuntime,

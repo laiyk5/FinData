@@ -311,13 +311,25 @@ def _command_tree() -> click.Group:
         help="Gracefully stop this workspace server, then run it in the foreground.",
     )
     @click.argument("workspace", type=click.Path(path_type=Path))
-    @click.option("--host", default="127.0.0.1", show_default=True)
-    @click.option("--port", type=click.IntRange(0, 65535), default=8765, show_default=True)
+    @click.option(
+        "--host",
+        default="127.0.0.1",
+        show_default=True,
+        help="Interface on which the local HTTP API listens.",
+    )
+    @click.option(
+        "--port",
+        type=click.IntRange(0, 65535),
+        default=8765,
+        show_default=True,
+        help="TCP port for the local API; 0 selects an ephemeral port.",
+    )
     @click.option(
         "--provider-mode",
         type=click.Choice(["real", "mock"]),
         default="real",
         show_default=True,
+        help="Use real provider APIs or deterministic local mock responses.",
     )
     def restart(workspace: Path, host: str, port: int, provider_mode: str) -> SimpleNamespace:
         return SimpleNamespace(

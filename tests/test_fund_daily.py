@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import tempfile
 import unittest
-from copy import deepcopy
 from datetime import date
 from pathlib import Path
 from typing import Any
 
-from findata.sdk.contracts import DatasetSpec, OperandError, OperationReporter
+from findata.sdk.contracts import OperandError
 from findata.sdk.plugins import register_plugins
 from findata.storage import Workspace
 from findata_plugins.tushare.plugins.datasets.etf.fund_daily import (
@@ -23,7 +22,6 @@ from findata_plugins.tushare.plugins.datasets.etf.fund_daily.operations import (
     FundDailyDatasetRuntime,
     normalize_operation,
 )
-from findata_plugins.tushare.plugins.providers.tushare.provider import tushare_provider_plugin
 from findata_plugins.tushare.shared.testing import MockTushareTransport
 
 

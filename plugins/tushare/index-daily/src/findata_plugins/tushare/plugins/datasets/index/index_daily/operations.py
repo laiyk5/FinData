@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from findata.sdk.contracts import DateRange, OperandError, OperationReporter
-from findata.sdk.loader import DataLoaderError, DatasetNotReadyError
+from findata.sdk.loader import DataLoaderError
 from findata.storage import DataMutation, Workspace
 from findata_plugins.tushare.plugins.datasets.index.index_daily import INDEX_DAILY_SPEC
 from findata_plugins.tushare.shared.engine import (
@@ -102,16 +102,21 @@ class IndexDailyDatasetRuntime:
 
 def normalize_operation(operation: str, operands: dict[str, Any], *, today: date) -> dict[str, Any]:
     values = dict(operands)
-    if operation == "update": _require_no_operands(values); return {}
-    if operation not in {"complete", "refresh"}: raise OperandError(f"unsupported operation {operation!r} for {INDEX_DAILY_SPEC.name}")
+    if operation == "update":
+        _require_no_operands(values)
+        return {}
+    if operation not in {"complete", "refresh"}:
+        raise OperandError(f"unsupported operation {operation!r} for {INDEX_DAILY_SPEC.name}")
     indexes = sorted({_normalize_index_reference(item) for item in _string_array(values, "indexes")})
     _require_keys(values, {"indexes", "timerange"})
     return {"indexes": indexes, "timerange": _format_range(_timerange(values, today=today))}
 
 
 def operation_description(operation: str) -> dict[str, Any]:
-    if operation == "update": return {"name": "update", "help": "Update locally covered indexes.", "required": [], "properties": {}}
-    if operation in {"complete", "refresh"}: return {"name": operation, "help": "Fetch an explicit index date range.", "required": ["indexes", "timerange"], "properties": {"indexes": {"type": "array", "items": {"type": "string"}, "minItems": 1, "help": _OPERAND_HELP["indexes"]}, "timerange": {"type": "string", "format": "timerange", "help": _OPERAND_HELP["timerange"]}}}
+    if operation == "update":
+        return {"name": "update", "help": "Update locally covered indexes.", "required": [], "properties": {}}
+    if operation in {"complete", "refresh"}:
+        return {"name": operation, "help": "Fetch an explicit index date range.", "required": ["indexes", "timerange"], "properties": {"indexes": {"type": "array", "items": {"type": "string"}, "minItems": 1, "help": _OPERAND_HELP["indexes"]}, "timerange": {"type": "string", "format": "timerange", "help": _OPERAND_HELP["timerange"]}}}
     raise OperandError(f"unsupported operation {operation!r} for {INDEX_DAILY_SPEC.name}")
 
 

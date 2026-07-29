@@ -1,9 +1,10 @@
-NAME                                  PROVIDER                 PROVIDER_READY  STATE        
-findata-plugins/tushare_daily_basic   findata-plugins/tushare  yes             uninitialized
-findata-plugins/tushare_fund_daily    findata-plugins/tushare  yes             uninitialized
-findata-plugins/tushare_index_basic   findata-plugins/tushare  yes             uninitialized
-findata-plugins/tushare_index_weight  findata-plugins/tushare  yes             uninitialized
-findata-plugins/tushare_stock_basic   findata-plugins/tushare  yes             uninitialized
-findata-plugins/tushare_trade_cal     findata-plugins/tushare  yes             uninitialized
-findata-test/demo_hello               findata-test/demo        yes             uninitialized
-findata-test/demo_random              findata-test/demo        yes             uninitialized
+NAME                                  PROVIDER        PROVIDER_READY  STATE          FAMILY         
+findata-plugins/tushare_daily_basic   findata-plugi…  yes             uninitialized  tushare, stock 
+findata-plugins/tushare_fund_daily    findata-plugi…  yes             uninitialized  tushare, etf   
+findata-plugins/tushare_index_basic   findata-plugi…  yes             uninitialized  tushare, index 
+findata-plugins/tushare_index_daily   findata-plugi…  yes             uninitialized  tushare, index 
+findata-plugins/tushare_index_weight  findata-plugi…  yes             uninitialized  tushare, index 
+findata-plugins/tushare_stock_basic   findata-plugi…  yes             uninitialized  tushare, stock 
+findata-plugins/tushare_trade_cal     findata-plugi…  yes             uninitialized  tushare, stock 
+findata-test/demo_hello               findata-test/…  yes             uninitialized  demo, examples 
+findata-test/demo_random              findata-test/…  yes             uninitialized  demo, synthetic

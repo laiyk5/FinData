@@ -1,3 +1,3 @@
-NAME                     READY  MODE
-findata-plugins/tushare  yes    mock
-findata-test/demo        yes    mock
+NAME                     READY  MODE  FAMILY 
+findata-plugins/tushare  yes    mock  tushare
+findata-test/demo        yes    mock  demo   

@@ -133,18 +133,18 @@ class CLIPresentationTests(unittest.TestCase):
         )
         self.assertEqual(code, 0)
         self.assertEqual(errors, "")
-        self.assertIn("symbols: array of string — Tushare security codes like 600000.SH", output)
+        self.assertIn("symbols: array of string — Use all to fetch the entire market", output)
         self.assertIn("timerange: string (half-open-date-range) — Half-open", output)
 
         code, output, _ = self.run_cli(
             "dataset", "operation", "findata-plugins/tushare_index_weight", "update"
         )
         self.assertEqual(code, 0)
-        self.assertIn("dataset.findata-plugins/tushare_index_weight.update_indexes", output)
+        self.assertIn("Extend the indexes already covered by this dataset", output)
 
         code, output, _ = self.run_cli("dataset", "describe", "findata-plugins/tushare_daily_basic")
         self.assertEqual(code, 0)
-        self.assertIn("update — Resolve the configured symbols", output)
+        self.assertIn("update — Extend the symbols already covered by this dataset", output)
         self.assertIn("refresh (required: symbols, timerange) — Re-fetch", output)
 
         code, output, _ = self.run_cli(
@@ -297,7 +297,7 @@ class CLIPresentationTests(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("--color", errors)
 
-    def test_explain_and_status_of_failed_task_exit_zero_and_show_reason(self) -> None:
+    def test_status_of_noop_update_is_successful(self) -> None:
         code, output, _ = self.run_cli(
             "--format",
             "json",
@@ -307,18 +307,12 @@ class CLIPresentationTests(unittest.TestCase):
             "update",
             "--wait",
         )
-        self.assertEqual(code, 1)  # waiting on a failed task
+        self.assertEqual(code, 0)
         handle = str(json.loads(output)["handle_id"])
 
         code, output, _ = self.run_cli("task", "status", handle)
         self.assertEqual(code, 0)
-        self.assertIn("failed", output)
-
-        code, output, _ = self.run_cli("task", "explain", handle)
-        self.assertEqual(code, 0)
-        # The error now mentions the "all" selector resolution failure
-        self.assertIn("selector", output)
-        self.assertIn(f"findata task retry {handle}", output)
+        self.assertIn("succeeded", output)
 
 
 class ProgressPresentationTests(unittest.TestCase):

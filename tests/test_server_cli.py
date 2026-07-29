@@ -318,7 +318,11 @@ class ServerCLITests(unittest.TestCase):
 
     def test_dataset_and_provider_discovery_commands_report_registered_contracts(self) -> None:
         datasets = json.loads(self.run_cli("--format", "json", "dataset", "ls")[1])
-        self.assertEqual(len(datasets["items"]), 8)
+        self.assertEqual(len(datasets["items"]), 9)
+        self.assertIn(
+            "findata-plugins/tushare_index_daily",
+            {item["name"] for item in datasets["items"]},
+        )
         described = json.loads(
             self.run_cli(
                 "--format", "json", "dataset", "describe", "findata-plugins/tushare_daily_basic"
@@ -351,7 +355,7 @@ class ServerCLITests(unittest.TestCase):
         self.assertEqual(providers["items"][0]["name"], "findata-plugins/tushare")
         self.assertEqual(providers["items"][0]["family"], ["tushare"])
         statuses = json.loads(self.run_cli("--format", "json", "dataset", "status", "--all")[1])
-        self.assertEqual(len(statuses["items"]), 8)
+        self.assertEqual(len(statuses["items"]), 9)
 
     def test_plugins_can_be_removed_restored_and_reloaded_without_restart(self) -> None:
         initial = self.request("GET", "/v1/plugins")

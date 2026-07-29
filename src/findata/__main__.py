@@ -3,7 +3,7 @@ import multiprocessing
 
 multiprocessing.freeze_support()
 
-from findata.server.server_cli import main
+from findata.server.server_cli import main  # noqa: E402
 
 if __name__ == "__main__":
     raise SystemExit(main())

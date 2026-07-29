@@ -588,7 +588,7 @@ class TaskRunner:
                 if isinstance(item.get("time"), (int, float)):
                     record["time"] = item["time"]
                 result.append(record)
-            return result
+        return result
 
     def active_datasets(self) -> set[str]:
         """Return datasets with queued, waiting, or running executions."""

@@ -8,7 +8,6 @@ from pathlib import Path
 from time import monotonic
 from typing import Any
 
-import pyarrow as pa
 import pyarrow.compute as pc
 
 from findata.sdk.contracts import DateRange, DatasetSpec, OperandError, OperationReporter
@@ -402,7 +401,6 @@ def plan_operation(
     today: date,
 ) -> dict[str, Any]:
     normalized = normalize_operation(operation, operands, today=today)
-    description = dataset_description(workspace, provider_ready=True)
     strategy = "stored-coverage update" if operation == "update" else "plugin operation"
     estimated_requests: int | None = None
     if operation != "update":
