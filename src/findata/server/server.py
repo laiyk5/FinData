@@ -700,6 +700,10 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                             result = app.taskrunner.cancel(current.handle_id)
                             self._send(HTTPStatus.OK, asdict(result))
                         return
+                    if method == "DELETE" and len(parts) == 3:
+                        removed = app.taskrunner.remove_terminal(handle_id)
+                        self._send(HTTPStatus.OK, {"removed": True, "handle_id": removed.handle_id})
+                        return
                     if method == "POST" and parts[3:] == ["retry"]:
                         retained = app.taskrunner.retained_request(handle_id)
                         handle = app.taskrunner.submit(
@@ -754,6 +758,8 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                             ZoneInfo(str(value))
                         except ZoneInfoNotFoundError as exc:
                             raise ValueError(f"unknown IANA timezone {value!r}") from exc
+                    if key == "plugins.blocked":
+                        value = _normalize_plugin_blocklist(value)
                     if key.startswith("dataset."):
                         plugin = _dataset_plugin_for_key(app, key)
                         value = plugin.normalize_setting(key, value, workspace=app.workspace)
@@ -1054,6 +1060,13 @@ def _handler_for(app: FindataServer) -> type[BaseHTTPRequestHandler]:
                         }
                     self._send(HTTPStatus.OK, response)
                     return
+                if method == "DELETE" and parts == ["v1", "events"]:
+                    body = self._body() if self.headers.get("Content-Length") else {}
+                    count = app.events.purge_acknowledged(
+                        None if body.get("all") else str(body["event_id"])
+                    )
+                    self._send(HTTPStatus.OK, {"purged": count})
+                    return
                 self._send(HTTPStatus.NOT_FOUND, {"error": "not_found"})
             except QueueFullError as exc:
                 self._send(HTTPStatus.CONFLICT, {"error": str(exc)})
@@ -1318,7 +1331,20 @@ CORE_CONFIG_KEYS: dict[str, dict[str, Any]] = {
         "schema": {"type": "string", "format": "iana-timezone"},
         "help": "Display timezone for human CLI output (IANA name, for example Asia/Shanghai).",
     },
+    "plugins.blocked": {
+        "schema": {"type": "array", "items": {"type": "string"}, "uniqueItems": True},
+        "help": "Plugin names disabled on the next plugin reload; enter one fully qualified name per line.",
+    },
 }
+
+
+def _normalize_plugin_blocklist(value: Any) -> list[str]:
+    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        raise ValueError("plugins.blocked must be an array of plugin names")
+    names = sorted({item.strip() for item in value if item.strip()})
+    if not names:
+        raise ValueError("plugins.blocked must contain at least one plugin name; unset it to clear the list")
+    return names
 
 
 def _dataset_plugin_for_key(app: FindataServer, key: str) -> DatasetPlugin:

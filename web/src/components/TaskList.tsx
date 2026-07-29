@@ -1,6 +1,6 @@
 import { Link } from "react-router";
 import { TERMINAL_STATUSES, type TaskHandle } from "../api";
-import { CancelTaskButton, RetryTaskButton } from "./TaskActions";
+import { CancelTaskButton, RemoveTerminalTaskButton, RetryTaskButton } from "./TaskActions";
 import { CopyableId, ProgressBar, StatusBadge, Time } from "./common";
 
 /** Owners that submitted via a task trigger read as "triggered". */
@@ -86,6 +86,7 @@ export function TaskList({
                     <RetryTaskButton task={t} />{" "}
                   </>
                 )}
+                {!active && <RemoveTerminalTaskButton task={t} onChanged={onChanged} />}
                 <Link to={`/tasks/${encodeURIComponent(t.handle_id)}`}>{retriable ? "Review failure" : "View details"}</Link>
                 <CopyableId id={t.handle_id} />
                 </span>

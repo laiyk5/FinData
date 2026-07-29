@@ -441,6 +441,17 @@ class TaskRunner:
             ]
         return sorted(values, key=lambda item: item.created_at, reverse=True)
 
+    def remove_terminal(self, handle_id: str) -> HandleRecord:
+        """Remove one retained terminal handle and orphaned execution artifacts."""
+        with self._condition:
+            resolved = self._resolve_handle(handle_id)
+            handle = self._handles[resolved]
+            if handle.status not in TERMINAL_STATES:
+                raise ValueError("only terminated tasks can be removed")
+            self._remove_handle(handle)
+            self._condition.notify_all()
+            return _copy_handle(handle)
+
     def subscriber_count(self, handle_id: str) -> int:
         with self._condition:
             resolved = self._resolve_handle(handle_id)
@@ -1221,20 +1232,21 @@ class TaskRunner:
             reverse=True,
         )
         for handle in terminal[self.terminal_history :]:
-            self._handles.pop(handle.handle_id, None)
-            (self.handles_root / f"{handle.handle_id}.json").unlink(missing_ok=True)
-            execution = self._executions.get(handle.execution_id)
-            if execution is None:
-                continue
-            execution.handle_ids = [
-                item for item in execution.handle_ids if item != handle.handle_id
-            ]
-            if execution.handle_ids:
-                self._persist_execution(execution)
-                continue
-            self._executions.pop(execution.execution_id, None)
-            (self.executions_root / f"{execution.execution_id}.json").unlink(missing_ok=True)
-            (self.logs_root / f"{execution.execution_id}.jsonl").unlink(missing_ok=True)
+            self._remove_handle(handle)
+
+    def _remove_handle(self, handle: HandleRecord) -> None:
+        self._handles.pop(handle.handle_id, None)
+        (self.handles_root / f"{handle.handle_id}.json").unlink(missing_ok=True)
+        execution = self._executions.get(handle.execution_id)
+        if execution is None:
+            return
+        execution.handle_ids = [item for item in execution.handle_ids if item != handle.handle_id]
+        if execution.handle_ids:
+            self._persist_execution(execution)
+            return
+        self._executions.pop(execution.execution_id, None)
+        (self.executions_root / f"{execution.execution_id}.json").unlink(missing_ok=True)
+        (self.logs_root / f"{execution.execution_id}.jsonl").unlink(missing_ok=True)
 
 
 def _child_main(

@@ -426,6 +426,11 @@ class ServerCLITests(unittest.TestCase):
         )
         self.assertFalse(by_key["display.timezone"]["secret"])
         self.assertEqual(by_key["display.timezone"]["default"], default_display_timezone())
+        self.assertEqual(
+            by_key["plugins.blocked"]["schema"],
+            {"type": "array", "items": {"type": "string"}, "uniqueItems": True},
+        )
+        self.assertFalse(by_key["plugins.blocked"]["configured"])
 
         token = by_key["provider.findata-plugins/tushare.token"]
         self.assertTrue(token["secret"])
@@ -447,8 +452,16 @@ class ServerCLITests(unittest.TestCase):
         self.assertFalse(any(key.startswith("cron.") for key in by_key))
 
         self.run_cli("config", "set", "display.timezone", "UTC")
+        self.request(
+            "POST",
+            "/v1/config",
+            {"key": "plugins.blocked", "value": [" findata-test/demo_random ", "findata-test/demo_random"]},
+        )
         after = {item["key"]: item for item in self.request("GET", "/v1/config/keys")["items"]}
         self.assertTrue(after["display.timezone"]["configured"])
+        self.assertTrue(after["plugins.blocked"]["configured"])
+        values = self.request("GET", "/v1/config")["values"]
+        self.assertEqual(values["plugins.blocked"], ["findata-test/demo_random"])
         self.assertFalse(
             after["dataset.findata-plugins/tushare_daily_basic.update_symbols"]["configured"]
         )

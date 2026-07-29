@@ -642,6 +642,16 @@ export function ackEvent(
   return request("POST", "/events/ack", body);
 }
 
+export function purgeAcknowledgedEvents(
+  body: { event_id: string } | { all: true },
+): Promise<{ purged: number }> {
+  return request("DELETE", "/events", body);
+}
+
+export function removeTerminalTask(handleId: string): Promise<{ removed: boolean; handle_id: string }> {
+  return request("DELETE", `/tasks/${enc(handleId)}`);
+}
+
 export function getConfig(): Promise<{ values: Record<string, unknown> }> {
   return request("GET", "/config");
 }

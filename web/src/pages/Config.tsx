@@ -21,6 +21,18 @@ function GroupIcon({ kind }: { kind: ConfigGroupKind | "other" }) {
   return <GearIcon />;
 }
 
+function settingLabel(key: string): string {
+  const segments = key.split(".");
+  const segment = segments[segments.length - 1] ?? key;
+  return segment.replace(/_/g, " ").replace(/\b\w/g, (letter: string) => letter.toUpperCase());
+}
+
+function groupLabel(kind: ConfigGroupKind | "other", label: string): string {
+  if (kind === "core") return "Workspace";
+  const [, name = label] = label.split(": ", 2);
+  return `${kind === "provider" ? "Provider" : kind === "dataset" ? "Dataset" : "Other"} · ${name}`;
+}
+
 export default function ConfigPage() {
   const { notify } = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -70,6 +82,11 @@ export default function ConfigPage() {
     return groupConfigKeys(filterConfigKeys(declared ?? [], filter));
   }, [declared, filter]);
 
+  const configuredCount = useMemo(
+    () => (declared ?? []).filter((item) => item.configured).length,
+    [declared],
+  );
+
   const undeclared = useMemo(() => {
     const q = filter.trim().toLowerCase();
     const declaredKeys = new Set((declared ?? []).map((k) => k.key));
@@ -84,19 +101,33 @@ export default function ConfigPage() {
   return (
     <div>
       <div className="page-head">
-        <h1>Config</h1>
+        <div className="page-head-main">
+          <h1>Configuration</h1>
+          <p>Manage workspace preferences, provider connections, and dataset defaults.</p>
+        </div>
       </div>
       <ErrorBanner error={error} />
 
-      <div className="config-filter">
-        <input
-          type="search"
-          value={filter}
-          onChange={(e) => updateFilter(e.target.value)}
-          placeholder="Filter keys by name or description…"
-          aria-label="filter config keys"
-        />
-      </div>
+      <section className="config-intro panel">
+        <div>
+          <p className="config-intro-title">Find a setting</p>
+          <p className="muted">Changes are saved to this workspace. Plugin changes apply after a plugin reload.</p>
+        </div>
+        <div className="config-summary" aria-label="Configuration summary">
+          <span><strong>{configuredCount}</strong> configured</span>
+          <span><strong>{declared?.length ?? 0}</strong> available</span>
+        </div>
+        <label className="config-filter">
+          <span>Search settings</span>
+          <input
+            type="search"
+            value={filter}
+            onChange={(e) => updateFilter(e.target.value)}
+            placeholder="Name or description"
+            aria-label="filter config keys"
+          />
+        </label>
+      </section>
 
       {groups.length === 0 && undeclared.length === 0 && (
         <EmptyState>
@@ -107,64 +138,76 @@ export default function ConfigPage() {
       )}
 
       {groups.map((group) => (
-        <div key={group.label} className="panel config-group">
-          <h3 className="config-group-head">
+        <details
+          key={group.label}
+          className="panel config-group"
+          open={filter.trim() !== "" || group.kind !== "dataset"}
+        >
+          <summary className="config-group-head">
             <GroupIcon kind={group.kind} />
-            {group.kind === "provider" && group.name !== null ? (
-              <Link to={`/providers/${encodeURIComponent(group.name)}`}>{group.label}</Link>
-            ) : group.kind === "dataset" && group.name !== null ? (
-              <Link to={`/datasets/${encodeURIComponent(group.name)}`}>{group.label}</Link>
-            ) : (
-              group.label
-            )}
-            <span className="muted config-group-count">
-              {group.keys.length} key{group.keys.length === 1 ? "" : "s"}
+            <span className="config-group-title">
+              {group.kind === "provider" && group.name !== null ? (
+                <Link to={`/providers/${encodeURIComponent(group.name)}`}>{groupLabel(group.kind, group.label)}</Link>
+              ) : group.kind === "dataset" && group.name !== null ? (
+                <Link to={`/datasets/${encodeURIComponent(group.name)}`}>{groupLabel(group.kind, group.label)}</Link>
+              ) : (
+                groupLabel(group.kind, group.label)
+              )}
             </span>
-          </h3>
-          {group.keys.map((item) => (
-            <div key={item.key} className="setting-row">
-              <div className="mono setting-key">{item.key}</div>
-              {item.help && <p className="muted setting-help">{item.help}</p>}
-              <SettingEditor
-                schema={item.schema}
-                configured={item.configured}
-                secret={item.secret}
-                required={item.required}
-                defaultValue={item.default}
-                allowEnvRef={item.secret}
-                hasCurrentValue={
-                  values !== null &&
-                  Object.prototype.hasOwnProperty.call(values, item.key)
-                }
-                currentValue={values?.[item.key]}
-                onSet={async (value) => {
-                  try {
-                    await setConfig(item.key, value);
-                    notify("success", `set ${item.key}`);
-                    await refresh();
-                  } catch (err) {
-                    notify("error", errorMessage(err));
-                    throw err;
+            <span className="muted config-group-count">
+              {group.keys.filter((item) => item.configured).length} configured · {group.keys.length} setting{group.keys.length === 1 ? "" : "s"}
+            </span>
+          </summary>
+          <div className="config-group-body">
+            {group.keys.map((item) => (
+              <div key={item.key} className="setting-row">
+                <div className="setting-heading">
+                  <h4>{settingLabel(item.key)}</h4>
+                  <span className="mono setting-key">{item.key}</span>
+                </div>
+                {item.help && <p className="muted setting-help">{item.help}</p>}
+                <SettingEditor
+                  schema={item.schema}
+                  configured={item.configured}
+                  secret={item.secret}
+                  required={item.required}
+                  defaultValue={item.default}
+                  allowEnvRef={item.secret}
+                  hasCurrentValue={
+                    values !== null &&
+                    Object.prototype.hasOwnProperty.call(values, item.key)
                   }
-                }}
-                onUnset={async () => {
-                  setUnsetKey(item.key);
-                }}
-              />
-            </div>
-          ))}
-        </div>
+                  currentValue={values?.[item.key]}
+                  onSet={async (value) => {
+                    try {
+                      await setConfig(item.key, value);
+                      notify("success", `set ${item.key}`);
+                      await refresh();
+                    } catch (err) {
+                      notify("error", errorMessage(err));
+                      throw err;
+                    }
+                  }}
+                  onUnset={async () => {
+                    setUnsetKey(item.key);
+                  }}
+                />
+              </div>
+            ))}
+          </div>
+        </details>
       ))}
 
       {undeclared.length > 0 && (
-        <div className="panel config-group">
-          <h3 className="config-group-head">
+        <section className="panel config-group">
+          <h3 className="config-group-head config-group-static">
             <GearIcon />
-            Other values
+            Legacy or unrecognized values
             <span className="muted config-group-count">
               {undeclared.length} key{undeclared.length === 1 ? "" : "s"}
             </span>
           </h3>
+          <p className="muted config-other-help">These values are no longer declared by an installed plugin. You can remove them safely.</p>
           {undeclared.map((k) => (
             <div key={k} className="setting-row">
               <div className="mono setting-key">{k}</div>
@@ -176,7 +219,7 @@ export default function ConfigPage() {
               </button>
             </div>
           ))}
-        </div>
+        </section>
       )}
 
       <ConfirmDialog

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router";
-import { cancelTask, errorMessage, retryTask, type TaskHandle } from "../api";
+import { cancelTask, errorMessage, removeTerminalTask, retryTask, type TaskHandle } from "../api";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { useToast } from "./Toast";
 
@@ -110,4 +110,27 @@ export function RetryTaskButton({
       />
     </>
   );
+}
+
+export function RemoveTerminalTaskButton({ task, onChanged }: { task: TaskHandle; onChanged?: () => void }) {
+  const { notify } = useToast();
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const submit = async (): Promise<void> => {
+    setBusy(true);
+    try {
+      await removeTerminalTask(task.handle_id);
+      notify("success", `removed task ${task.handle_id}`);
+      setConfirming(false);
+      onChanged?.();
+    } catch (err) {
+      notify("error", errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return <>
+    <button className="btn btn-xs" onClick={() => setConfirming(true)}>Remove</button>
+    <ConfirmDialog open={confirming} title="Remove task" message={<>Permanently remove terminated task <span className="mono">{task.handle_id}</span> and its retained logs?</>} confirmLabel="Remove task" danger busy={busy} onConfirm={() => void submit()} onCancel={() => setConfirming(false)} />
+  </>;
 }

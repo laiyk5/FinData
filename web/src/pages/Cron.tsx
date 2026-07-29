@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import {
   cronDisable,
@@ -7,8 +7,10 @@ import {
   cronSchedule,
   errorMessage,
   listCron,
+  listDatasets,
   listEvents,
   type CronJob,
+  type DatasetDescription,
   type EventRecord,
 } from "../api";
 import { ConfirmDialog } from "../components/ConfirmDialog";
@@ -29,20 +31,31 @@ import { useLiveData } from "../hooks";
 interface CronData {
   jobs: CronJob[];
   missed: EventRecord[];
+  datasets: DatasetDescription[];
+}
+
+type ScheduleFilter = "all" | "enabled" | "disabled" | "attention";
+
+function pluginFamilyFor(dataset: DatasetDescription): string {
+  return dataset.provider.replace("/", ".");
 }
 
 export default function CronPage() {
   const { notify } = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
   const datasetFilter = searchParams.get("dataset") ?? "";
+  const [query, setQuery] = useState("");
+  const [scheduleFilter, setScheduleFilter] = useState<ScheduleFilter>("all");
+  const [familyFilter, setFamilyFilter] = useState("all");
   const [disabling, setDisabling] = useState<CronJob | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
 
   const loader = useCallback(async (): Promise<CronData> => {
-    const [cron, events] = await Promise.all([listCron(), listEvents({ unread: true })]);
+    const [cron, events, datasets] = await Promise.all([listCron(), listEvents({ unread: true }), listDatasets()]);
     return {
       jobs: cron.items,
       missed: events.items.filter((e) => !e.acknowledged && e.kind === "cron_missed"),
+      datasets: datasets.items,
     };
   }, []);
 
@@ -64,12 +77,45 @@ export default function CronPage() {
     }
   };
 
-  if (!data && !live.error) return <Loading />;
-
   const jobs = data?.jobs ?? [];
-  const visibleJobs = datasetFilter
-    ? jobs.filter((j) => j.dataset === datasetFilter)
-    : jobs;
+  const familyByDataset = useMemo(
+    () => new Map((data?.datasets ?? []).map((dataset) => [dataset.name, pluginFamilyFor(dataset)])),
+    [data],
+  );
+  const missedDatasets = useMemo(
+    () => new Set((data?.missed ?? []).flatMap((event) => typeof event.context.dataset === "string" ? [event.context.dataset] : [])),
+    [data],
+  );
+  const families = useMemo(
+    () => [...new Set(jobs.map((job) => familyByDataset.get(job.dataset) ?? "other"))].sort(),
+    [familyByDataset, jobs],
+  );
+  const visibleJobs = jobs
+    .filter((job) => !datasetFilter || job.dataset === datasetFilter)
+    .filter((job) => familyFilter === "all" || (familyByDataset.get(job.dataset) ?? "other") === familyFilter)
+    .filter((job) => {
+      if (scheduleFilter === "enabled") return job.enabled;
+      if (scheduleFilter === "disabled") return !job.enabled;
+      if (scheduleFilter === "attention") return missedDatasets.has(job.dataset);
+      return true;
+    })
+    .filter((job) => {
+      const haystack = `${job.dataset} ${job.operation} ${humanizeCron(job.expression)} ${job.timezone}`.toLowerCase();
+      return haystack.includes(query.trim().toLowerCase());
+    })
+    .sort((left, right) => {
+      if (left.enabled !== right.enabled) return left.enabled ? -1 : 1;
+      const leftNext = parseServerTime(left.next_run) ?? Number.MAX_SAFE_INTEGER;
+      const rightNext = parseServerTime(right.next_run) ?? Number.MAX_SAFE_INTEGER;
+      return leftNext - rightNext || left.dataset.localeCompare(right.dataset);
+    });
+  const groups = visibleJobs.reduce<Map<string, CronJob[]>>((result, job) => {
+    const family = familyByDataset.get(job.dataset) ?? "other";
+    result.set(family, [...(result.get(family) ?? []), job]);
+    return result;
+  }, new Map());
+
+  if (!data && !live.error) return <Loading />;
 
   return (
     <div>
@@ -78,6 +124,39 @@ export default function CronPage() {
         <FreshnessNote lastUpdated={live.lastUpdated} />
       </div>
       <ConnectionWarning error={live.error} />
+
+      {data && jobs.length > 0 && (
+        <section className="cron-discovery panel" aria-label="Find schedules">
+          <label className="cron-search">
+            <span>Find a schedule</span>
+            <input
+              type="search"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Dataset, operation, or schedule"
+            />
+          </label>
+          <div className="cron-filter-row">
+            <div className="filter-chips" aria-label="Schedule status">
+              {(["all", "enabled", "disabled", "attention"] as ScheduleFilter[]).map((value) => (
+                <button key={value} type="button" className={`filter-chip ${scheduleFilter === value ? "active" : ""}`} onClick={() => setScheduleFilter(value)}>
+                  {value === "all" ? "All schedules" : value === "attention" ? `Needs attention${missedDatasets.size ? ` (${missedDatasets.size})` : ""}` : value[0].toUpperCase() + value.slice(1)}
+                </button>
+              ))}
+            </div>
+            {families.length > 1 && (
+              <label className="cron-family-filter">
+                <span>Plugin family</span>
+                <select value={familyFilter} onChange={(event) => setFamilyFilter(event.target.value)}>
+                  <option value="all">All families</option>
+                  {families.map((family) => <option key={family} value={family}>{family}</option>)}
+                </select>
+              </label>
+            )}
+            <span className="cron-result-count">{visibleJobs.length} schedule{visibleJobs.length === 1 ? "" : "s"}</span>
+          </div>
+        </section>
+      )}
 
       {datasetFilter && (
         <div className="filters">
@@ -121,35 +200,38 @@ export default function CronPage() {
         <EmptyState>
           {datasetFilter
             ? `No suggested cron job exists for ${datasetFilter}.`
-            : "No cron jobs — jobs appear when a dataset plugin suggests an update schedule."}
+            : query || scheduleFilter !== "all" || familyFilter !== "all"
+              ? "No schedules match these filters."
+              : "No cron jobs — jobs appear when a dataset plugin suggests an update schedule."}
         </EmptyState>
       )}
 
       {data && visibleJobs.length > 0 && (
-        <div className="cron-list">
-          {visibleJobs.map((job) => (
-            <CronJobCard
-              key={job.dataset}
-              job={job}
-              highlight={job.dataset === datasetFilter}
-              busy={busyKey !== null}
-              onEnable={() =>
-                void run(`enable:${job.dataset}`, `enabled ${job.dataset}`, () =>
-                  cronEnable(job.dataset),
-                )
-              }
-              onDisable={() => setDisabling(job)}
-              onReset={() =>
-                void run(`reset:${job.dataset}`, `restored suggested schedule for ${job.dataset}`, () =>
-                  cronReset(job.dataset),
-                )
-              }
-              onSave={(expression, timezone) =>
-                run(`schedule:${job.dataset}`, `schedule updated for ${job.dataset}`, () =>
-                  cronSchedule(job.dataset, { expression, timezone }),
-                )
-              }
-            />
+        <div className="cron-groups">
+          {[...groups.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([family, familyJobs]) => (
+            <section key={family} className="cron-family-group">
+              <div className="cron-family-heading">
+                <div>
+                  <span className="cron-family-label">Plugin family</span>
+                  <h2>{family}</h2>
+                </div>
+                <span>{familyJobs.length} schedule{familyJobs.length === 1 ? "" : "s"}</span>
+              </div>
+              <div className="cron-list">
+                {familyJobs.map((job) => (
+                  <CronJobCard
+                    key={job.dataset}
+                    job={job}
+                    highlight={job.dataset === datasetFilter}
+                    busy={busyKey !== null}
+                    onEnable={() => void run(`enable:${job.dataset}`, `enabled ${job.dataset}`, () => cronEnable(job.dataset))}
+                    onDisable={() => setDisabling(job)}
+                    onReset={() => void run(`reset:${job.dataset}`, `restored suggested schedule for ${job.dataset}`, () => cronReset(job.dataset))}
+                    onSave={(expression, timezone) => run(`schedule:${job.dataset}`, `schedule updated for ${job.dataset}`, () => cronSchedule(job.dataset, { expression, timezone }))}
+                  />
+                ))}
+              </div>
+            </section>
           ))}
         </div>
       )}

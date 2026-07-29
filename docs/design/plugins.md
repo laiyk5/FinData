@@ -79,12 +79,27 @@ place. The three granularities are independent:
 - the family repository adds an umbrella distribution (metadata only, no entry points)
   for users who *want* the whole namespace in one install.
 
-Within a namespace, plugin code follows the layout `<ns>.<repository>.plugins.providers`
-and `<ns>.<repository>.plugins.datasets.<family>`, with shared machinery at
-`<ns>.<repository>.shared`. Repository and family segments are publisher-owned and may have any
-depth; they classify packages without changing plugin IDs. The framework only requires the
-namespace/full-name coherence described under *Naming*. Plugins expose the same family path as
-metadata so clients can group them without parsing package imports.
+Within a namespace, plugin code follows the layout `<ns>.<plugin-family>.plugins.providers`
+and `<ns>.<plugin-family>.plugins.datasets.<dataset-plugin-path>`, with shared machinery at
+`<ns>.<plugin-family>.shared`. Plugin-family and dataset-plugin-path segments are publisher-owned
+and may have any depth without changing plugin IDs. The framework only requires the
+namespace/full-name coherence described under *Naming*.
+
+### Plugin-family and plugin-path terminology
+
+For a dataset import path such as
+`findata_plugins.tushare.plugins.datasets.xxx.yyy.zzz`:
+
+- the **plugin family** is everything before the first `.plugins` segment:
+  `findata_plugins.tushare` (displayed to users as `findata-plugins.tushare`);
+- the **dataset plugin path** is everything after `.plugins.datasets.`:
+  `xxx.yyy.zzz`. It is one plugin regardless of how many segments it contains;
+  `xxx`, `yyy`, and `zzz` are not independently registered plugins.
+
+`plugins.datasets` and `plugins.providers` are structural separators, not family or plugin names.
+Publisher-defined dataset classifications such as `stock` and `index` may be useful secondary
+metadata, but they are not plugin families. WebUI grouping that says **Plugin family** groups by
+the prefix before `.plugins`; it must not substitute the final dataset-classification segment.
 
 ## Dependency model: the relations, kept apart
 
@@ -253,7 +268,7 @@ its own repository), all contributing to the `findata_plugins` namespace package
   distribution pulling exactly its own data-dependency chain;
 - `findata-plugins` → metadata-only umbrella for the whole namespace.
 
-The official family paths are classification metadata as well as import structure:
+The official dataset classification paths are secondary metadata as well as import structure:
 
 - `stock`: trade calendar, stock basic, and daily basic datasets;
 - `etf`: ETF basic, ETF index, and fund daily datasets;

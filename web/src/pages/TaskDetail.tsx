@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, useParams } from "react-router";
+import { Link, useNavigate, useParams } from "react-router";
 import {
   TERMINAL_STATUSES,
   errorMessage,
@@ -9,7 +9,7 @@ import {
   type TaskExplanation,
   type TaskLogEntry,
 } from "../api";
-import { CancelTaskButton, RetryTaskButton } from "../components/TaskActions";
+import { CancelTaskButton, RemoveTerminalTaskButton, RetryTaskButton } from "../components/TaskActions";
 import { ownerLabel } from "../components/TaskList";
 import {
   ConnectionWarning,
@@ -55,6 +55,7 @@ function taskSummary(status: string): string {
 
 export default function TaskDetailPage() {
   const { id = "" } = useParams();
+  const navigate = useNavigate();
   const [logs, setLogs] = useState<TaskLogEntry[] | null>(null);
   const [logsError, setLogsError] = useState<unknown>(null);
   const [follow, setFollow] = useState(false);
@@ -142,6 +143,7 @@ export default function TaskDetailPage() {
             <div className="task-detail-summary-actions">
               {!terminal && <CancelTaskButton task={task} onChanged={() => void taskLive.refresh()} size="btn" />}
               {(task.status === "failed" || task.status === "canceled") && <RetryTaskButton task={task} size="btn" />}
+              {terminal && <RemoveTerminalTaskButton task={task} onChanged={() => navigate("/tasks")} />}
             </div>
           </section>
 

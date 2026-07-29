@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { TimezoneInput, availableTimezones, isValidTimezone } from "./TimezoneInput";
 
 /**
@@ -71,6 +71,27 @@ export function SettingEditor({
   const [envMode, setEnvMode] = useState(secret);
   const [busy, setBusy] = useState<"set" | "unset" | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!hasCurrentValue || secret) {
+      setText("");
+      setBoolValue(false);
+      return;
+    }
+    if (kind === "boolean") {
+      setBoolValue(currentValue === true);
+      return;
+    }
+    if (kind === "array") {
+      setText(Array.isArray(currentValue) ? currentValue.map(String).join("\n") : "");
+      return;
+    }
+    if (kind === "json") {
+      setText(JSON.stringify(currentValue));
+      return;
+    }
+    setText(currentValue === undefined || currentValue === null ? "" : String(currentValue));
+  }, [currentValue, hasCurrentValue, kind, secret]);
 
   // Placeholders carry the declared default, else the (non-secret) current value.
   const placeholderValue =

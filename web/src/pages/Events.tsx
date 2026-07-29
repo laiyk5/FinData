@@ -1,6 +1,6 @@
 import { useCallback, useState } from "react";
 import { Link, useSearchParams } from "react-router";
-import { ackEvent, errorMessage, listEvents, type EventRecord } from "../api";
+import { ackEvent, errorMessage, listEvents, purgeAcknowledgedEvents, type EventRecord } from "../api";
 import { eventActions } from "../eventActions";
 import { useToast } from "../components/Toast";
 import {
@@ -61,6 +61,19 @@ export default function EventsPage() {
     }
   };
 
+  const purge = async (body: { event_id: string } | { all: true }, key: string): Promise<void> => {
+    setBusy(key);
+    try {
+      const result = await purgeAcknowledgedEvents(body);
+      notify("success", `removed ${result.purged} acknowledged event${result.purged === 1 ? "" : "s"}`);
+      await live.refresh();
+    } catch (err) {
+      notify("error", errorMessage(err));
+    } finally {
+      setBusy(null);
+    }
+  };
+
   if (!live.data && !live.error) return <Loading />;
 
   const items = live.data ?? [];
@@ -84,6 +97,7 @@ export default function EventsPage() {
     },
   );
   const unreadCount = items.filter((e) => !e.acknowledged).length;
+  const acknowledgedCount = items.length - unreadCount;
 
   const clearDatasetFilter = (): void => {
     const next: Record<string, string> = {};
@@ -117,6 +131,13 @@ export default function EventsPage() {
             onClick={() => void ack({ all: true }, "all")}
           >
             {busy === "all" ? "Acknowledging…" : "Acknowledge all"}
+          </button>
+          <button
+            className="btn"
+            disabled={busy !== null || acknowledgedCount === 0}
+            onClick={() => void purge({ all: true }, "purge-all")}
+          >
+            {busy === "purge-all" ? "Removing…" : "Remove acknowledged"}
           </button>
         </div>
         <div className="events-filter-row">
@@ -241,6 +262,15 @@ export default function EventsPage() {
                       onClick={() => void ack({ event_id: e.event_id }, e.event_id)}
                     >
                       {busy === e.event_id ? "…" : "Ack"}
+                    </button>
+                  )}
+                  {e.acknowledged && (
+                    <button
+                      className="btn btn-xs"
+                      disabled={busy !== null}
+                      onClick={() => void purge({ event_id: e.event_id }, `purge:${e.event_id}`)}
+                    >
+                      {busy === `purge:${e.event_id}` ? "…" : "Remove"}
                     </button>
                   )}
                 </span>

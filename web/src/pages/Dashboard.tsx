@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { Link } from "react-router";
+import { Link, useNavigate } from "react-router";
 import {
   TERMINAL_STATUSES,
   ackEvent,
@@ -35,7 +35,7 @@ interface HomeData {
 }
 
 type AttentionItem =
-  | { type: "task"; value: TaskHandle }
+  | { type: "task"; value: TaskHandle; event?: EventRecord }
   | { type: "event"; value: EventRecord }
   | { type: "cron"; value: EventRecord }
   | { type: "provider"; value: Provider }
@@ -67,26 +67,48 @@ async function loadHome(): Promise<HomeData> {
 function AttentionRow({
   item,
   acknowledge,
-  dismiss,
 }: {
   item: AttentionItem;
   acknowledge: (eventId: string) => void;
-  dismiss: (eventId: string) => void;
 }) {
+  const navigate = useNavigate();
   if (item.type === "task") {
     const task = item.value;
+    const taskUrl = `/tasks/${encodeURIComponent(task.handle_id)}`;
     return (
-      <div className="attention-row">
+      <div
+        className="attention-row"
+        role="link"
+        tabIndex={0}
+        onClick={() => navigate(taskUrl)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            navigate(taskUrl);
+          }
+        }}
+      >
         <span className="badge severity-error">Failed task</span>
         <span className="attention-message">
-          <Link to={`/tasks/${encodeURIComponent(task.handle_id)}`} className="mono">
+          <Link to={taskUrl} className="mono" onClick={(event) => event.stopPropagation()}>
             {task.dataset} {task.operation}
           </Link>{" "}
           <span className="muted">{task.reason ?? task.error ?? ""}</span>
         </span>
         <span className="row-actions">
-          <Link to={`/tasks/${encodeURIComponent(task.handle_id)}`}>Explain</Link>
-          <RetryTaskButton task={task} />
+          {item.event && (
+            <button
+              className="link-button"
+              onClick={(event) => {
+                event.stopPropagation();
+                acknowledge(item.event!.event_id);
+              }}
+            >
+              Acknowledge
+            </button>
+          )}
+          <Link to={taskUrl} onClick={(event) => event.stopPropagation()}>Explain</Link>
+          <span onClick={(event) => event.stopPropagation()}><RetryTaskButton task={task} /></span>
         </span>
       </div>
     );
@@ -128,7 +150,6 @@ function AttentionRow({
       </span>
       <span className="row-actions">
         <button className="link-button" onClick={() => acknowledge(event.event_id)}>Acknowledge</button>
-        <button className="link-button" onClick={() => dismiss(event.event_id)}>Dismiss</button>
         {isCron && <Link to="/cron">Open cron</Link>}
       </span>
     </div>
@@ -137,7 +158,7 @@ function AttentionRow({
 
 export default function HomePage() {
   const [hasActive, setHasActive] = useState(false);
-  const [dismissedEvents, setDismissedEvents] = useState<Set<string>>(new Set());
+  const [acknowledgedEvents, setAcknowledgedEvents] = useState<Set<string>>(new Set());
   const loader = useCallback(async () => {
     const data = await loadHome();
     setHasActive(data.tasks.some(isActive));
@@ -146,32 +167,50 @@ export default function HomePage() {
   const live = useLiveData(loader, hasActive ? 2_500 : 12_000);
   const { data } = live;
 
-  const acknowledge = useCallback((eventId: string) => {
-    void ackEvent({ event_id: eventId });
-    setDismissedEvents((previous) => new Set(previous).add(eventId));
-  }, []);
-  const dismiss = useCallback((eventId: string) => {
-    setDismissedEvents((previous) => new Set(previous).add(eventId));
+  const resolveEvent = useCallback((eventId: string) => {
+    void ackEvent({ event_id: eventId }).then(() => {
+      setAcknowledgedEvents((previous) => new Set(previous).add(eventId));
+    });
   }, []);
 
   if (!data && !live.error) return <Loading />;
 
-  const failed = data?.tasks.filter((task) => task.status === "failed") ?? [];
+  const failedTaskEvents = new Map(
+    (data?.unreadEvents ?? [])
+      .filter(
+        (event) =>
+          event.kind === "task_failed" &&
+          typeof event.context.execution_id === "string",
+      )
+      .map((event) => [String(event.context.execution_id), event]),
+  );
+  const failed = (data?.tasks ?? [])
+    .filter((task) => {
+      if (task.status !== "failed") return false;
+      const event = failedTaskEvents.get(task.execution_id);
+      return !event || !acknowledgedEvents.has(event.event_id);
+    })
+    .map((value): AttentionItem => ({
+      type: "task",
+      value,
+      event: failedTaskEvents.get(value.execution_id),
+    }));
   const problemEvents =
     data?.unreadEvents.filter(
       (event) =>
-        !dismissedEvents.has(event.event_id) &&
+        !acknowledgedEvents.has(event.event_id) &&
         (event.severity === "warning" || event.severity === "error") &&
-        event.kind !== "cron_missed",
+        event.kind !== "cron_missed" &&
+        event.kind !== "task_failed",
     ) ?? [];
   const cronMissed =
     data?.unreadEvents.filter(
-      (event) => !dismissedEvents.has(event.event_id) && event.kind === "cron_missed",
+      (event) => !acknowledgedEvents.has(event.event_id) && event.kind === "cron_missed",
     ) ?? [];
   const badProviders = data?.providers.filter((provider) => !provider.ready || provider.configured === false) ?? [];
   const staleDatasets = data?.datasets.filter((dataset) => dataset.state === "ready" && !dataset.update_ready) ?? [];
   const attention = [
-    ...failed.map((value): AttentionItem => ({ type: "task", value })),
+    ...failed,
     ...problemEvents.map((value): AttentionItem => ({ type: "event", value })),
     ...cronMissed.map((value): AttentionItem => ({ type: "cron", value })),
     ...badProviders.map((value): AttentionItem => ({ type: "provider", value })),
@@ -219,7 +258,7 @@ export default function HomePage() {
               <div className="home-section-head"><h2>Needs attention</h2><Link to="/events">View all</Link></div>
               <div className="attention-list">
                 {attention.slice(0, MAX_HOME_ITEMS).map((item, index) => (
-                  <AttentionRow key={`${item.type}-${index}`} item={item} acknowledge={acknowledge} dismiss={dismiss} />
+                  <AttentionRow key={`${item.type}-${index}`} item={item} acknowledge={resolveEvent} />
                 ))}
               </div>
             </section>

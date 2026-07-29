@@ -3,6 +3,7 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import tempfile
 import time
 import uuid
 from dataclasses import dataclass
@@ -92,6 +93,49 @@ class EventStore:
         for event in unread:
             self.ack(event.event_id, timestamp=timestamp)
         return len(unread)
+
+    def purge_acknowledged(self, event_id: str | None = None) -> int:
+        """Permanently remove acknowledged events and their acknowledgement records."""
+        with self.lock_path.open("a+b") as lock:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            records = self._read_unlocked()
+            acknowledged = {
+                str(item["reference"])
+                for item in records
+                if item.get("kind") == "acknowledgement" and item.get("reference")
+            }
+            if event_id is None:
+                targets = acknowledged
+            else:
+                primary_ids = [
+                    str(item["event_id"])
+                    for item in records
+                    if item.get("kind") != "acknowledgement" and item.get("event_id")
+                ]
+                resolved = resolve_identifier(event_id, primary_ids)
+                if resolved not in acknowledged:
+                    raise ValueError("acknowledge an event before purging it")
+                targets = {resolved}
+            if not targets:
+                return 0
+            retained = [
+                item
+                for item in records
+                if str(item.get("event_id")) not in targets
+                and not (item.get("kind") == "acknowledgement" and str(item.get("reference")) in targets)
+            ]
+            descriptor, temporary = tempfile.mkstemp(prefix=".events-", dir=self.path.parent)
+            try:
+                with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+                    for item in retained:
+                        stream.write(json.dumps(item, separators=(",", ":"), default=str) + "\n")
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                os.replace(temporary, self.path)
+            finally:
+                Path(temporary).unlink(missing_ok=True)
+                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+        return len(targets)
 
     def list_events(
         self,
