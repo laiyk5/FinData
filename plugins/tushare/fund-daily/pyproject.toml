@@ -4,14 +4,14 @@ build-backend = "hatchling.build"
 
 [project]
 name = "findata-plugins-datasets-tushare-fund-daily"
-version = "0.4.0"
+version = "0.6.0"
 description = "Official Tushare fund daily (ETF) dataset plugin for findata"
 requires-python = ">=3.11"
 license = "Apache-2.0"
 dependencies = [
-  "findata==0.4.0",
-  "findata-plugins-providers-tushare==0.4.0",
-  "findata-plugins-shared==0.4.0",
+  "findata==0.6.0",
+  "findata-plugins-providers-tushare==0.6.0",
+  "findata-plugins-shared==0.6.0",
   "pyarrow>=15",
 ]
 

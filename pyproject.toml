@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "findata"
-version = "0.4.0"
+version = "0.6.0"
 description = "Local, plugin-oriented financial dataset maintenance and querying"
 readme = "README.md"
 license = "Apache-2.0"
@@ -36,16 +36,16 @@ findata-server = "findata.server.server_cli:main"
 dev = [
   # Official plugins are development/test-only members of this workspace;
   # findata itself never depends on a plugin distribution.
-  "findata-plugins==0.4.0",
-  "findata-plugins-datasets-tushare-daily-basic==0.4.0",
-  "findata-plugins-datasets-tushare-fund-daily==0.4.0",
-  "findata-plugins-datasets-tushare-index-basic==0.4.0",
-  "findata-plugins-datasets-tushare-index-daily==0.4.0",
-  "findata-plugins-datasets-tushare-index-weight==0.4.0",
-  "findata-plugins-datasets-tushare-stock-basic==0.4.0",
-  "findata-plugins-datasets-tushare-trade-cal==0.4.0",
-  "findata-plugins-providers-tushare==0.4.0",
-  "findata-plugins-shared==0.4.0",
+  "findata-plugins==0.6.0",
+  "findata-plugins-datasets-tushare-daily-basic==0.6.0",
+  "findata-plugins-datasets-tushare-fund-daily==0.6.0",
+  "findata-plugins-datasets-tushare-index-basic==0.6.0",
+  "findata-plugins-datasets-tushare-index-daily==0.6.0",
+  "findata-plugins-datasets-tushare-index-weight==0.6.0",
+  "findata-plugins-datasets-tushare-stock-basic==0.6.0",
+  "findata-plugins-datasets-tushare-trade-cal==0.6.0",
+  "findata-plugins-providers-tushare==0.6.0",
+  "findata-plugins-shared==0.6.0",
   # Demo/test plugins for the findata-test namespace
   "findata-test-providers-demo==0.1.0",
   "findata-test-datasets-demo-hello==0.1.0",
